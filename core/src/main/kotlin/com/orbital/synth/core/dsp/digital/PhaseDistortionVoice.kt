@@ -2,6 +2,7 @@ package com.orbital.synth.core.dsp.digital
 
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.pow
@@ -37,7 +38,15 @@ class PhaseDistortionVoice(val sampleRate: Int) {
     private var frequencyHz = 440.0
     private var velocity = 1.0
     private var character = 0.6
+    private var targetCharacter = 0.6
     private var drive = 0.0
+    private var targetDrive = 0.0
+    private val macroSlewCoefficient = 1.0 - exp(-1.0 / (sampleRate * 0.007))
+    private var shapeChangePending = false
+    private val transitionFrames = max(1, (sampleRate * 0.005).toInt())
+    private var transitionRemaining = 0
+    private var transitionOffset = 0.0
+    private var previousOutput = 0.0
     private var envelopeStage = 0
     private var envelope = 0.0
     private var attackStep = 1.0 / (sampleRate * 0.006)
@@ -52,9 +61,10 @@ class PhaseDistortionVoice(val sampleRate: Int) {
         drive: Float = 0.15f
     ) {
         require(character.isFinite() && drive.isFinite())
+        if (isActive && this.shape != shape) shapeChangePending = true
         this.shape = shape
-        this.character = character.coerceIn(0f, 1f).toDouble()
-        this.drive = drive.coerceIn(0f, 1f).toDouble()
+        targetCharacter = character.coerceIn(0f, 1f).toDouble()
+        targetDrive = drive.coerceIn(0f, 1f).toDouble()
     }
 
     fun setEnvelope(
@@ -84,6 +94,9 @@ class PhaseDistortionVoice(val sampleRate: Int) {
         phase = 0.0
         envelope = 0.0
         envelopeStage = 1
+        shapeChangePending = false
+        transitionRemaining = 0
+        previousOutput = 0.0
         isActive = true
     }
 
@@ -105,6 +118,9 @@ class PhaseDistortionVoice(val sampleRate: Int) {
         envelopeStage = 0
         envelope = 0.0
         note = -1
+        shapeChangePending = false
+        transitionRemaining = 0
+        previousOutput = 0.0
     }
 
     fun nextSample(pitchMultiplier: Double = 1.0): Float =
@@ -120,6 +136,8 @@ class PhaseDistortionVoice(val sampleRate: Int) {
         val env = advanceEnvelope()
         if (!isActive) return 0f
         val hz = (fundamentalHz * pitchMultiplier).coerceIn(0.0, sampleRate * 0.45)
+        character += (targetCharacter - character) * macroSlewCoefficient
+        drive += (targetDrive - drive) * macroSlewCoefficient
         val increment = hz / sampleRate
         // At high fundamentals, tame the sharper wavefoldings before Nyquist.
         val spectralHeadroom = ((0.30 - increment * 4.0) / 0.28).coerceIn(0.0, 1.0)
@@ -138,7 +156,20 @@ class PhaseDistortionVoice(val sampleRate: Int) {
         // Smooth rational saturation (unlike hard clip) with a bounded result.
         val gain = 1.0 + drive * 3.0
         val saturated = averaged * gain / (1.0 + (gain - 1.0) * abs(averaged))
-        return (saturated * velocity * env).coerceIn(-1.0, 1.0).toFloat()
+        var normalized = (saturated * velocity * env).coerceIn(-1.0, 1.0)
+        if (shapeChangePending) {
+            transitionOffset = previousOutput - normalized
+            transitionRemaining = transitionFrames
+            shapeChangePending = false
+        }
+        if (transitionRemaining > 0) {
+            normalized = (normalized +
+                transitionOffset * transitionRemaining / transitionFrames)
+                .coerceIn(-1.0, 1.0)
+            transitionRemaining--
+        }
+        previousOutput = normalized
+        return normalized.toFloat()
     }
 
     private fun waveform(p: Double, color: Double): Double {
