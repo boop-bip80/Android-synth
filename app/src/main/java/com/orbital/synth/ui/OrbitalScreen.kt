@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -110,7 +111,12 @@ private enum class Tab(val title: String) {
 }
 
 private val MainGradient = Brush.verticalGradient(
-    listOf(OrbitalPalette.Void, OrbitalPalette.Midnight, OrbitalPalette.Void),
+    listOf(
+        OrbitalPalette.Void,
+        Color(0xFF07152C),
+        Color(0xFF100C2A),
+        OrbitalPalette.Void,
+    ),
 )
 
 /**
@@ -152,6 +158,11 @@ fun OrbitalScreen(
     }
     val morph = parameter(ParameterId.MORPH)
     val move = parameter(ParameterId.MOVEMENT)
+    // The optional engine IDs are linked by the host synthesis engine. Dynamic lookup
+    // keeps this layout independently buildable while its audio implementation lands.
+    val engineId = remember { ParameterId.entries.firstOrNull { it.name == "ENGINE" } }
+    val engineValue = engineId?.let(parameter) ?: 0f
+    val engineChoice = EngineArchitectures[engineArchitectureIndex(engineValue)]
     val currentOn by rememberUpdatedState(onNoteOn)
     val currentOff by rememberUpdatedState(onNoteOff)
     var sequencerPlaying by remember { mutableStateOf(false) }
@@ -200,6 +211,34 @@ fun OrbitalScreen(
             .background(MainGradient)
             .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
+        // These atmospheric gradients are intentionally decorative. The live orbit below
+        // is still the signal-controlled, interactive visualization.
+        Canvas(Modifier.fillMaxSize()) {
+            val cyanCenter = Offset(size.width * .06f, size.height * .22f)
+            val violetCenter = Offset(size.width * .96f, size.height * .46f)
+            val lightRadius = maxOf(size.width, size.height) * .72f
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(OrbitalPalette.Blue.copy(alpha = .12f), Color.Transparent),
+                    center = cyanCenter, radius = lightRadius,
+                ),
+                radius = lightRadius, center = cyanCenter,
+            )
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(OrbitalPalette.Violet.copy(alpha = .10f), Color.Transparent),
+                    center = violetCenter, radius = lightRadius,
+                ),
+                radius = lightRadius, center = violetCenter,
+            )
+            // Subtle technical reticle lines give depth without competing with the keys.
+            val spacing = 36.dp.toPx()
+            var x = spacing
+            while (x < size.width) {
+                drawLine(OrbitalPalette.Cyan.copy(alpha = .026f), Offset(x, 0f), Offset(x, size.height))
+                x += spacing
+            }
+        }
         val compactHeight = maxHeight < 500.dp
         val compactOrbitLayout = maxWidth < 380.dp || LocalDensity.current.fontScale >= 1.2f
         Column(
@@ -212,35 +251,58 @@ fun OrbitalScreen(
             libraryEnabled = onSavePatch != null || onSelectPatch != null,
         )
         Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            Modifier
+                .fillMaxWidth()
+                .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .55f), RoundedCornerShape(16.dp))
+                .background(OrbitalPalette.Void.copy(alpha = .74f), RoundedCornerShape(16.dp))
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Tab.entries.forEach { tab ->
+            Tab.entries.forEachIndexed { index, tab ->
                 val active = selectedTab == tab
+                val activeColor = when (tab) {
+                    Tab.SOUND -> OrbitalPalette.Cyan
+                    Tab.PLAY -> OrbitalPalette.Gold
+                    Tab.SEQ -> OrbitalPalette.Violet
+                    Tab.FX -> OrbitalPalette.Teal
+                }
                 Column(
                     Modifier
                         .weight(1f)
+                        .border(
+                            1.dp,
+                            if (active) activeColor.copy(alpha = .60f) else Color.Transparent,
+                            RoundedCornerShape(12.dp),
+                        )
+                        .background(
+                            if (active) Brush.verticalGradient(
+                                listOf(activeColor.copy(alpha = .24f), activeColor.copy(alpha = .055f)),
+                            ) else Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent)),
+                            RoundedCornerShape(12.dp),
+                        )
                         .semantics {
                             selected = active
                             contentDescription = "Tab " + tab.title
                         }
                         .clickable(role = Role.Tab) { selectedTab = tab }
                         .heightIn(min = 48.dp)
-                        .padding(vertical = 8.dp),
+                        .padding(vertical = 5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
+                    Text(
+                        "0" + (index + 1),
+                        color = if (active) activeColor else OrbitalPalette.PanelEdge,
+                        fontSize = 8.sp,
+                        letterSpacing = .5.sp,
+                    )
                     Text(
                         tab.title,
                         color = if (active) OrbitalPalette.Text else OrbitalPalette.Muted,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
                         letterSpacing = 1.5.sp,
-                    )
-                    Box(
-                        Modifier
-                            .fillMaxWidth(.70f)
-                            .height(2.dp)
-                            .background(if (active) OrbitalPalette.Cyan else Color.Transparent),
+                        maxLines = 1,
                     )
                 }
             }
@@ -251,18 +313,26 @@ fun OrbitalScreen(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .42f), RoundedCornerShape(19.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(OrbitalPalette.Panel.copy(alpha = .50f), OrbitalPalette.Void.copy(alpha = .50f)),
+                    ),
+                    RoundedCornerShape(19.dp),
+                )
                 .verticalScroll(editorScroll)
-                .padding(bottom = 5.dp),
+                .padding(horizontal = 7.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(if (compactOrbitLayout) 8.dp else 12.dp),
         ) {
         when (selectedTab) {
             Tab.SOUND -> {
+                CompactPatchHeader(
+                    state = state,
+                    onPreviousPatch = onPreviousPatch,
+                    onNextPatch = onNextPatch,
+                    engineName = engineChoice.name,
+                )
                 if (compactOrbitLayout) {
-                    CompactPatchHeader(
-                        state = state,
-                        onPreviousPatch = onPreviousPatch,
-                        onNextPatch = onNextPatch,
-                    )
                     Box(Modifier.fillMaxWidth().height(148.dp).testTag("compactOrbitViewport")) {
                         OrbitalDisplay(
                             morph = morph,
@@ -303,83 +373,80 @@ fun OrbitalScreen(
                             ModulationGraph(morph, move, Modifier.fillMaxWidth())
                         }
                     }
-                } else {
-                BoxWithConstraints(Modifier.fillMaxWidth().height(244.dp)) {
-                    val layoutWidth = maxWidth
-                    OrbitalDisplay(
-                        morph = morph,
-                        movement = move,
-                        modifier = Modifier.fillMaxSize(),
-                        onExpressionChange = { nextMorph, nextMovement ->
-                            onParameterChange(ParameterId.MORPH, nextMorph)
-                            onParameterChange(ParameterId.MOVEMENT, nextMovement)
-                        },
+                    EngineArchitecturePanel(
+                        value = engineValue,
+                        enabled = engineId != null,
+                        onChoose = { value -> engineId?.let { onParameterChange(it, value) } },
                     )
-                    Box(Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 8.dp)) {
-                        Label("DRAG ORBIT  /  X: MORPH  /  Y: MOTION")
-                    }
-                    Column(
+                } else {
+                    EngineArchitecturePanel(
+                        value = engineValue,
+                        enabled = engineId != null,
+                        onChoose = { value -> engineId?.let { onParameterChange(it, value) } },
+                    )
+                    // Patch controls live above the orbit so no caption competes with
+                    // the luminous visual field or intercepts XY expression touches.
+                    Box(
                         Modifier
-                            .align(Alignment.TopStart)
-                            .padding(top = 18.dp, start = 9.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                            .fillMaxWidth()
+                            .height(244.dp)
+                            .border(
+                                1.dp, OrbitalPalette.Cyan.copy(alpha = .30f),
+                                RoundedCornerShape(18.dp),
+                            ),
                     ) {
-                        Label("WAVETABLE  /  FACTORY BANK")
-                        Row(
-                            Modifier.width(layoutWidth * .67f),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(1.dp),
-                        ) {
-                            PresetArrow(
-                                symbol = "‹",
-                                description = "Previous factory preset",
-                                enabled = onPreviousPatch != null,
-                                onClick = { onPreviousPatch?.invoke() },
-                            )
-                            Text(
-                                state.patchName,
-                                modifier = Modifier.weight(1f),
-                                color = OrbitalPalette.Text,
-                                textAlign = TextAlign.Center,
-                                fontSize = if (layoutWidth < 380.dp) 14.sp else 17.sp,
-                                fontWeight = FontWeight.Light,
-                                letterSpacing = if (layoutWidth < 380.dp) 1.sp else 2.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            PresetArrow(
-                                symbol = "›",
-                                description = "Next factory preset",
-                                enabled = onNextPatch != null,
-                                onClick = { onNextPatch?.invoke() },
-                            )
-                        }
-                        if (state.presetCount > 0) {
-                            Label(
-                                "PATCH " +
-                                    (state.presetIndex.coerceIn(0, state.presetCount - 1) + 1) +
-                                    " / " + state.presetCount,
-                            )
-                        }
+                        OrbitalDisplay(
+                            morph = morph,
+                            movement = move,
+                            modifier = Modifier.fillMaxSize(),
+                            onExpressionChange = { nextMorph, nextMovement ->
+                                onParameterChange(ParameterId.MORPH, nextMorph)
+                                onParameterChange(ParameterId.MOVEMENT, nextMovement)
+                            },
+                        )
                     }
-                    Column(
-                        Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 19.dp, end = 8.dp),
-                        horizontalAlignment = Alignment.End,
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 5.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Label("ENGINE")
-                        Label("WAVETABLE")
-                        Label("SPECTRAL")
-                        Label("HARMONIC")
+                        Label("TOUCH ORBIT / X: MORPH / Y: MOTION")
+                        Text(
+                            percent(morph) + "  /  " + percent(move),
+                            color = OrbitalPalette.Cyan,
+                            fontSize = 10.sp,
+                            letterSpacing = .7.sp,
+                        )
                     }
+                    ModulationGraph(morph, move, Modifier.fillMaxWidth())
                 }
-                ModulationGraph(morph, move, Modifier.fillMaxWidth())
-                }
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .border(
+                            1.dp, OrbitalPalette.PanelEdge.copy(alpha = .48f),
+                            RoundedCornerShape(17.dp),
+                        )
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(OrbitalPalette.DeepBlue.copy(alpha = .45f), OrbitalPalette.Panel.copy(alpha = .80f)),
+                            ),
+                            RoundedCornerShape(17.dp),
+                        )
+                        .padding(horizontal = 5.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 5.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Label("TONE SHAPING  /  LIVE MACROS")
+                        Label("01 — 05")
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
                     val knobSize = 55.dp
                     NeonKnob("WAVE", parameter(ParameterId.WAVE), percent(parameter(ParameterId.WAVE)), OrbitalPalette.Violet,
                         { onParameterChange(ParameterId.WAVE, it) }, Modifier.weight(1f), knobSize)
@@ -391,9 +458,10 @@ fun OrbitalScreen(
                         { onParameterChange(ParameterId.MOVEMENT, it) }, Modifier.weight(1f), knobSize)
                     NeonKnob("FX", parameter(ParameterId.FX_AMOUNT), percent(parameter(ParameterId.FX_AMOUNT)), OrbitalPalette.Cyan,
                         { onParameterChange(ParameterId.FX_AMOUNT, it) }, Modifier.weight(1f), knobSize)
+                    }
                 }
                 // Voice engine parameters appear as luminous knobs when present.
-                val voiceParameters = listOf("UNISON", "DETUNE").mapNotNull { name ->
+                val voiceParameters = listOf("UNISON", "DETUNE", "CHARACTER").mapNotNull { name ->
                     ParameterId.entries.firstOrNull { it.name == name }?.let { id -> name to id }
                 }
                 if (voiceParameters.isNotEmpty()) {
@@ -404,7 +472,11 @@ fun OrbitalScreen(
                         voiceParameters.forEach { (name, id) ->
                             NeonKnob(
                                 name, parameter(id), percent(parameter(id)),
-                                if (name == "UNISON") OrbitalPalette.Gold else OrbitalPalette.Violet,
+                                when (name) {
+                                    "UNISON" -> OrbitalPalette.Gold
+                                    "CHARACTER" -> OrbitalPalette.Teal
+                                    else -> OrbitalPalette.Violet
+                                },
                                 { onParameterChange(id, it) }, Modifier.weight(1f), 62.dp,
                             )
                         }
@@ -676,15 +748,149 @@ private fun PatchLibraryDialog(
     }
 }
 
+private data class EngineArchitecture(val name: String, val family: String, val value: Float)
+
+// The labels describe synthesis structures, not a claim of exact vintage hardware
+// reproduction. A true parameter change always goes through the supplied host.
+private val EngineArchitectures = listOf(
+    EngineArchitecture("ORBITAL WT", "WAVETABLE", 0f),
+    EngineArchitecture("LADDER", "VIRTUAL ANALOG", .25f),
+    EngineArchitecture("SEM", "VIRTUAL ANALOG", .50f),
+    EngineArchitecture("SIX-OP FM", "DIGITAL FM", .75f),
+    EngineArchitecture("PHASE DIST.", "DIGITAL PD", 1f),
+)
+
+internal fun engineArchitectureIndex(value: Float): Int =
+    (value.coerceIn(0f, 1f) * (EngineArchitectures.size - 1)).roundToInt()
+        .coerceIn(0, EngineArchitectures.lastIndex)
+
+@Composable
+private fun EngineArchitecturePanel(
+    value: Float,
+    enabled: Boolean,
+    onChoose: (Float) -> Unit,
+) {
+    val activeIndex = engineArchitectureIndex(value)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .testTag("engineArchitecturePanel")
+            .border(
+                1.dp, OrbitalPalette.Violet.copy(alpha = .40f),
+                RoundedCornerShape(16.dp),
+            )
+            .background(
+                Brush.horizontalGradient(
+                    listOf(
+                        Color(0xFF0E1532).copy(alpha = .92f),
+                        Color(0xFF0B243A).copy(alpha = .90f),
+                        Color(0xFF160F31).copy(alpha = .94f),
+                    ),
+                ),
+                RoundedCornerShape(16.dp),
+            )
+            .padding(vertical = 7.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "SYNTHESIS ARCHITECTURE",
+                color = OrbitalPalette.Text,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.1.sp,
+                maxLines = 1,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                "05 ENGINES",
+                color = OrbitalPalette.Gold,
+                fontSize = 8.sp,
+                letterSpacing = .8.sp,
+            )
+        }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            EngineArchitectures.forEachIndexed { index, choice ->
+                val active = index == activeIndex
+                val tint = when (index) {
+                    0 -> OrbitalPalette.Cyan
+                    1 -> OrbitalPalette.Gold
+                    2 -> OrbitalPalette.Teal
+                    3 -> OrbitalPalette.Violet
+                    else -> OrbitalPalette.Blue
+                }
+                Column(
+                    Modifier
+                        .width(112.dp)
+                        .heightIn(min = 48.dp)
+                        .border(
+                            1.dp,
+                            if (active) tint.copy(alpha = .95f)
+                            else OrbitalPalette.PanelEdge.copy(alpha = .55f),
+                            RoundedCornerShape(10.dp),
+                        )
+                        .background(
+                            if (active) tint.copy(alpha = .18f)
+                            else OrbitalPalette.Void.copy(alpha = .55f),
+                            RoundedCornerShape(10.dp),
+                        )
+                        .clickable(enabled = enabled, role = Role.RadioButton) {
+                            if (!active) onChoose(choice.value)
+                        }
+                        .semantics {
+                            selected = active
+                            contentDescription = "Select synth engine " + choice.name +
+                                if (enabled) "" else ", unavailable until audio engine is connected"
+                        }
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        ("%02d".format(java.util.Locale.US, index + 1)) + "  " + choice.name,
+                        color = if (active) tint else OrbitalPalette.Text,
+                        fontSize = 9.sp,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1,
+                    )
+                    Text(
+                        choice.family,
+                        color = OrbitalPalette.Muted,
+                        fontSize = 7.sp,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun CompactPatchHeader(
     state: OrbitalUiState,
     onPreviousPatch: (() -> Unit)?,
     onNextPatch: (() -> Unit)?,
+    engineName: String,
 ) {
     // Keep controls and metadata outside the touch artwork at 360 dp / large fonts.
     Column(
-        Modifier.fillMaxWidth().testTag("compactPatchHeader"),
+        Modifier
+            .fillMaxWidth()
+            .testTag("compactPatchHeader")
+            .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .60f), RoundedCornerShape(14.dp))
+            .background(
+                Brush.horizontalGradient(
+                    listOf(OrbitalPalette.Panel.copy(alpha = .84f), Color(0xFF171A3A).copy(alpha = .66f)),
+                ),
+                RoundedCornerShape(14.dp),
+            )
+            .padding(horizontal = 8.dp, vertical = 5.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Row(
@@ -693,7 +899,7 @@ private fun CompactPatchHeader(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.testTag("compactBankLabel")) {
-                Label("WAVETABLE  /  FACTORY BANK")
+                Label("PATCH LIBRARY  /  SOUND BANK")
             }
             Box(Modifier.testTag("compactEngineLabel")) {
                 Label("ENGINE")
@@ -741,7 +947,7 @@ private fun CompactPatchHeader(
             )
         }
         Box(Modifier.fillMaxWidth().testTag("compactEngineModes"), contentAlignment = Alignment.CenterEnd) {
-            Label("WAVETABLE  /  SPECTRAL  /  HARMONIC")
+            Label("ACTIVE ARCHITECTURE  /  " + engineName)
         }
     }
 }
@@ -783,47 +989,63 @@ private fun PresetArrow(
 @Composable
 private fun Header(patch: String, onOpenLibrary: () -> Unit, libraryEnabled: Boolean) {
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Canvas(Modifier.size(31.dp)) {
-            drawCircle(OrbitalPalette.Blue, style = Stroke(1.3.dp.toPx()))
+        Canvas(Modifier.size(34.dp)) {
+            val c = center
+            val r = size.minDimension * .38f
+            drawCircle(OrbitalPalette.Cyan.copy(alpha = .14f), radius = r * 1.24f)
+            drawCircle(OrbitalPalette.Blue.copy(alpha = .65f), radius = r, style = Stroke(1.dp.toPx()))
+            drawCircle(OrbitalPalette.Violet.copy(alpha = .70f), radius = r * .62f,
+                style = Stroke(1.3.dp.toPx()))
             drawLine(
                 OrbitalPalette.Cyan,
-                Offset(size.width * .2f, size.height * .8f),
-                Offset(size.width * .8f, size.height * .2f),
-                strokeWidth = 1.3.dp.toPx(),
+                Offset(c.x - r * .90f, c.y + r * .78f),
+                Offset(c.x + r * .90f, c.y - r * .78f),
+                strokeWidth = 1.5.dp.toPx(),
             )
-            drawCircle(OrbitalPalette.Gold, radius = 2.dp.toPx())
+            drawCircle(OrbitalPalette.Gold, radius = 2.4.dp.toPx(), center = c)
         }
         Spacer(Modifier.weight(1f))
-        Text(
-            "O R B I T A L",
-            color = OrbitalPalette.Text,
-            fontSize = 19.sp,
-            fontWeight = FontWeight.Light,
-            maxLines = 1,
-            letterSpacing = 2.0.sp,
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                "O R B I T A L",
+                color = OrbitalPalette.Text,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Light,
+                maxLines = 1,
+                letterSpacing = 1.5.sp,
+            )
+            Text(
+                "SONIC ARCHITECTURE / LIVE",
+                color = OrbitalPalette.Cyan,
+                fontSize = 7.sp,
+                letterSpacing = 1.2.sp,
+                maxLines = 1,
+            )
+        }
         Spacer(Modifier.weight(1f))
-        Text("●", color = OrbitalPalette.Teal, fontSize = 10.sp,
+        Text("●", color = OrbitalPalette.Teal, fontSize = 9.sp,
             modifier = Modifier.semantics { contentDescription = "Patch loaded: $patch" })
         Box(
             Modifier
                 .size(48.dp)
+                .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .45f), RoundedCornerShape(14.dp))
+                .background(OrbitalPalette.Panel.copy(alpha = .60f), RoundedCornerShape(14.dp))
                 .clickable(enabled = libraryEnabled, role = Role.Button, onClick = onOpenLibrary)
                 .semantics { contentDescription = "Open patch library" },
             contentAlignment = Alignment.Center,
         ) {
             Text("☰", color = if (libraryEnabled) OrbitalPalette.Cyan else OrbitalPalette.Muted,
-                fontSize = 22.sp)
+                fontSize = 20.sp)
         }
     }
 }
 
 @Composable
 private fun Label(text: String) {
-    Text(text, fontSize = 9.sp, letterSpacing = .95.sp, color = OrbitalPalette.Muted)
+    Text(text, fontSize = 9.sp, letterSpacing = 1.1.sp, color = OrbitalPalette.Muted, maxLines = 2)
 }
 
 @Composable
@@ -835,18 +1057,18 @@ private fun Pill(
     role: Role = Role.Button,
     enabled: Boolean = true,
 ) {
+    val edge = if (!enabled) OrbitalPalette.PanelEdge.copy(alpha = .32f)
+        else if (active) OrbitalPalette.Cyan else OrbitalPalette.PanelEdge
     Box(
         Modifier
-            .border(
-                1.dp,
-                if (!enabled) OrbitalPalette.PanelEdge.copy(alpha = .45f)
-                else if (active) OrbitalPalette.Cyan else OrbitalPalette.PanelEdge,
-                RoundedCornerShape(50),
-            )
+            .border(1.dp, edge, RoundedCornerShape(12.dp))
             .background(
-                if (active) OrbitalPalette.Cyan.copy(alpha = .16f)
-                else OrbitalPalette.Panel.copy(alpha = .45f),
-                RoundedCornerShape(50),
+                if (active) Brush.verticalGradient(
+                    listOf(OrbitalPalette.Cyan.copy(alpha = .26f), OrbitalPalette.Blue.copy(alpha = .08f)),
+                ) else Brush.verticalGradient(
+                    listOf(OrbitalPalette.Panel.copy(alpha = .80f), OrbitalPalette.Void.copy(alpha = .60f)),
+                ),
+                RoundedCornerShape(12.dp),
             )
             .clickable(enabled = enabled, role = role, onClick = onClick)
             .semantics {
@@ -860,6 +1082,7 @@ private fun Pill(
         Text(
             label,
             fontSize = 9.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
             letterSpacing = .65.sp,
             color = if (!enabled) OrbitalPalette.Muted.copy(alpha = .45f)
             else if (active) Color.White else OrbitalPalette.Muted,
@@ -941,8 +1164,20 @@ private fun PlayPanel(
             val p = Offset(size.width * morph, size.height * (1f - movement))
             drawLine(OrbitalPalette.Cyan.copy(alpha = .50f), Offset(p.x, 0f), Offset(p.x, size.height))
             drawLine(OrbitalPalette.Violet.copy(alpha = .50f), Offset(0f, p.y), Offset(size.width, p.y))
-            drawCircle(OrbitalPalette.Cyan.copy(alpha = .21f), 20.dp.toPx(), p)
-            drawCircle(OrbitalPalette.Cyan, 7.dp.toPx(), p, style = Stroke(2.dp.toPx()))
+            // A concentric, signal-driven cursor gives the XY pad an instrument feel.
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(OrbitalPalette.Cyan.copy(alpha = .38f), Color.Transparent),
+                    center = p, radius = 40.dp.toPx(),
+                ),
+                radius = 40.dp.toPx(), center = p,
+            )
+            drawCircle(OrbitalPalette.Violet.copy(alpha = .38f), 24.dp.toPx(), p,
+                style = Stroke(1.dp.toPx()))
+            drawCircle(OrbitalPalette.Cyan.copy(alpha = .65f), 13.dp.toPx(), p,
+                style = Stroke(1.2.dp.toPx()))
+            drawCircle(OrbitalPalette.Cyan, 6.dp.toPx(), p, style = Stroke(2.dp.toPx()))
+            drawCircle(Color.White, 2.dp.toPx(), p)
         }
         Text("VOICE MODE", color = OrbitalPalette.Muted, fontSize = 10.sp, letterSpacing = 1.2.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

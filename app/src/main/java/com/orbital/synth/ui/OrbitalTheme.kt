@@ -3,16 +3,16 @@ package com.orbital.synth.ui
 import androidx.compose.ui.graphics.Color
 
 internal object OrbitalPalette {
-    val Void = Color(0xFF050A14)
-    val Midnight = Color(0xFF0A1529)
-    val DeepBlue = Color(0xFF102443)
-    val Panel = Color(0xFF0C1B31)
-    val PanelEdge = Color(0xFF2B4D73)
-    val Text = Color(0xFFEAF3FF)
-    val Muted = Color(0xFF9CB3D5)
-    val Cyan = Color(0xFF30C9FF)
-    val Blue = Color(0xFF538BFF)
-    val Violet = Color(0xFF9C72FF)
-    val Gold = Color(0xFFFFCE85)
-    val Teal = Color(0xFF45E1D6)
+    val Void = Color(0xFF030711)
+    val Midnight = Color(0xFF081126)
+    val DeepBlue = Color(0xFF0E1E3E)
+    val Panel = Color(0xFF09172F)
+    val PanelEdge = Color(0xFF335078)
+    val Text = Color(0xFFF2F7FF)
+    val Muted = Color(0xFFAABBD6)
+    val Cyan = Color(0xFF34DCFF)
+    val Blue = Color(0xFF4C8CFF)
+    val Violet = Color(0xFFB189FF)
+    val Gold = Color(0xFFFFD58C)
+    val Teal = Color(0xFF5BEAD8)
 }
