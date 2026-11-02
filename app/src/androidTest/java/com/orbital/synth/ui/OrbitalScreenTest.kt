@@ -16,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -258,9 +259,62 @@ class OrbitalScreenTest {
             )
         }
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
-        compose.onNodeWithContentDescription("Step 1, on").performClick()
-        compose.onNodeWithContentDescription("Step 2, off").performClick()
+        compose.onNodeWithContentDescription("Step 1 of 16, on").performClick()
+        compose.onNodeWithContentDescription("Step 2 of 16, off").performClick()
         compose.runOnIdle { assertEquals(listOf(0, 1), toggled) }
+    }
+
+    @Test fun thirtyTwoStepGridExposesLastStepAndRoutesItsIndex() {
+        val toggled = mutableListOf<Int>()
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(sequencerStepCount = 32, enabledSteps = setOf(0, 31)),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> }, onModeChange = {}, onOctaveChange = {},
+                onSequencerToggle = {}, onStepToggle = { toggled += it },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithText("32-STEP ORBIT").assertExists()
+        compose.onNodeWithContentDescription("Step 32 of 32, on").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf(31), toggled) }
+        compose.onNodeWithContentDescription("Multitouch piano keyboard", substring = true).assertIsDisplayed()
+    }
+
+    @Test fun sixtyFourStepGridScrollsWithoutMovingTheKeyboard() {
+        val toggled = mutableListOf<Int>()
+        compose.setContent {
+            Box(Modifier.fillMaxWidth().height(380.dp)) {
+                OrbitalScreen(
+                    state = OrbitalUiState(sequencerStepCount = 64, enabledSteps = setOf(0, 63)),
+                    onNoteOn = {}, onNoteOff = {},
+                    onParameterChange = { _, _ -> }, onModeChange = {}, onOctaveChange = {},
+                    onSequencerToggle = {}, onStepToggle = { toggled += it },
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithText("64-STEP ORBIT").assertExists()
+        compose.onNodeWithContentDescription("Step 64 of 64, on").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf(63), toggled) }
+        compose.onNodeWithContentDescription("Multitouch piano keyboard", substring = true).assertIsDisplayed()
+    }
+
+    @Test fun singleStepGridClampsLengthsAndDoesNotExposeExtraCells() {
+        val toggled = mutableListOf<Int>()
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(sequencerStepCount = 0, enabledSteps = setOf(0, 1)),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> }, onModeChange = {}, onOctaveChange = {},
+                onSequencerToggle = {}, onStepToggle = { toggled += it },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithText("1-STEP ORBIT").assertExists()
+        compose.onNodeWithContentDescription("Step 1 of 1, on").performClick()
+        compose.onNodeWithContentDescription("Step 2 of 1, on").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(listOf(0), toggled) }
     }
 
     @Test fun factorySequenceSelectorShowsActiveSequenceAndDispatchesStableId() {
