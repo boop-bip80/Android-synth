@@ -138,4 +138,36 @@ class StereoChorusTest {
         chorus.process(1f, 0f, out, 0)
         assertTrue("Dry glide did not settle", out[0] > 0.95f)
     }
+
+    @Test fun hardBypassDiscardsOldChorusHistoryAndRestartsWetFromDry() {
+        val chorus = StereoChorus(8_000)
+        val out = FloatArray(2)
+        chorus.configure(rateHz = 0.5f, depth = 0f, wet = 1f)
+        repeat(1_000) { chorus.process(1f, -1f, out, 0) }
+
+        chorus.resetForBypass()
+        repeat(400) {
+            chorus.process(0f, 0f, out, 0)
+            assertEquals("Bypassed chorus replayed old audio", 0f, out[0], 0f)
+            assertEquals(0f, out[1], 0f)
+        }
+
+        // Fresh 100% wet target must fade in from zero rather than mute the
+        // initial dry attack, even though the preceding preset was 100% wet.
+        chorus.configure(rateHz = 0.5f, depth = 0f, wet = 1f)
+        chorus.process(1f, 0f, out, 0)
+        assertTrue("Wet gain inherited old preset instead of entering dry", out[0] > 0.95f)
+        repeat(1_800) { chorus.process(0f, 0f, out, 0) }
+        chorus.process(1f, 0f, out, 0)
+        assertTrue("Wet fade did not settle", abs(out[0]) < 0.05f)
+    }
+
+    @Test fun bypassBeforeFirstConfigurationAlsoFadesIn() {
+        val chorus = StereoChorus(8_000)
+        chorus.resetForBypass()
+        chorus.configure(rateHz = 1f, depth = 0f, wet = 1f)
+        val out = FloatArray(2)
+        chorus.process(1f, 0f, out, 0)
+        assertTrue(out[0] > 0.95f)
+    }
 }
