@@ -53,6 +53,10 @@ internal class PerformanceArpTransport(
     val subdivisionsPerBeat: Int get() = requestedSettings.subdivisionsPerBeat
     val tempo: Int get() = requestedSettings.bpm.toInt()
     val latch: Boolean get() = requestedSettings.latch
+    val octaves: Int get() = requestedSettings.octaves
+    val ratchets: Int get() = requestedSettings.ratchets
+    val gate: Double get() = requestedSettings.gate
+    val probability: Double get() = requestedSettings.probability
 
     fun setEnabled(value: Boolean) {
         requestedEnabled = value
@@ -83,6 +87,30 @@ internal class PerformanceArpTransport(
     fun setSwing(value: Double): Boolean {
         if (!value.isFinite() || value !in 0.0..1.0) return false
         updateSettings { it.copy(swing = value) }
+        return true
+    }
+
+    fun setOctaves(value: Int): Boolean {
+        if (value !in 1..4) return false
+        updateSettings { it.copy(octaves = value) }
+        return true
+    }
+
+    fun setRatchets(value: Int): Boolean {
+        if (value !in 1..8) return false
+        updateSettings { it.copy(ratchets = value) }
+        return true
+    }
+
+    fun setGate(value: Double): Boolean {
+        if (!value.isFinite() || value !in 0.05..1.0) return false
+        updateSettings { it.copy(gate = value) }
+        return true
+    }
+
+    fun setProbability(value: Double): Boolean {
+        if (!value.isFinite() || value !in 0.0..1.0) return false
+        updateSettings { it.copy(probability = value) }
         return true
     }
 
