@@ -9,6 +9,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -260,6 +261,74 @@ class OrbitalScreenTest {
         compose.onNodeWithContentDescription("Step 1, on").performClick()
         compose.onNodeWithContentDescription("Step 2, off").performClick()
         compose.runOnIdle { assertEquals(listOf(0, 1), toggled) }
+    }
+
+    @Test fun factorySequenceSelectorShowsActiveSequenceAndDispatchesStableId() {
+        var selectedId: String? = null
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(
+                    sequenceChoices = listOf(
+                        SequenceChoice("aurora", "Aurora Orbit"),
+                        SequenceChoice("comet", "Comet Cascade"),
+                        SequenceChoice("ion-bass", "Ion Bassline"),
+                    ),
+                    activeSequenceId = "aurora",
+                ),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> }, onModeChange = {}, onOctaveChange = {},
+                onSelectSequence = { selectedId = it },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithText("Aurora Orbit").assertExists()
+        compose.onNodeWithContentDescription("Choose factory sequence").performClick()
+        compose.onNodeWithContentDescription("Select factory sequence Comet Cascade").performClick()
+        compose.runOnIdle { assertEquals("comet", selectedId) }
+    }
+
+    @Test fun factorySequenceSelectorNeverOffersInvalidOrDuplicateIds() {
+        assertEquals(
+            listOf(SequenceChoice("aurora", "Aurora Orbit"), SequenceChoice("comet", "Comet Cascade")),
+            validSequenceChoices(
+                listOf(
+                    SequenceChoice("", "Empty ID"),
+                    SequenceChoice("aurora", "Aurora Orbit"),
+                    SequenceChoice("comet", "Comet Cascade"),
+                    SequenceChoice("comet", "Duplicate Comet"),
+                    SequenceChoice("blank-name", ""),
+                ),
+            ),
+        )
+    }
+
+    @Test fun factorySequenceSelectorIsDisabledWithoutHostCallback() {
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(
+                    sequenceChoices = listOf(SequenceChoice("aurora", "Aurora Orbit")),
+                    activeSequenceId = "aurora",
+                ),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> }, onModeChange = {}, onOctaveChange = {},
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Choose factory sequence").assertIsNotEnabled()
+        compose.onNodeWithText("CHOOSE SEQUENCE").assertDoesNotExist()
+    }
+
+    @Test fun factorySequenceSelectorIsDisabledForEmptyLibrary() {
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(sequenceChoices = emptyList()),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> }, onModeChange = {}, onOctaveChange = {},
+                onSelectSequence = { error("Empty library must not dispatch") },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Factory sequences unavailable").assertIsNotEnabled()
     }
 
     @Test fun expressionCoordinatesClampOutOfBoundsAndGuardZeroSize() {
