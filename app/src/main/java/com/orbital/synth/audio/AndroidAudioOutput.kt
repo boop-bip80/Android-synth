@@ -9,6 +9,8 @@ import android.media.AudioTrack
 import android.util.Log
 import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.music.FactorySequence
+import com.orbital.synth.core.music.SequencerNote
+import com.orbital.synth.core.music.StepPattern
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -68,8 +70,8 @@ class AndroidAudioOutput(
     private val audioSequencer = AudioSequencerTransport(
         sampleRate = sampleRate,
         renderFrames = { output, frames -> synth.renderStereo(output, frames) },
-        noteOn = { note, velocity -> synth.noteOn(note, velocity) },
-        noteOff = { note -> synth.noteOff(note) }
+        noteOn = { note, velocity -> synth.noteOn(SEQUENCER_SOURCE_ID, 0, note, velocity) },
+        noteOff = { note -> synth.noteOff(SEQUENCER_SOURCE_ID, 0, note) }
     )
 
     private var lifecycleGeneration = 0L
@@ -98,6 +100,17 @@ class AndroidAudioOutput(
     fun setSequencerTempo(bpm: Int) = audioSequencer.setTempo(bpm)
     fun setSequencerStepEnabled(index: Int, enabled: Boolean) =
         audioSequencer.setStepEnabled(index, enabled)
+    /** All edits are queued for the audio worker and validated before enqueueing. */
+    fun setSequencerStepCount(steps: Int): Boolean = audioSequencer.setStepCount(steps)
+    fun setSequencerStepNotes(index: Int, notes: List<SequencerNote>): Boolean =
+        audioSequencer.setStepNotes(index, notes)
+    fun loadSequencerPattern(
+        id: String,
+        name: String,
+        pattern: StepPattern,
+        bpm: Double = 120.0,
+        swing: Double = 0.0,
+    ): Boolean = audioSequencer.loadPattern(id, name, pattern, bpm, swing)
     /** Queues a factory sequence; returns false immediately for an unknown ID. */
     fun selectFactoryPattern(id: String): Boolean = audioSequencer.selectFactoryPattern(id)
 
@@ -299,4 +312,9 @@ class AndroidAudioOutput(
             runCatching { audioManager.abandonAudioFocusRequest(focusRequest) }
         }
     }
+    private companion object {
+        // MIDI port IDs are positive, keyboard uses -1L. Keep the sequence independent.
+        const val SEQUENCER_SOURCE_ID = -2L
+    }
+
 }
