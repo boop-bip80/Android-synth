@@ -23,6 +23,48 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class OrbitalAudioDeviceTest {
     @Test
+    fun repeatedStartStopAndCloseNeverLeaveTheOutputAdvertisedAsRunning() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val output = AndroidAudioOutput(context, OrbitalSynth())
+        try {
+            repeat(4) { cycle ->
+                val initialFrames = output.diagnostics.framesRendered
+                val accepted = output.start()
+                Log.i("OrbitalDeviceTest", "Restart cycle $cycle accepted: $accepted")
+                if (accepted) {
+                    // The virtual device may stop its sink immediately. Only assert
+                    // forward progress while an audio worker is actually running.
+                    val deadline = SystemClock.uptimeMillis() + 2_000L
+                    var madeProgress = output.diagnostics.framesRendered > initialFrames
+                    while (!madeProgress && output.isRunning &&
+                        SystemClock.uptimeMillis() < deadline
+                    ) {
+                        Thread.sleep(20)
+                        madeProgress = output.diagnostics.framesRendered > initialFrames
+                    }
+                    if (output.isRunning) {
+                        assertTrue("Active audio worker did not render any frames", madeProgress)
+                    }
+                } else {
+                    assertFalse("Rejected start must not advertise running", output.isRunning)
+                }
+                output.stop()
+                assertFalse(
+                    "Audio output must stop synchronously at the API boundary, cycle $cycle",
+                    output.isRunning,
+                )
+                // Workers release their own track asynchronously. A brief gap
+                // also exercises the non-blocking lifecycle handoff.
+                Thread.sleep(100)
+            }
+        } finally {
+            output.close()
+        }
+        assertFalse(output.isRunning)
+        assertFalse("Closed output cannot restart", output.start())
+    }
+
+    @Test
     fun audioOutputPreservesLifecycleAndDrainsSequenceCommandsWhenDeviceAllowsIt() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
