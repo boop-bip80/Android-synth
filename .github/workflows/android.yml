@@ -40,6 +40,14 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
           retention-days: 14
+      - name: Upload instrumentation APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-debug-android-test-apk
+          path: app/build/outputs/apk/androidTest/debug/*.apk
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload lint report
         if: always()
         uses: actions/upload-artifact@v4
@@ -113,6 +121,10 @@ jobs:
             artifacts/activity-state.txt
             artifacts/activity-launch.txt
             artifacts/diagnostic-screen.png
+            artifacts/window-state.txt
+            artifacts/android-version.txt
+            artifacts/emulator-exit-status.txt
+            artifacts/emulator-summary.txt
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload instrumentation results
