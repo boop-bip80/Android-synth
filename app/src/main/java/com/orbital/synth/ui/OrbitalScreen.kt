@@ -880,8 +880,8 @@ private fun SequenceSelector(
                 .background(OrbitalPalette.Panel, RoundedCornerShape(12.dp))
                 .clickable(enabled = enabled, role = Role.Button) { showingList = true }
                 .semantics {
-                    contentDescription = if (presented.isEmpty()) "Factory sequences unavailable"
-                    else "Choose factory sequence"
+                    contentDescription = if (presented.isEmpty()) "Sequence library unavailable"
+                    else "Choose sequence"
                 }
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -944,7 +944,7 @@ private fun SequenceSelector(
                                 }
                                 .semantics {
                                     selected = isActive
-                                    contentDescription = "Select factory sequence ${choice.name}"
+                                    contentDescription = "Select sequence ${choice.name}"
                                 }
                                 .padding(horizontal = 13.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -1079,7 +1079,7 @@ private fun SequencerPanel(
                     showSaveSequenceDialog = true
                 },
                 modifier = Modifier.semantics { contentDescription = "Save sequence as a new pattern" },
-            ) { Text("SAVE SEQUENCE", color = OrbitalPalette.Gold) }
+            ) { Text("SAVE SEQUENCE", color = if (onSaveSequence != null) OrbitalPalette.Gold else OrbitalPalette.Muted) }
         }
         SequenceLengthPanel(steps.size, onSequencerLengthChange)
         Label("Tap to toggle a step. STEP DETAIL offers pitch, velocity, gate, chance and ties.")
