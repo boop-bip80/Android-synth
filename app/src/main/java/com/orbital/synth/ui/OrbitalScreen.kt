@@ -263,7 +263,7 @@ fun OrbitalScreen(
                         onPreviousPatch = onPreviousPatch,
                         onNextPatch = onNextPatch,
                     )
-                    Box(Modifier.fillMaxWidth().height(182.dp).testTag("compactOrbitViewport")) {
+                    Box(Modifier.fillMaxWidth().height(148.dp).testTag("compactOrbitViewport")) {
                         OrbitalDisplay(
                             morph = morph,
                             movement = move,
