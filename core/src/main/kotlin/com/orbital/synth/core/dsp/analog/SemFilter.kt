@@ -14,9 +14,11 @@ import kotlin.math.tanh
  *
  * Cutoff is in Hz, resonance/drive/shape are normalized 0..1. One instance is
  * required per independent channel or synth voice. All functions are intended
- * for the audio render thread. configure() computes TPT coefficients once per
- * block; process() and bandPassOutput() are allocation-free. All coefficient,
- * drive and mode controls slew over 3 ms without per-sample tan/tanh setup.
+ * for the audio render thread. configure() prewarps cutoff with tan() and
+ * normalizes drive with tanh() at block boundaries; process() recomputes the
+ * algebraic TPT coefficients from slewed g/damping each sample, preserving
+ * their stability relations. All controls slew over 3 ms. No allocation occurs
+ * in process() or bandPassOutput().
  *
  * The nonlinear input drive is not oversampled and can alias at high settings.
  */
