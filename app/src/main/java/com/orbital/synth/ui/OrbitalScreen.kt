@@ -263,13 +263,14 @@ fun OrbitalScreen(
                 vertical = if (compactHeight) 3.dp else 9.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(
-                if (compactHeight) 3.dp else if (compactOrbitLayout) 8.dp else 12.dp,
+                if (compactHeight) 2.dp else if (compactOrbitLayout) 8.dp else 12.dp,
             ),
         ) {
         Header(
             patch = state.patchName,
             onOpenLibrary = { showPatchLibrary = true },
             libraryEnabled = onSavePatch != null || onSelectPatch != null,
+            compact = compactHeight,
         )
         Row(
             Modifier
@@ -306,7 +307,7 @@ fun OrbitalScreen(
                             contentDescription = "Tab " + tab.title
                         }
                         .clickable(role = Role.Tab) { selectedTab = tab }
-                        .heightIn(min = if (compactHeight) 44.dp else 48.dp)
+                        .heightIn(min = if (compactHeight) 40.dp else 48.dp)
                         .padding(vertical = if (compactHeight) 3.dp else 5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -570,7 +571,37 @@ fun OrbitalScreen(
         }
         }
 
-        // The keyboard stays reachable in portrait and compact landscape layouts.
+        // A short landscape viewport reserves its last 82dp for actual playable
+        // keys. Octave controls become a 36dp utility strip above the keyboard;
+        // full 48dp voice-mode targets remain in the PLAY editor.
+        if (compactHeight) {
+            Row(
+                Modifier.fillMaxWidth().height(36.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Label("OCT")
+                CompactOctaveButton(
+                    symbol = "−", description = "Lower octave",
+                    enabled = state.octave > 0,
+                    onClick = { onOctaveChange((state.octave - 1).coerceAtLeast(0)) },
+                )
+                Text(
+                    state.octave.toString(),
+                    color = OrbitalPalette.Text,
+                    fontSize = 12.sp,
+                )
+                CompactOctaveButton(
+                    symbol = "+", description = "Raise octave",
+                    enabled = state.octave < 8,
+                    onClick = { onOctaveChange((state.octave + 1).coerceAtMost(8)) },
+                )
+                Spacer(Modifier.weight(1f))
+                Label("MODE / " + state.playMode.name)
+            }
+        }
+
+        // Editor content scrolls independently; keyboard never becomes scrollable.
         OrbitalKeyboard(
             octave = state.octave.coerceIn(0, 8),
             onNoteOn = onNoteOn,
@@ -578,23 +609,25 @@ fun OrbitalScreen(
             modifier = Modifier.fillMaxWidth(),
             preferredHeight = if (compactHeight) 82.dp else if (compactOrbitLayout) 110.dp else null,
         )
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            Label("OCT")
-            Pill("−", false, { onOctaveChange((state.octave - 1).coerceAtLeast(0)) }, description = "Lower octave", enabled = state.octave > 0)
-            Text(
-                state.octave.toString(),
-                color = OrbitalPalette.Text,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(horizontal = 2.dp),
-            )
-            Pill("+", false, { onOctaveChange((state.octave + 1).coerceAtMost(8)) }, description = "Raise octave", enabled = state.octave < 8)
-            Spacer(Modifier.weight(1f))
-            PlayMode.entries.forEach { mode ->
-                Pill(mode.name, state.playMode == mode, { onModeChange(mode) }, role = Role.RadioButton)
+        if (!compactHeight) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Label("OCT")
+                Pill("−", false, { onOctaveChange((state.octave - 1).coerceAtLeast(0)) }, description = "Lower octave", enabled = state.octave > 0)
+                Text(
+                    state.octave.toString(),
+                    color = OrbitalPalette.Text,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 2.dp),
+                )
+                Pill("+", false, { onOctaveChange((state.octave + 1).coerceAtMost(8)) }, description = "Raise octave", enabled = state.octave < 8)
+                Spacer(Modifier.weight(1f))
+                PlayMode.entries.forEach { mode ->
+                    Pill(mode.name, state.playMode == mode, { onModeChange(mode) }, role = Role.RadioButton)
+                }
             }
         }
         Spacer(Modifier.height(if (compactHeight) 0.dp else 6.dp))
@@ -1014,12 +1047,40 @@ private fun PresetArrow(
 }
 
 @Composable
-private fun Header(patch: String, onOpenLibrary: () -> Unit, libraryEnabled: Boolean) {
+private fun CompactOctaveButton(
+    symbol: String,
+    description: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .width(42.dp)
+            .height(36.dp)
+            .border(
+                1.dp,
+                if (enabled) OrbitalPalette.Cyan.copy(alpha = .75f) else OrbitalPalette.PanelEdge,
+                RoundedCornerShape(10.dp),
+            )
+            .background(OrbitalPalette.Panel.copy(alpha = .75f), RoundedCornerShape(10.dp))
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            symbol, color = if (enabled) OrbitalPalette.Cyan else OrbitalPalette.Muted,
+            fontSize = 20.sp, fontWeight = FontWeight.Light,
+        )
+    }
+}
+
+@Composable
+private fun Header(patch: String, onOpenLibrary: () -> Unit, libraryEnabled: Boolean, compact: Boolean) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Canvas(Modifier.size(34.dp)) {
+        Canvas(Modifier.size(if (compact) 28.dp else 34.dp)) {
             val c = center
             val r = size.minDimension * .38f
             drawCircle(OrbitalPalette.Cyan.copy(alpha = .14f), radius = r * 1.24f)
@@ -1057,7 +1118,7 @@ private fun Header(patch: String, onOpenLibrary: () -> Unit, libraryEnabled: Boo
             modifier = Modifier.semantics { contentDescription = "Patch loaded: $patch" })
         Box(
             Modifier
-                .size(48.dp)
+                .size(if (compact) 40.dp else 48.dp)
                 .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .45f), RoundedCornerShape(14.dp))
                 .background(OrbitalPalette.Panel.copy(alpha = .60f), RoundedCornerShape(14.dp))
                 .clickable(enabled = libraryEnabled, role = Role.Button, onClick = onOpenLibrary)
