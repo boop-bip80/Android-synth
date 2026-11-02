@@ -133,19 +133,21 @@ internal class AudioSequencerTransport(
         name: String,
         pattern: StepPattern,
         bpm: Double = 120.0,
-        swing: Double = 0.0
+        swing: Double = 0.0,
+        enabledSteps: Set<Int>? = null
     ): Boolean {
         if (!Regex("[a-z0-9][a-z0-9-]{0,63}").matches(id) ||
             FactoryPatterns.byId(id) != null || name.isBlank() || name.length > 80 ||
             !bpm.isFinite() || bpm !in 20.0..300.0 ||
-            !swing.isFinite() || swing !in 0.0..1.0
+            !swing.isFinite() || swing !in 0.0..1.0 ||
+            enabledSteps?.any { it !in pattern.steps.indices } == true
         ) return false
         val frozen = try {
             pattern.copy(steps = pattern.steps.map { it.copy(notes = it.notes.toList()) })
         } catch (_: IllegalArgumentException) {
             return false
         }
-        commands.offer(Command.LoadPattern(id, name, frozen, bpm, swing))
+        commands.offer(Command.LoadPattern(id, name, frozen, bpm, swing, enabledSteps?.toSet()))
         return true
     }
 
@@ -200,7 +202,8 @@ internal class AudioSequencerTransport(
                 }
                 is Command.SelectFactoryPattern -> applyFactoryPattern(command.factory)
                 is Command.LoadPattern -> applyPattern(
-                    command.id, command.name, command.pattern, command.bpm, command.swing
+                    command.id, command.name, command.pattern, command.bpm, command.swing,
+                    command.enabledSteps
                 )
                 is Command.Resize -> {
                     if (command.revision != selectionRevision || command.steps == basePattern.steps.size) continue
@@ -243,14 +246,21 @@ internal class AudioSequencerTransport(
         applyPattern(selected.id, selected.name, selected.pattern, selected.bpm, selected.swing)
     }
 
-    private fun applyPattern(id: String, name: String, pattern: StepPattern, bpm: Double, swing: Double) {
-        releaseHeldNotes(sequencer.replacePattern(pattern))
-        releaseHeldNotes(sequencer.configure(bpm = bpm, swing = swing))
+    private fun applyPattern(
+        id: String, name: String, pattern: StepPattern, bpm: Double, swing: Double,
+        enabledSteps: Set<Int>? = null
+    ) {
         selectedId = id
         selectedName = name
         selectionRevision++
         basePattern = pattern
-        enabled = BooleanArray(pattern.steps.size) { pattern.steps[it].notes.isNotEmpty() }
+        enabled = BooleanArray(pattern.steps.size) {
+            enabledSteps?.contains(it) ?: pattern.steps[it].notes.isNotEmpty()
+        }
+        // Install the audible projection, keeping muted source notes intact for
+        // later re-enabling and for lossless saved-sequence round trips.
+        releaseHeldNotes(sequencer.replacePattern(audiblePattern()))
+        releaseHeldNotes(sequencer.configure(bpm = bpm, swing = swing))
         anchorSample = sequencer.cursorSample
         tempoSnapshot = bpm.toInt()
         publishPatternSnapshot()
@@ -258,18 +268,19 @@ internal class AudioSequencerTransport(
 
     /** Convert the editable source and mute grid into one transport pattern. */
     private fun rebuildAndRelease() {
-        val rendered = StepPattern(
-            steps = basePattern.steps.mapIndexed { index, step ->
-                if (!enabled[index]) SequencerStep()
-                else if (step.notes.isNotEmpty()) step
-                else generatedStep(index)
-            },
-            subdivisionsPerBeat = basePattern.subdivisionsPerBeat
-        )
-        releaseHeldNotes(sequencer.replacePattern(rendered))
-        anchorSample = sequencer.cursorSample
+        // A live mute, note edit or length change must not jump playback to bar 1.
+        releaseHeldNotes(sequencer.editPatternPreservingPhase(audiblePattern()))
         publishPatternSnapshot()
     }
+
+    private fun audiblePattern(): StepPattern = StepPattern(
+        steps = basePattern.steps.mapIndexed { index, step ->
+            if (!enabled[index]) SequencerStep()
+            else if (step.notes.isNotEmpty()) step
+            else generatedStep(index)
+        },
+        subdivisionsPerBeat = basePattern.subdivisionsPerBeat
+    )
 
     private fun publishPatternSnapshot() {
         patternSnapshot = FactoryPatternSelection(
@@ -330,7 +341,7 @@ internal class AudioSequencerTransport(
         data class SelectFactoryPattern(val factory: FactorySequence) : Command
         data class LoadPattern(
             val id: String, val name: String, val pattern: StepPattern,
-            val bpm: Double, val swing: Double
+            val bpm: Double, val swing: Double, val enabledSteps: Set<Int>?
         ) : Command
         data class Resize(val steps: Int, val revision: Long) : Command
         data class StepNotes(val index: Int, val step: SequencerStep, val revision: Long) : Command
