@@ -46,6 +46,32 @@ class UserSequenceTest {
         assertEquals(first, SequenceCodec.encode(SequenceCodec.decode(first)))
     }
 
+    @Test fun v2RoundTripsMutedNotesAndEnabledEmptyStepsWithoutFlatteningSources() {
+        val legacy = sample("v2-editable")
+        val stored = legacy.copy(enabledSteps = setOf(1, 2))
+        val encoded = SequenceCodec.encode(stored)
+        assertTrue(encoded.startsWith("ORBITAL-SEQUENCE/2\n"))
+        assertTrue(encoded.contains("enabled=1,2\n"))
+        val restored = SequenceCodec.decode(encoded)
+        assertEquals(stored, restored)
+        assertEquals(60, restored.pattern.steps[0].notes.single { it.midiNote == 60 }.midiNote)
+        assertTrue(0 !in restored.enabledSteps!!)
+        assertTrue(2 in restored.enabledSteps!!)
+        // Older files remain readable and unchanged on export.
+        assertNull(SequenceCodec.decode(SequenceCodec.encode(legacy)).enabledSteps)
+    }
+
+    @Test fun v2RejectsDuplicateUnsortedAndOutOfRangeEnabledFlags() {
+        val encoded = SequenceCodec.encode(sample("v2-invalid").copy(enabledSteps = setOf(1, 2)))
+        rejects { SequenceCodec.decode(encoded.replace("enabled=1,2", "enabled=2,1")) }
+        rejects { SequenceCodec.decode(encoded.replace("enabled=1,2", "enabled=1,1")) }
+        rejects { SequenceCodec.decode(encoded.replace("enabled=1,2", "enabled=0,3")) }
+        rejects { SequenceCodec.decode(encoded.replace("enabled=1,2", "enabled=-1")) }
+        rejects { SequenceCodec.decode(encoded.replace("enabled=1,2", "enabled=01")) }
+        rejects { SequenceCodec.decode(encoded.replace("enabled=1,2\n", "")) }
+        rejects { UserSequence("v2-invalid", "Invalid", sample().pattern, enabledSteps = setOf(3)) }
+    }
+
     @Test fun maximalPatternRoundTripsWithoutDroppingChords() {
         val chord = SequencerStep((48..63).map {
             SequencerNote(it, 127, 1.0, 1.0, it % 2 == 0)
