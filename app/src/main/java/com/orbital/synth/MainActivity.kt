@@ -304,7 +304,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Save the currently audible grid as a new editable user pattern. */
+    /** Save source notes and mute state independently so hidden notes survive reload. */
     private fun saveCurrentSequence(name: String) {
         if (sequenceSaveInFlight) return
         val selected = audioOutput.sequencerPatternSelection
@@ -317,37 +317,19 @@ class MainActivity : ComponentActivity() {
         val title = name.trim()
         val bankIds = audioOutput.sequencerFactoryPatterns.map { it.id }.toSet()
         val stored = runCatching {
+            // The editor may have submitted a valid edit that has not yet reached
+            // the audio worker. Capture that optimistic note snapshot too.
             val notes = selected.sourcePattern.steps.mapIndexed { index, step ->
-                screenState.sequenceNotesByStep.getOrNull(index) ?: step.notes
+                SequencerStep(screenState.sequenceNotesByStep.getOrNull(index) ?: step.notes)
             }
-            val enabled = screenState.enabledSteps
-            val audibleSteps = notes.indices.map { index ->
-                when {
-                    index !in enabled -> SequencerStep()
-                    notes[index].isNotEmpty() -> SequencerStep(notes[index])
-                    else -> {
-                        // Match the transport's generated-note behavior for an
-                        // enabled factory rest, so Save As preserves what plays.
-                        var nearestPitch = 60
-                        for (distance in 1..notes.size) {
-                            val previous = (index - distance + notes.size) % notes.size
-                            val previousNote = notes[previous].firstOrNull()
-                            if (previousNote != null) {
-                                nearestPitch = previousNote.midiNote
-                                break
-                            }
-                        }
-                        SequencerStep(listOf(SequencerNote(nearestPitch, velocity = 92, gate = 0.72)))
-                    }
-                }
-            }
-            StepPattern(audibleSteps, selected.sourcePattern.subdivisionsPerBeat)
+            StepPattern(notes, selected.sourcePattern.subdivisionsPerBeat)
         }
         if (stored.isFailure) {
             screenState = screenState.copy(patchFeedback = "Could not capture sequence: ${stored.exceptionOrNull()?.message}")
             return
         }
         val pattern = stored.getOrThrow()
+        val savedEnabledSteps = screenState.enabledSteps.toSet()
         val bpm = screenState.sequencerTempo.toDouble()
         val swing = selected.swing
         sequenceSaveInFlight = true
@@ -364,7 +346,10 @@ class MainActivity : ComponentActivity() {
                         while (id in used) {
                             id = "${slug.take(55)}-${suffix++}"
                         }
-                        UserSequence(id, title, pattern, bpm = bpm, swing = swing).also {
+                        UserSequence(
+                            id, title, pattern, bpm = bpm, swing = swing,
+                            enabledSteps = savedEnabledSteps,
+                        ).also {
                             userSequences.save(it)
                         }
                     }
@@ -397,7 +382,8 @@ class MainActivity : ComponentActivity() {
             if (request != sequenceSelectionToken) return@launch
             result.onSuccess { saved ->
                 if (saved == null || !audioOutput.loadSequencerPattern(
-                        saved.id, saved.name, saved.pattern, saved.bpm, saved.swing
+                        saved.id, saved.name, saved.pattern, saved.bpm, saved.swing,
+                        saved.enabledSteps,
                     )
                 ) {
                     screenState = screenState.copy(patchFeedback = "Sequence not found or invalid.")

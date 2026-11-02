@@ -5,30 +5,37 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 /**
- * Strict, deterministic, human-diffable ORBITAL-SEQUENCE/1 format.
+ * Strict, deterministic, human-diffable ORBITAL-SEQUENCE/1 and /2 formats.
  *
  * The metadata is fixed. Each step has one row, even when empty. Notes use
  * pitch,velocity,gate,probability,tie tuples separated by semicolons.
+ * Version 2 adds explicit enable flags without erasing muted source notes.
+ * Legacy values with null enabledSteps still encode as V1 for compatibility.
  * No Android dependency, reflection, JSON library or external resources.
  *
  * Import is deliberately strict: duplicate, missing, extra and malformed fields
  * fail rather than silently losing music. A newer format needs a new decoder.
  */
 object SequenceCodec {
-    const val CURRENT_VERSION = 1
+    const val CURRENT_VERSION = 2
     const val MAX_BYTES = 131_072
-    private const val MAGIC = "ORBITAL-SEQUENCE/1"
-    private val META_KEYS = setOf("id", "name", "bpm", "swing", "subdivisions", "steps")
+    private const val MAGIC_V1 = "ORBITAL-SEQUENCE/1"
+    private const val MAGIC_V2 = "ORBITAL-SEQUENCE/2"
+    private val META_KEYS_V1 = setOf("id", "name", "bpm", "swing", "subdivisions", "steps")
+    private val META_KEYS_V2 = META_KEYS_V1 + "enabled"
 
     fun encode(sequence: UserSequence): String {
         val out = StringBuilder(512)
-        out.append(MAGIC).append('\n')
+        out.append(if (sequence.enabledSteps == null) MAGIC_V1 else MAGIC_V2).append('\n')
         out.append("id=").append(escape(sequence.id)).append('\n')
         out.append("name=").append(escape(sequence.name)).append('\n')
         out.append("bpm=").append(sequence.bpm).append('\n')
         out.append("swing=").append(sequence.swing).append('\n')
         out.append("subdivisions=").append(sequence.pattern.subdivisionsPerBeat).append('\n')
         out.append("steps=").append(sequence.pattern.steps.size).append('\n')
+        sequence.enabledSteps?.let { enabled ->
+            out.append("enabled=").append(enabled.sorted().joinToString(",")).append('\n')
+        }
         sequence.pattern.steps.forEachIndexed { index, step ->
             out.append("step.").append(index).append('=')
             step.notes.forEachIndexed { noteIndex, note ->
@@ -54,7 +61,12 @@ object SequenceCodec {
         }
         val split = text.split('\n').map { it.removeSuffix("\r") }
         val lines = if (split.lastOrNull().isNullOrEmpty()) split.dropLast(1) else split
-        require(lines.firstOrNull() == MAGIC) { "Unknown sequence format/version" }
+        val hasEnabled = when (lines.firstOrNull()) {
+            MAGIC_V1 -> false
+            MAGIC_V2 -> true
+            else -> throw IllegalArgumentException("Unknown sequence format/version")
+        }
+        val metaKeys = if (hasEnabled) META_KEYS_V2 else META_KEYS_V1
 
         val fields = linkedMapOf<String, String>()
         for (line in lines.drop(1)) {
@@ -62,7 +74,7 @@ object SequenceCodec {
             require(separator > 0) { "Malformed sequence field" }
             val key = line.substring(0, separator)
             require(key !in fields) { "Duplicate sequence field" }
-            require(key in META_KEYS || validStepKey(key)) { "Unknown sequence field" }
+            require(key in metaKeys || validStepKey(key)) { "Unknown sequence field" }
             fields[key] = line.substring(separator + 1)
         }
 
@@ -75,8 +87,9 @@ object SequenceCodec {
 
         val stepCount = number("steps")
         require(stepCount in 1..64) { "Sequence must have 1..64 steps" }
-        val expected = META_KEYS + (0 until stepCount).map { "step." + it }
+        val expected = metaKeys + (0 until stepCount).map { "step." + it }
         require(fields.keys == expected) { "Missing, duplicate or out-of-range step rows" }
+        val enabled = if (hasEnabled) parseEnabledSteps(value("enabled"), stepCount) else null
 
         val pattern = StepPattern(
             steps = List(stepCount) { index ->
@@ -112,7 +125,20 @@ object SequenceCodec {
             pattern = pattern,
             bpm = decimal("bpm"),
             swing = decimal("swing"),
+            enabledSteps = enabled,
         )
+    }
+
+    private fun parseEnabledSteps(value: String, stepCount: Int): Set<Int> {
+        if (value.isEmpty()) return emptySet()
+        val indices = value.split(',').map { entry ->
+            require(entry.matches(Regex("0|[1-9][0-9]*"))) { "Invalid enabled-step index" }
+            entry.toIntOrNull() ?: throw IllegalArgumentException("Invalid enabled-step index")
+        }
+        require(indices == indices.distinct().sorted() && indices.all { it in 0 until stepCount }) {
+            "Enabled steps must be unique, ascending and in range"
+        }
+        return indices.toSet()
     }
 
     private fun validStepKey(key: String): Boolean {
