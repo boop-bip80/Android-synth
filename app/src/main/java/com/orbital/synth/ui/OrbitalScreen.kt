@@ -79,6 +79,9 @@ enum class PlayMode { POLY, MONO, LEGATO }
 /** The persistence layer owns IDs and patch data; UI needs only selectable metadata. */
 data class PatchChoice(val id: String, val name: String, val isFactory: Boolean)
 
+/** Stable transport IDs are supplied by the host; the UI never imports factory pattern data. */
+data class SequenceChoice(val id: String, val name: String)
+
 data class OrbitalUiState(
     val patchName: String = "AURORA",
     val playMode: PlayMode = PlayMode.POLY,
@@ -92,6 +95,8 @@ data class OrbitalUiState(
     val presetCount: Int = 0,
     val patchChoices: List<PatchChoice> = emptyList(),
     val activePatchId: String? = null,
+    val sequenceChoices: List<SequenceChoice> = emptyList(),
+    val activeSequenceId: String? = null,
     val patchFeedback: String? = null,
 )
 
@@ -122,6 +127,7 @@ fun OrbitalScreen(
     onNextPatch: (() -> Unit)? = null,
     onSavePatch: ((String) -> Unit)? = null,
     onSelectPatch: ((String) -> Unit)? = null,
+    onSelectSequence: ((String) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var showPatchLibrary by remember { mutableStateOf(false) }
@@ -375,6 +381,9 @@ fun OrbitalScreen(
                     if (externalSequencer) onStepToggle?.invoke(it)
                     else steps[it] = !steps[it]
                 },
+                state.sequenceChoices,
+                state.activeSequenceId,
+                onSelectSequence,
             )
             Tab.FX -> FxPanel(parameter, onParameterChange)
         }
@@ -805,6 +814,128 @@ internal fun expressionCoordinates(
     return (x / width).coerceIn(0f, 1f) to (1f - y / height).coerceIn(0f, 1f)
 }
 
+/** Keep only unique, named entries; never dispatch a stale or invalid ID from the view. */
+internal fun validSequenceChoices(choices: List<SequenceChoice>): List<SequenceChoice> =
+    choices.filter { it.id.isNotBlank() && it.name.isNotBlank() }.distinctBy { it.id }
+
+@Composable
+private fun SequenceSelector(
+    choices: List<SequenceChoice>,
+    activeId: String?,
+    onSelect: ((String) -> Unit)?,
+) {
+    val presented = validSequenceChoices(choices)
+    val selected = presented.firstOrNull { it.id == activeId }
+    val enabled = onSelect != null && presented.isNotEmpty()
+    var showingList by remember { mutableStateOf(false) }
+    LaunchedEffect(enabled) {
+        if (!enabled) showingList = false
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Label("FACTORY SEQUENCE")
+            Spacer(Modifier.weight(1f))
+            Label(if (presented.isEmpty()) "NO PATTERNS" else "${presented.size} AVAILABLE")
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .border(
+                    1.dp,
+                    if (enabled) OrbitalPalette.Cyan.copy(alpha = .6f) else OrbitalPalette.PanelEdge,
+                    RoundedCornerShape(12.dp),
+                )
+                .background(OrbitalPalette.Panel, RoundedCornerShape(12.dp))
+                .clickable(enabled = enabled, role = Role.Button) { showingList = true }
+                .semantics {
+                    contentDescription = if (presented.isEmpty()) "Factory sequences unavailable"
+                    else "Choose factory sequence"
+                }
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("◉", color = if (enabled) OrbitalPalette.Gold else OrbitalPalette.Muted, fontSize = 19.sp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    selected?.name ?: if (presented.isEmpty()) "PATTERNS UNAVAILABLE" else "CHOOSE PATTERN",
+                    color = if (selected != null) OrbitalPalette.Text else OrbitalPalette.Muted,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Label(if (selected != null) "ACTIVE PATTERN" else "BUILT-IN ARRANGEMENTS")
+            }
+            Text("⌄", color = if (enabled) OrbitalPalette.Cyan else OrbitalPalette.Muted, fontSize = 22.sp)
+        }
+    }
+    if (showingList && enabled) {
+        Dialog(onDismissRequest = { showingList = false }) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().widthIn(max = 480.dp),
+                shape = RoundedCornerShape(18.dp),
+                color = OrbitalPalette.Panel,
+            ) {
+                Column(
+                    Modifier.heightIn(max = 470.dp).verticalScroll(rememberScrollState()).padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Text(
+                        "CHOOSE SEQUENCE",
+                        color = OrbitalPalette.Text,
+                        fontSize = 14.sp,
+                        letterSpacing = 1.5.sp,
+                        modifier = Modifier.padding(bottom = 9.dp),
+                    )
+                    presented.forEach { choice ->
+                        val isActive = choice.id == activeId
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 52.dp)
+                                .border(
+                                    1.dp,
+                                    if (isActive) OrbitalPalette.Cyan else OrbitalPalette.PanelEdge,
+                                    RoundedCornerShape(10.dp),
+                                )
+                                .background(
+                                    if (isActive) OrbitalPalette.Cyan.copy(alpha = .15f)
+                                    else OrbitalPalette.Void.copy(alpha = .40f),
+                                    RoundedCornerShape(10.dp),
+                                )
+                                .clickable(role = Role.RadioButton) {
+                                    showingList = false
+                                    // Recheck membership because entries can change while the dialog is open.
+                                    if (choice.id != activeId && validSequenceChoices(choices).any { it.id == choice.id }) {
+                                        onSelect?.invoke(choice.id)
+                                    }
+                                }
+                                .semantics {
+                                    selected = isActive
+                                    contentDescription = "Select factory sequence ${choice.name}"
+                                }
+                                .padding(horizontal = 13.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Text(if (isActive) "●" else "○", color = if (isActive) OrbitalPalette.Cyan else OrbitalPalette.Muted)
+                            Text(
+                                choice.name,
+                                color = OrbitalPalette.Text,
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 2,
+                            )
+                            if (isActive) Label("ACTIVE")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SequencerPanel(
     steps: List<Boolean>,
@@ -814,6 +945,9 @@ private fun SequencerPanel(
     bpm: Int,
     onTempoChange: (Int) -> Unit,
     onStepToggle: (Int) -> Unit,
+    sequenceChoices: List<SequenceChoice>,
+    activeSequenceId: String?,
+    onSelectSequence: ((String) -> Unit)?,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
         Row(
@@ -824,6 +958,7 @@ private fun SequencerPanel(
             Spacer(Modifier.weight(1f))
             Pill(if (playing) "STOP" else "PLAY ▶", playing, onTogglePlaying)
         }
+        SequenceSelector(sequenceChoices, activeSequenceId, onSelectSequence)
         Label("Tap any step to enable/disable it. The running pattern plays the synthesizer.")
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             // 8 columns are too narrow to touch reliably on a 360dp phone.
