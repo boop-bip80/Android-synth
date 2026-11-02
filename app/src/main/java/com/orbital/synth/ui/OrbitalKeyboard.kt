@@ -70,6 +70,7 @@ internal fun OrbitalKeyboard(
     onNoteOn: (Int) -> Unit,
     onNoteOff: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    preferredHeight: androidx.compose.ui.unit.Dp? = null,
 ) {
     val noteOn by rememberUpdatedState(onNoteOn)
     val noteOff by rememberUpdatedState(onNoteOff)
@@ -81,7 +82,7 @@ internal fun OrbitalKeyboard(
         Canvas(
             Modifier
                 .fillMaxWidth()
-                .height(if (whiteCount == 15) 142.dp else 158.dp)
+                .height(preferredHeight ?: if (whiteCount == 15) 142.dp else 158.dp)
                 .semantics {
                     contentDescription = "Multitouch piano keyboard. Swipe across keys to play; use OCT buttons to change range."
                     customActions = (0 until 8).map { index ->
