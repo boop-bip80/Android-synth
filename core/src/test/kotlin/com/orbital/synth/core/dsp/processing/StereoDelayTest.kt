@@ -124,4 +124,34 @@ class StereoDelayTest {
             assertTrue(out[0].isFinite() && out[1].isFinite())
         }
     }
+
+    @Test fun hardBypassForgetsOldDelayTailAndRestartsWetFromDry() {
+        val delay = StereoDelay(8_000, maxDelaySeconds = 0.01f)
+        val out = FloatArray(2)
+        delay.configure(1f / 8_000f, feedback = 0.92f, wet = 1f, pingPong = 1f)
+        repeat(400) { delay.process(0.75f, -0.6f, out, 0) }
+
+        delay.resetForBypass()
+        repeat(200) {
+            delay.process(0f, 0f, out, 0)
+            assertEquals("Bypassed delay replayed an old echo", 0f, out[0], 0f)
+            assertEquals(0f, out[1], 0f)
+        }
+
+        delay.configure(1f / 8_000f, feedback = 0.3f, wet = 1f, pingPong = 0f)
+        delay.process(1f, 0f, out, 0)
+        assertTrue("Wet gain inherited the previous preset", out[0] > 0.95f)
+        repeat(1_200) { delay.process(0f, 0f, out, 0) }
+        delay.process(1f, 0f, out, 0)
+        assertTrue("Wet gain did not settle", kotlin.math.abs(out[0]) < 0.05f)
+    }
+
+    @Test fun bypassBeforeInitialConfigurePreventsAnAbruptWetJump() {
+        val delay = StereoDelay(8_000, maxDelaySeconds = 0.01f)
+        delay.resetForBypass()
+        delay.configure(1f / 8_000f, feedback = 0f, wet = 1f)
+        val out = FloatArray(2)
+        delay.process(1f, 0f, out, 0)
+        assertTrue(out[0] > 0.95f)
+    }
 }
