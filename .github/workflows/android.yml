@@ -34,7 +34,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Validate emulator harness syntax
-        run: bash -n .github/workflows/ci-emulator.sh
+        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-landscape.sh
       - name: Host tests, lint, app APK and instrumentation test APK
         run: gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
       - name: Upload debug APK
@@ -115,7 +115,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           # The runner executes each nonempty script line in a separate `sh -c`.
           # Use one Bash command so traps, pipefail and exit codes work together.
-          script: bash .github/workflows/ci-emulator.sh
+          script: bash .github/workflows/ci-emulator.sh && bash .github/workflows/ci-landscape.sh
       - name: Upload real emulator screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -124,6 +124,7 @@ jobs:
           path: |
             artifacts/orbital-emulator.png
             artifacts/orbital-compact-emulator.png
+            artifacts/orbital-landscape-emulator.png
           # On a green job, a missing deliverable is a CI failure; on a failed
           # build/emulator run, retain best-effort artifact diagnostics.
           if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
@@ -155,6 +156,11 @@ jobs:
             artifacts/portrait-launcher-recovery-launch.txt
             artifacts/compact-launcher-recovery-launch.txt
             artifacts/display-state.txt
+            artifacts/landscape-activity-launch.txt
+            artifacts/landscape-window-state.txt
+            artifacts/landscape-exit-status.txt
+            artifacts/landscape-provenance.txt
+            artifacts/landscape-logcat.txt
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload instrumentation results
