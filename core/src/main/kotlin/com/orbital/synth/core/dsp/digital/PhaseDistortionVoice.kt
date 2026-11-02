@@ -122,12 +122,15 @@ class PhaseDistortionVoice(val sampleRate: Int) {
         val hz = (fundamentalHz * pitchMultiplier).coerceIn(0.0, sampleRate * 0.45)
         val increment = hz / sampleRate
         // At high fundamentals, tame the sharper wavefoldings before Nyquist.
-        val spectralHeadroom = ((0.45 - increment * 4.0) / 0.35).coerceIn(0.0, 1.0)
+        val spectralHeadroom = ((0.30 - increment * 4.0) / 0.28).coerceIn(0.0, 1.0)
         val color = 0.5 + (character - 0.5) * spectralHeadroom
         var integrated = 0.0
         for (tap in 0..3) {
             val p = phase + increment * (tap + 0.5) * 0.25
-            integrated += waveform(p - floor(p), color)
+            val wrapped = p - floor(p)
+            val transparentSine = DigitalSineTable.sample(wrapped)
+            val detailed = waveform(wrapped, color)
+            integrated += transparentSine + (detailed - transparentSine) * spectralHeadroom
         }
         phase += increment
         if (phase >= 1.0) phase -= floor(phase)
