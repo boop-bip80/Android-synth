@@ -434,14 +434,14 @@ fun OrbitalScreen(
             horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             Label("OCT")
-            Pill("−", false, { onOctaveChange((state.octave - 1).coerceAtLeast(0)) }, description = "Lower octave")
+            Pill("−", false, { onOctaveChange((state.octave - 1).coerceAtLeast(0)) }, description = "Lower octave", enabled = state.octave > 0)
             Text(
                 state.octave.toString(),
                 color = OrbitalPalette.Text,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(horizontal = 2.dp),
             )
-            Pill("+", false, { onOctaveChange((state.octave + 1).coerceAtMost(8)) }, description = "Raise octave")
+            Pill("+", false, { onOctaveChange((state.octave + 1).coerceAtMost(8)) }, description = "Raise octave", enabled = state.octave < 8)
             Spacer(Modifier.weight(1f))
             PlayMode.entries.forEach { mode ->
                 Pill(mode.name, state.playMode == mode, { onModeChange(mode) }, role = Role.RadioButton)
@@ -712,12 +712,14 @@ private fun Pill(
     onClick: () -> Unit,
     description: String? = null,
     role: Role = Role.Button,
+    enabled: Boolean = true,
 ) {
     Box(
         Modifier
             .border(
                 1.dp,
-                if (active) OrbitalPalette.Cyan else OrbitalPalette.PanelEdge,
+                if (!enabled) OrbitalPalette.PanelEdge.copy(alpha = .45f)
+                else if (active) OrbitalPalette.Cyan else OrbitalPalette.PanelEdge,
                 RoundedCornerShape(50),
             )
             .background(
@@ -725,7 +727,7 @@ private fun Pill(
                 else OrbitalPalette.Panel.copy(alpha = .45f),
                 RoundedCornerShape(50),
             )
-            .clickable(role = role, onClick = onClick)
+            .clickable(enabled = enabled, role = role, onClick = onClick)
             .semantics {
                 if (role == Role.RadioButton) selected = active
                 if (description != null) contentDescription = description
@@ -738,7 +740,8 @@ private fun Pill(
             label,
             fontSize = 9.sp,
             letterSpacing = .65.sp,
-            color = if (active) Color.White else OrbitalPalette.Muted,
+            color = if (!enabled) OrbitalPalette.Muted.copy(alpha = .45f)
+            else if (active) Color.White else OrbitalPalette.Muted,
         )
     }
 }
