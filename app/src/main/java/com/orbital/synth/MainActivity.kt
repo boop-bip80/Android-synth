@@ -20,6 +20,7 @@ import com.orbital.synth.core.music.SequenceDirectoryStore
 import com.orbital.synth.core.music.SequencerNote
 import com.orbital.synth.core.music.SequencerStep
 import com.orbital.synth.core.music.StepPattern
+import com.orbital.synth.core.music.SequencerToggleReconciler
 import com.orbital.synth.core.music.UserSequence
 import com.orbital.synth.core.preset.FactoryPresets
 import com.orbital.synth.core.preset.loadPatch
@@ -64,6 +65,7 @@ class MainActivity : ComponentActivity() {
     // These mutations and the Compose poll both run on the main thread.
     private var pendingStepRevision: Long? = null
     private val pendingStepNotes = mutableMapOf<Int, List<SequencerNote>>()
+    private val pendingToggleIntents = SequencerToggleReconciler()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -152,11 +154,15 @@ class MainActivity : ComponentActivity() {
                     val displayedNotes = actualNotes.mapIndexed { index, notes ->
                         pendingStepNotes[index] ?: notes
                     }
-                    val displayedEnabled = sequence.enabledSteps.toMutableSet().apply {
+                    val enabledWithPendingNotes = sequence.enabledSteps.toMutableSet().apply {
                         pendingStepNotes.forEach { (index, notes) ->
                             if (notes.isEmpty()) remove(index) else add(index)
                         }
                     }
+                    val displayedEnabled = pendingToggleIntents.reconcile(
+                        sequence.revision, sequence.appliedStepToggleId,
+                        enabledWithPendingNotes, sequence.stepCount,
+                    )
                     if (screenState.sequencerStep != step ||
                         screenState.activeSequenceId != sequence.id ||
                         screenState.enabledSteps != displayedEnabled ||
@@ -197,13 +203,22 @@ class MainActivity : ComponentActivity() {
                         screenState = screenState.copy(sequencerRunning = next)
                     },
                     onStepToggle = { step ->
-                        if (step in 0 until screenState.sequencerStepCount) {
+                        val selection = audioOutput.sequencerPatternSelection
+                        if (screenState.activeSequenceId == selection.id &&
+                            screenState.sequencerStepCount == selection.stepCount &&
+                            step in 0 until selection.stepCount
+                        ) {
                             val newEnabled = step !in screenState.enabledSteps
-                            audioOutput.setSequencerStepEnabled(step, newEnabled)
-                            val updated = screenState.enabledSteps.toMutableSet().apply {
-                                if (newEnabled) add(step) else remove(step)
+                            val ticket = audioOutput.setSequencerStepEnabled(step, newEnabled)
+                            if (ticket != null) {
+                                pendingToggleIntents.record(
+                                    selection.revision, step, newEnabled, ticket,
+                                )
+                                val updated = screenState.enabledSteps.toMutableSet().apply {
+                                    if (newEnabled) add(step) else remove(step)
+                                }
+                                screenState = screenState.copy(enabledSteps = updated)
                             }
-                            screenState = screenState.copy(enabledSteps = updated)
                         }
                     },
                     onSequencerTempoChange = { bpm ->
@@ -292,6 +307,9 @@ class MainActivity : ComponentActivity() {
         }
         if (pendingStepRevision != selection.revision) pendingStepNotes.clear()
         pendingStepRevision = selection.revision
+        // A subsequent note edit determines the step's enable state, superseding
+        // any earlier pending toggle on this same step.
+        pendingToggleIntents.clearStep(step)
         val frozen = notes.toList()
         pendingStepNotes[step] = frozen
         val visible = screenState.sequenceNotesByStep
@@ -373,6 +391,7 @@ class MainActivity : ComponentActivity() {
         val request = ++sequenceSelectionToken
         pendingStepNotes.clear()
         pendingStepRevision = null
+        pendingToggleIntents.clear()
         if (audioOutput.sequencerFactoryPatterns.any { it.id == id }) {
             audioOutput.selectFactoryPattern(id)
             return
