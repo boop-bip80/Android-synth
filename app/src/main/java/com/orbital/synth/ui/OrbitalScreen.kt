@@ -856,7 +856,7 @@ private fun SequenceSelector(
     onSelect: ((String) -> Unit)?,
 ) {
     val presented = validSequenceChoices(choices)
-    val selected = presented.firstOrNull { it.id == activeId }
+    val activeChoice = presented.firstOrNull { it.id == activeId }
     val enabled = onSelect != null && presented.isNotEmpty()
     var showingList by remember { mutableStateOf(false) }
     LaunchedEffect(enabled) {
@@ -890,13 +890,13 @@ private fun SequenceSelector(
             Text("◉", color = if (enabled) OrbitalPalette.Gold else OrbitalPalette.Muted, fontSize = 19.sp)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    selected?.name ?: if (presented.isEmpty()) "PATTERNS UNAVAILABLE" else "CHOOSE PATTERN",
-                    color = if (selected != null) OrbitalPalette.Text else OrbitalPalette.Muted,
+                    activeChoice?.name ?: if (presented.isEmpty()) "PATTERNS UNAVAILABLE" else "CHOOSE PATTERN",
+                    color = if (activeChoice != null) OrbitalPalette.Text else OrbitalPalette.Muted,
                     fontSize = 12.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Label(if (selected != null) "ACTIVE PATTERN" else "BUILT-IN ARRANGEMENTS")
+                Label(if (activeChoice != null) "ACTIVE PATTERN" else "BUILT-IN ARRANGEMENTS")
             }
             Text("⌄", color = if (enabled) OrbitalPalette.Cyan else OrbitalPalette.Muted, fontSize = 22.sp)
         }
