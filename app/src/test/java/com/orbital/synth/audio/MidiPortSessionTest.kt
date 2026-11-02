@@ -147,7 +147,7 @@ class MidiPortSessionTest {
             0xB2.toByte(), 64, 127,
             0x92.toByte(), 70, 110, 71, 100,
             0x82.toByte(), 70, 30,
-            0xB2.toByte(), 123, 0,
+            0xB2.toByte(), 120, 0,
             0x82.toByte(), 70, 31, 71, 40
         ))
         assertEquals(
@@ -272,4 +272,64 @@ class MidiPortSessionTest {
             events
         )
     }
+
+    @Test
+    fun cc123AllNotesOffRespectsSustainAndDoesNotReleaseOtherChannel() {
+        val events = Events()
+        val port = MidiPortSession(events)
+        port.feed(byteArrayOf(
+            0x90.toByte(), 60, 101,
+            0xB0.toByte(), 64, 127,
+            0x80.toByte(), 60, 20, // already latched under sustain
+            0x90.toByte(), 61, 110, // still physically held
+            0x91.toByte(), 62, 100, // separate MIDI channel
+            0xB0.toByte(), 123, 0,  // all notes off, but pedal is down
+            0x80.toByte(), 61, 0    // duplicate hardware release must not count
+        ))
+        assertEquals(
+            listOf("on:0:60:101", "on:0:61:110", "on:1:62:100"),
+            events.notes
+        )
+        port.feed(byteArrayOf(0xB0.toByte(), 64, 0))
+        assertEquals(
+            listOf(
+                "on:0:60:101", "on:0:61:110", "on:1:62:100",
+                "off:0:60:0", "off:0:61:0"
+            ),
+            events.notes
+        )
+        port.close()
+        assertEquals("off:1:62:0", events.notes.last())
+        assertEquals(6, events.notes.size)
+    }
+
+    @Test
+    fun cc123AndSamePitchRetriggerUnderPedalDoNotDoubleRelease() {
+        val events = Events()
+        val port = MidiPortSession(events)
+        port.feed(byteArrayOf(
+            0xB0.toByte(), 64, 127,
+            0x90.toByte(), 60, 100,
+            0xB0.toByte(), 123, 0,
+            0xB0.toByte(), 123, 0, // idempotent while nothing is held
+            0x90.toByte(), 60, 105
+        ))
+        // The original sustained note remains sounding while the new key is down.
+        assertEquals(listOf("on:0:60:100", "on:0:60:105"), events.notes)
+        port.feed(byteArrayOf(0xB0.toByte(), 64, 0))
+        assertEquals(
+            listOf("on:0:60:100", "on:0:60:105", "off:0:60:0"),
+            events.notes
+        )
+        port.feed(byteArrayOf(0x80.toByte(), 60, 35))
+        port.close()
+        assertEquals(
+            listOf(
+                "on:0:60:100", "on:0:60:105", "off:0:60:0",
+                "off:0:60:35"
+            ),
+            events.notes
+        )
+    }
+
 }

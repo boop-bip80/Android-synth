@@ -27,10 +27,9 @@ class AndroidMidiManager(
     private val handler = Handler(Looper.getMainLooper())
     private val lock = Any()
     private val connections = mutableMapOf<Int, DeviceConnection>()
-    private val opening = mutableSetOf<Int>()
-    // A device can disappear while openDevice() is still in flight. Do not
-    // attach its late callback to an already detached physical controller.
-    private val detached = mutableSetOf<Int>()
+    // Guard detach/re-add races, including a late callback whose device ID
+    // has been reused by a newer physical connection.
+    private val openState = MidiDeviceOpenState()
 
     // No two port connections share an ID, even across detach/reconnect or
     // distinct AndroidMidiManager instances in the same process.
@@ -59,7 +58,9 @@ class AndroidMidiManager(
             started = true
             callbackForSession = object : MidiManager.DeviceCallback() {
                 override fun onDeviceAdded(device: MidiDeviceInfo) {
-                    synchronized(lock) { if (generation == session) detached.remove(device.id) }
+                    synchronized(lock) {
+                        if (started && generation == session) openState.onAttached(device.id)
+                    }
                     openIfNeeded(device, session)
                 }
 
@@ -68,8 +69,7 @@ class AndroidMidiManager(
                     // a stale callback could disconnect a *new* start session.
                     val previous = synchronized(lock) {
                         if (!started || generation != session) null else {
-                            detached.add(device.id)
-                            opening.remove(device.id)
+                            openState.onDetached(device.id)
                             connections.remove(device.id)
                         }
                     }
@@ -105,8 +105,7 @@ class AndroidMidiManager(
         synchronized(lock) {
             started = false
             generation++ // invalidate in-flight openDevice callbacks from this session
-            opening.clear()
-            detached.clear()
+            openState.clear()
             oldConnections = connections.values.toList()
             connections.clear()
             oldCallback = registeredCallback
@@ -126,25 +125,38 @@ class AndroidMidiManager(
     private fun openIfNeeded(info: MidiDeviceInfo, session: Long) {
         val midi = manager ?: return
         if (info.outputPortCount <= 0) return
-        synchronized(lock) {
-            if (!started || generation != session || info.id in detached ||
-                info.id in opening || info.id in connections) return
-            opening.add(info.id)
-        }
+        val epoch = synchronized(lock) {
+            if (!started || generation != session) null
+            else openState.beginOpen(info.id, info.id in connections)
+        } ?: return
         try {
-            midi.openDevice(info, { device -> onDeviceOpened(info, device, session) }, handler)
+            midi.openDevice(
+                info,
+                { device -> onDeviceOpened(info, device, session, epoch) },
+                handler
+            )
         } catch (failure: Exception) {
-            synchronized(lock) { if (generation == session) opening.remove(info.id) }
+            synchronized(lock) {
+                if (generation == session) openState.finishOpen(info.id, epoch)
+            }
             Log.w("OrbitalMidi", "Could not open MIDI device", failure)
         }
     }
 
-    private fun onDeviceOpened(info: MidiDeviceInfo, device: MidiDevice?, session: Long) {
+    private fun onDeviceOpened(
+        info: MidiDeviceInfo,
+        device: MidiDevice?,
+        session: Long,
+        epoch: Long
+    ) {
         val shouldConnect = synchronized(lock) {
-            if (generation == session) opening.remove(info.id)
-            started && generation == session && info.id !in connections && info.id !in detached
+            started && generation == session &&
+                openState.isCurrentOpening(info.id, epoch, info.id in connections)
         }
         if (!shouldConnect || device == null) {
+            synchronized(lock) {
+                if (generation == session) openState.finishOpen(info.id, epoch)
+            }
             runCatching { device?.close() }
             return
         }
@@ -185,8 +197,11 @@ class AndroidMidiManager(
 
         val connection = DeviceConnection(device, ports)
         val accepted = synchronized(lock) {
-            if (started && generation == session && info.id !in detached &&
-                info.id !in connections && ports.isNotEmpty()) {
+            val currentSession = started && generation == session
+            val canAttach = currentSession && ports.isNotEmpty() &&
+                openState.isCurrentOpening(info.id, epoch, info.id in connections)
+            if (generation == session) openState.finishOpen(info.id, epoch)
+            if (canAttach) {
                 connections[info.id] = connection
                 true
             } else false
