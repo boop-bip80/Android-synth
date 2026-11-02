@@ -30,14 +30,15 @@ The [Android — build, JVM tests and emulator workflow](../.github/workflows/an
 
 1. Run portable Kotlin DSP/music JUnit4 tests, Android app unit tests, Android lint, debug APK assembly and instrumentation test APK compilation.
 2. Boot an Android API 35 x86_64 emulator, run instrumented smoke tests (including background/resume/recreate lifecycle), explicitly launch `com.orbital.synth/.MainActivity` and verify `am start -W` reports success.
-3. Capture a **real** app screenshot via `adb shell screencap -p`.
+3. Verify `MainActivity` owns the foreground window after its launch (with a bounded 45-second wait), then capture and validate a **real PNG** of the app via `adb exec-out screencap -p`.
 
 After **successful execution**, the run provides artifacts (14-day retention):
 
 - `orbital-debug-apk`: the installable developer build.
 - `orbital-api35-emulator-screenshot`: actual emulator screenshot, never the generated design mockup.
 - `orbital-android-test-results`: instrumentation reports if generated.
-- `orbital-api35-emulator-diagnostics`: logcat, activity dump, launch result and diagnostic screen if the runner reached the emulator script.
+- `orbital-api35-emulator-diagnostics`: recent logcat, activity and window state, launch result, SDK version, script exit status, verified-screenshot checksum when available, and diagnostic screen if the runner reached the emulator script.
+- `orbital-debug-android-test-apk`: compiled instrumentation APK to facilitate reproducing an emulator failure.
 - `orbital-host-test-reports`: portable/core and Android JVM test reports, even when those tests fail and produced output.
 - `orbital-lint`: lint report if generated.
 
