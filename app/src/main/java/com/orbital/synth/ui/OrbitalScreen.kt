@@ -1532,8 +1532,8 @@ private fun defaultValue(id: ParameterId): Float = when (id) {
     ParameterId.LFO_RATE -> .39f
     ParameterId.LFO_DEPTH -> .21f
     ParameterId.GLIDE -> .12f
-    // Compatible with optional new voice-engine parameters on merged builds.
-    else -> .25f
+    // Neutral default for optional controls (UNISON/DETUNE) in a fresh demo state.
+    else -> 0f
 }
 
 private fun percent(value: Float): String = (value.coerceIn(0f, 1f) * 100f).roundToInt().toString() + "%"
