@@ -49,7 +49,11 @@ The current sequencer UI also accepts immutable `sequenceNotesByStep` data (list
 
 The master wet bus is `Drive → StereoChorus → StereoDelay → StereoReverb → FxBypassCrossfade`, using preallocated stereo scratch frames. The bypass crossfade must finish before chorus, delay and reverb tails are invalidated. Both unison controls default to zero and old patch files must remain sonically neutral when loaded.
 
-`SequenceDirectoryStore` persists versioned `UserSequence` files under app-private `filesDir/sequences` with blocking I/O only on `Dispatchers.IO`. The UI saves the audible pattern (muted steps are encoded as rests); user selections are queued to the audio worker through `loadSequencerPattern`. This flattening is an explicit current limitation for future nondestructive mute-layer storage.
+`SequenceDirectoryStore` persists versioned `UserSequence` files under app-private `filesDir/sequences` with blocking I/O only on `Dispatchers.IO`. The V2 codec preserves source notes, velocities and enable/mute state without flattening hidden notes into rests; V1 files remain readable. MainActivity restores V2 step enable-state through the worker-owned queue. The UI's pending notes and step-toggle intents reconcile with render-worker snapshots: accepted toggle commands have monotonically ordered acknowledgement tickets so rapid OFF→ON taps cannot be erased by a delayed poll, and live edits preserve playback phase. Malformed persistence metadata is rejected.
+
+The Android audio-focus policy owns transient interruption and resume explicitly: the AudioManager focus claim is retained until a transient loss is resolved, while an explicit app stop or permanent loss abandons it. Focus request and abandonment are serialized with audio lifecycle transitions. Physical phone-call/headset behavior still requires device testing.
+
+The Compose sound view adapts to compact widths/large font scales by moving patch metadata and controls outside the orbit and presenting a fully visible expandable modulation chart control. Android UI instrumentation asserts bounds on a 360 dp / 1.3× font configuration, while screenshot capture and manual inspection remain separate validation steps.
 
 ## Workstream ownership
 1. DSP synth engine + wavetable/voices: `:core` root and oscillator/voice classes.
