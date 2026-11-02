@@ -173,6 +173,23 @@ class PerformanceArpTransportTest {
     }
 
     @Test
+    fun extraPerformanceKnobsValidateBoundsAndPublishRequestedValues() {
+        val fake = Fake()
+        assertTrue(fake.transport.setOctaves(3))
+        assertTrue(fake.transport.setRatchets(4))
+        assertTrue(fake.transport.setGate(0.35))
+        assertTrue(fake.transport.setProbability(0.75))
+        assertFalse(fake.transport.setOctaves(0))
+        assertFalse(fake.transport.setRatchets(9))
+        assertFalse(fake.transport.setGate(Double.NaN))
+        assertFalse(fake.transport.setProbability(-0.1))
+        assertEquals(3, fake.transport.octaves)
+        assertEquals(4, fake.transport.ratchets)
+        assertEquals(0.35, fake.transport.gate, 0.0)
+        assertEquals(0.75, fake.transport.probability, 0.0)
+    }
+
+    @Test
     fun invalidInputIsRejectedWithoutWorkerSideEffects() {
         val fake = Fake()
         fake.transport.onWorkerStart()
