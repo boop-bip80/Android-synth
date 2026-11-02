@@ -115,7 +115,7 @@ class AndroidMidiManager(
         try {
             midi.openDevice(info, { device -> onDeviceOpened(info, device, session) }, handler)
         } catch (failure: Exception) {
-            synchronized(lock) { opening.remove(info.id) }
+            synchronized(lock) { if (generation == session) opening.remove(info.id) }
             Log.w("OrbitalMidi", "Could not open MIDI device", failure)
         }
     }

@@ -235,6 +235,10 @@ class AndroidAudioOutput(
             runCatching { config.track.pause() }
             runCatching { config.track.flush() }
             runCatching { config.track.release() }
+            // Abandon the previous focus claim before advertising an idle worker.
+            // Otherwise a concurrent start() could acquire focus just before we
+            // accidentally abandon that newer session.
+            abandonFocus()
             val restartToken: Long?
             synchronized(lifecycleLock) {
                 if (playback === config.track) playback = null
@@ -242,7 +246,6 @@ class AndroidAudioOutput(
                 restartToken = pendingRestartToken
                 pendingRestartToken = null
             }
-            abandonFocus()
             if (restartToken != null) {
                 synchronized(lifecycleLock) {
                     if (!disposed && lifecycleGeneration == restartToken) start()
