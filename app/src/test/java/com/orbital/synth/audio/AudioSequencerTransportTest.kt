@@ -78,6 +78,22 @@ class AudioSequencerTransportTest {
     }
 
     @Test
+    fun enablingFactoryRestCreatesAnAudibleStep() {
+        val fake = Fake()
+        // Aurora factory slot 1 is an intentional rest.
+        assertFalse(1 in fake.transport.enabledSteps)
+        fake.transport.setTempo(300)
+        fake.transport.setStepEnabled(1, true)
+        fake.transport.setPlaying(true)
+        fake.transport.onWorkerStart()
+        // At 300 BPM step 1 begins near sample 2508; 20 blocks cover 3840 frames.
+        repeat(20) { fake.render() }
+        assertTrue(1 in fake.transport.enabledSteps)
+        // Step 0 has two notes; the enabled rest must add a third note onset.
+        assertTrue(fake.noteOnCalls >= 3)
+    }
+
+    @Test
     fun lifecycleShutdownReleasesNotesAndRestartHonorsDesiredPlayback() {
         val fake = Fake()
         fake.transport.setPlaying(true)

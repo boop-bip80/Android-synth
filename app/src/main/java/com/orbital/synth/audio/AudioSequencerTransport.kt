@@ -2,6 +2,7 @@ package com.orbital.synth.audio
 
 import com.orbital.synth.core.music.FactoryPatterns
 import com.orbital.synth.core.music.NoteEventKind
+import com.orbital.synth.core.music.SequencerNote
 import com.orbital.synth.core.music.SequencerStep
 import com.orbital.synth.core.music.StepPattern
 import com.orbital.synth.core.music.StepSequencer
@@ -25,7 +26,9 @@ internal class AudioSequencerTransport(
 ) {
     private val factory = FactoryPatterns.DEFAULT
     private val basePattern = factory.pattern
-    private val enabled = BooleanArray(basePattern.steps.size) { true }
+    private val enabled = BooleanArray(basePattern.steps.size) { index ->
+        basePattern.steps[index].notes.isNotEmpty()
+    }
     private val sequencer = StepSequencer(
         pattern = basePattern,
         sampleRate = sampleRate,
@@ -40,7 +43,7 @@ internal class AudioSequencerTransport(
     @Volatile private var playingSnapshot = false
     @Volatile private var playheadSnapshot = -1
     @Volatile private var tempoSnapshot = factory.bpm.toInt()
-    @Volatile private var enabledSnapshot = enabled.indices.toSet()
+    @Volatile private var enabledSnapshot = enabled.indices.filter { enabled[it] }.toSet()
 
     val isPlaying: Boolean get() = playingSnapshot
     val playhead: Int get() = playheadSnapshot
@@ -104,7 +107,9 @@ internal class AudioSequencerTransport(
                         enabled[command.index] = command.value
                         val updated = StepPattern(
                             steps = basePattern.steps.mapIndexed { stepIndex, step ->
-                                if (enabled[stepIndex]) step else SequencerStep()
+                                if (!enabled[stepIndex]) SequencerStep()
+                                else if (step.notes.isNotEmpty()) step
+                                else generatedStep(stepIndex)
                             },
                             subdivisionsPerBeat = basePattern.subdivisionsPerBeat
                         )
@@ -115,6 +120,25 @@ internal class AudioSequencerTransport(
                 }
             }
         }
+    }
+
+    /**
+     * A factory rest may be turned into a note by tapping its inactive cell.
+     * Reuse the nearest preceding factory pitch to stay musically coherent;
+     * fall back to middle C if the factory pattern contains no notes.
+     */
+    private fun generatedStep(index: Int): SequencerStep {
+        val count = basePattern.steps.size
+        var pitch = 60
+        for (distance in 1..count) {
+            val previous = (index - distance + count) % count
+            val note = basePattern.steps[previous].notes.firstOrNull()
+            if (note != null) {
+                pitch = note.midiNote
+                break
+            }
+        }
+        return SequencerStep(listOf(SequencerNote(pitch, velocity = 92, gate = 0.72)))
     }
 
     private fun releaseHeldNotes(events: List<TimedNoteEvent>) {
