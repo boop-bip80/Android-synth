@@ -13,6 +13,12 @@ data class UserSequence(
     val pattern: StepPattern,
     val bpm: Double = 120.0,
     val swing: Double = 0.0,
+    /**
+     * Explicit per-step enable state. Null means the legacy/default behavior:
+     * every source step containing notes is enabled. A non-null set keeps muted
+     * notes editable and also permits an enabled empty step to generate a note.
+     */
+    val enabledSteps: Set<Int>? = null,
 ) {
     init {
         require(validId(id)) { "Invalid sequence identifier" }
@@ -21,6 +27,9 @@ data class UserSequence(
         }
         require(bpm.isFinite() && bpm in 20.0..300.0) { "BPM must be between 20 and 300" }
         require(swing.isFinite() && swing in 0.0..1.0) { "Swing must be between 0 and 1" }
+        require(enabledSteps == null || enabledSteps.all { it in pattern.steps.indices }) {
+            "Enabled step indices must be inside the saved pattern"
+        }
     }
 
     companion object {
