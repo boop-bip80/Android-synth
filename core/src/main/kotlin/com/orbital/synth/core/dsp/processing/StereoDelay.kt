@@ -89,6 +89,21 @@ class StereoDelay(sampleRate: Int = 48_000, maxDelaySeconds: Float = 3f) {
         snapControlsToTargets()
     }
 
+    /**
+     * Hard-bypass reset: discard all prior echoes and start the next [configure]
+     * transition from zero wet, even if the old preset was fully wet. Unlike
+     * [reset], this deliberately does not preserve the old wet gain.
+     *
+     * This also marks the processor configured, so an initial FX enable after
+     * bypass fades wet in instead of snapping to the first preset immediately.
+     */
+    fun resetForBypass() {
+        reset()
+        mix = 0f
+        targetMix = 0f
+        hasConfiguration = true
+    }
+
     private fun snapControlsToTargets() {
         feedback = targetFeedback
         mix = targetMix

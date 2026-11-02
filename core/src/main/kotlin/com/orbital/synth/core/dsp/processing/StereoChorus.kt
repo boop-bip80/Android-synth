@@ -124,6 +124,22 @@ class StereoChorus(sampleRate: Int = 48_000) {
         snapControlsToTargets()
     }
 
+    /**
+     * Transition into a hard-bypassed state: invalidate wet history and start the
+     * next [configure] wet-gain transition from true dry (zero), not the previous
+     * preset's wet amount. In contrast, [reset] preserves current preset controls.
+     *
+     * Call on the audio thread when an enclosing engine bypasses this processor.
+     * The first configure after bypass glides its wet target over ~10 ms, including
+     * when this method was called before any initial configure.
+     */
+    fun resetForBypass() {
+        reset()
+        mix = 0.0
+        targetMix = 0.0
+        hasConfiguration = true
+    }
+
     private fun snapControlsToTargets() {
         mix = targetMix
         sweepSamples = targetSweepSamples
