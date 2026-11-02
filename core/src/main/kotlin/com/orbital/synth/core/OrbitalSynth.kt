@@ -51,14 +51,22 @@ class OrbitalSynth(
     }
     private val bendBits = AtomicInteger(java.lang.Float.floatToRawIntBits(0f))
     private val events = ConcurrentLinkedQueue<Event>()
-    private val heldNotes = BooleanArray(128)
-    // Multiple inputs can hold the same pitch simultaneously (touch, MIDI, sequencer).
-    // Pair each note-off with one note-on instead of cutting every matching voice.
-    private val heldCounts = IntArray(128)
-    private val heldVelocities = FloatArray(128)
-    private val heldOrders = LongArray(128)
-    // Reused only on the render thread when converting a held mono chord to polyphony.
-    private val restoredCounts = IntArray(128)
+    // Preallocate every held-key record. Render-thread event handling uses primitive
+    // storage only: source IDs never create maps/objects or acquire locks in audio.
+    // Under a hostile >capacity note-on flood, excess ons are ignored atomically
+    // (and their later offs cannot affect another source).
+    private val holdCapacity = max(256, maxVoices * 8)
+    private val holdActive = BooleanArray(holdCapacity)
+    private val holdTagged = BooleanArray(holdCapacity)
+    private val holdSource = LongArray(holdCapacity)
+    private val holdChannel = IntArray(holdCapacity)
+    private val holdNote = IntArray(holdCapacity)
+    private val holdVelocity = FloatArray(holdCapacity)
+    private val holdOrder = LongArray(holdCapacity)
+    private val holdVoice = IntArray(holdCapacity) { -1 }
+    private val voiceHold = IntArray(maxVoices) { -1 }
+    private val restoredHolds = BooleanArray(holdCapacity)
+    private val releasedVoiceSlots = BooleanArray(maxVoices)
 
     private var eventOrder = 0L
     private var previousFrequency: Double? = null
@@ -80,6 +88,7 @@ class OrbitalSynth(
 
     val voiceMode: VoiceMode get() = playbackMode
 
+    /** Backward-compatible, untagged note: only an untagged note-off can release it. */
     fun noteOn(note: Int, velocity: Float = 1f) {
         if (note !in 0..127 || !velocity.isFinite()) return
         if (velocity <= 0f) {
@@ -93,9 +102,35 @@ class OrbitalSynth(
         if (note in 0..127) events.offer(Event.NoteOff(note))
     }
 
-    /** Release all held notes gracefully, without interrupting the audio callback. */
+    /**
+     * Source-owned key press. Source IDs should be stable for a connected input
+     * and unique across touch, sequencer and MIDI ports. Channel is zero-based.
+     * Repeated ons for one (source, channel, note) stack and offs consume newest
+     * first. This keeps independent sources from releasing each other's keys.
+     */
+    fun noteOn(sourceId: Long, channel: Int, note: Int, velocity: Float = 1f) {
+        if (channel !in 0..15 || note !in 0..127 || !velocity.isFinite()) return
+        if (velocity <= 0f) {
+            noteOff(sourceId, channel, note)
+        } else {
+            events.offer(Event.NoteOn(note, velocity.coerceIn(0f, 1f), sourceId, channel, true))
+        }
+    }
+
+    fun noteOff(sourceId: Long, channel: Int, note: Int) {
+        if (channel in 0..15 && note in 0..127) {
+            events.offer(Event.NoteOff(note, sourceId, channel, true))
+        }
+    }
+
+    /** Gracefully release all sources/legacy voices (lifecycle stop and panic). */
     fun allNotesOff() {
         events.offer(Event.AllNotesOff)
+    }
+
+    /** Gracefully release only keys belonging to this source, across all channels. */
+    fun allNotesOff(sourceId: Long) {
+        events.offer(Event.SourceAllNotesOff(sourceId))
     }
 
     /** POLY layers notes, MONO retriggers, and LEGATO retunes an already-held voice. */
@@ -268,88 +303,136 @@ class OrbitalSynth(
         // Bound callback work under hostile MIDI event floods; defer overflow to next block.
         for (index in 0 until 512) {
             when (val event = events.poll() ?: break) {
-                is Event.NoteOn -> handleNoteOn(event.note, event.velocity, glideSec, wave, morph)
-                is Event.NoteOff -> handleNoteOff(event.note, glideSec, wave, morph)
+                is Event.NoteOn -> handleNoteOn(
+                    event.note, event.velocity, event.sourceId, event.channel, event.tagged,
+                    glideSec, wave, morph
+                )
+                is Event.NoteOff -> handleNoteOff(
+                    event.note, event.sourceId, event.channel, event.tagged, glideSec, wave, morph
+                )
                 Event.AllNotesOff -> {
-                    heldNotes.fill(false)
-                    heldCounts.fill(0)
+                    holdActive.fill(false)
+                    holdVoice.fill(-1)
+                    voiceHold.fill(-1)
                     previousFrequency = null
                     for (voice in voices) voice.noteOff()
                 }
+                is Event.SourceAllNotesOff ->
+                    handleSourceAllNotesOff(event.sourceId, glideSec, wave, morph)
                 is Event.Mode -> changeMode(event.mode, glideSec, wave, morph)
             }
         }
     }
 
-    private fun handleNoteOn(note: Int, velocity: Float, glideSec: Double, wave: Float, morph: Float) {
-        var alreadyHeld = false
-        for (held in heldNotes) if (held) { alreadyHeld = true; break }
+    private fun handleNoteOn(
+        note: Int, velocity: Float, sourceId: Long, channel: Int, tagged: Boolean,
+        glideSec: Double, wave: Float, morph: Float
+    ) {
+        val alreadyHeld = latestHeldSlot() >= 0
+        val slot = freeHoldSlot()
+        if (slot < 0) return
 
-        heldNotes[note] = true
-        if (heldCounts[note] < Int.MAX_VALUE) heldCounts[note]++
-        heldVelocities[note] = velocity
-        heldOrders[note] = ++eventOrder
-        val toFrequency = Voice.midiFrequency(note)
+        holdActive[slot] = true
+        holdTagged[slot] = tagged
+        holdSource[slot] = sourceId
+        holdChannel[slot] = channel
+        holdNote[slot] = note
+        holdVelocity[slot] = velocity
+        holdOrder[slot] = ++eventOrder
+        holdVoice[slot] = -1
+
         val fromFrequency = previousFrequency
-
         when (playbackMode) {
             VoiceMode.POLY -> {
-                chooseVoice().begin(note, velocity, eventOrder, fromFrequency, glideSec, wave, morph)
+                val voiceIndex = chooseVoiceIndex()
+                voices[voiceIndex].begin(
+                    note, velocity, eventOrder, fromFrequency, glideSec, wave, morph
+                )
+                bindVoice(voiceIndex, slot)
             }
             VoiceMode.MONO, VoiceMode.LEGATO -> {
-                for (index in 1 until voices.size) voices[index].noteOff()
+                for (index in 1 until voices.size) {
+                    voices[index].noteOff()
+                    unbindVoice(index)
+                }
                 val voice = voices[0]
                 val legato = playbackMode == VoiceMode.LEGATO &&
                     alreadyHeld && voice.active && !voice.releasing
                 voice.begin(note, velocity, eventOrder, fromFrequency, glideSec, wave, morph, legato)
+                bindVoice(0, slot)
             }
         }
-        previousFrequency = toFrequency
+        previousFrequency = Voice.midiFrequency(note)
     }
 
-    private fun handleNoteOff(note: Int, glideSec: Double, wave: Float, morph: Float) {
-        val remainingHolds = if (heldCounts[note] > 0) heldCounts[note] - 1 else 0
-        heldCounts[note] = remainingHolds
-        heldNotes[note] = remainingHolds > 0
+    private fun handleNoteOff(
+        note: Int, sourceId: Long, channel: Int, tagged: Boolean,
+        glideSec: Double, wave: Float, morph: Float
+    ) {
+        val slot = newestMatchingHold(note, sourceId, channel, tagged)
+        if (slot < 0) return // Duplicate or unmatched off never releases a different source.
+        val voiceIndex = removeHold(slot)
         when (playbackMode) {
-            VoiceMode.POLY -> {
-                // Release only as many sounding voices as there are unmatched note-offs.
-                // Prefer the newest voice: a repeated note-on from another source should
-                // not cut off an older held touch key. Source IDs would permit exact pairing.
-                var sounding = 0
-                for (voice in voices) {
-                    if (voice.active && !voice.releasing && voice.note == note) sounding++
-                }
-                while (sounding > remainingHolds) {
-                    var newest: Voice? = null
-                    for (voice in voices) {
-                        if (voice.active && !voice.releasing && voice.note == note &&
-                            (newest == null || voice.startedAt > newest.startedAt)
-                        ) newest = voice
-                    }
-                    if (newest == null) break
-                    newest.noteOff()
-                    sounding--
-                }
-            }
+            VoiceMode.POLY -> if (voiceIndex >= 0) recycleOrReleaseVoice(voiceIndex, wave, morph)
             VoiceMode.MONO, VoiceMode.LEGATO -> {
-                val voice = voices[0]
-                if (remainingHolds == 0 && voice.active && voice.note == note) {
-                    val remaining = latestHeldNote()
-                    if (remaining < 0) {
-                        voice.noteOff()
-                    } else {
-                        val fromFrequency = Voice.midiFrequency(note)
-                        val legato = playbackMode == VoiceMode.LEGATO && !voice.releasing
-                        voice.begin(
-                            remaining, heldVelocities[remaining], ++eventOrder,
-                            fromFrequency, glideSec, wave, morph, legato
-                        )
-                        previousFrequency = Voice.midiFrequency(remaining)
-                    }
+                if (voiceIndex == 0) {
+                    retargetMonoLead(Voice.midiFrequency(note), glideSec, wave, morph)
                 }
             }
         }
+    }
+
+    private fun handleSourceAllNotesOff(
+        sourceId: Long, glideSec: Double, wave: Float, morph: Float
+    ) {
+        var leadRemoved = false
+        val oldLeadNote = voices[0].note
+        releasedVoiceSlots.fill(false)
+        // Remove all matching holds before choosing any replacement; intermediate
+        // retunes would otherwise create unnecessary ghost tails/clicks.
+        for (slot in holdActive.indices) {
+            if (!holdActive[slot] || !holdTagged[slot] || holdSource[slot] != sourceId) continue
+            val voiceIndex = removeHold(slot)
+            if (playbackMode == VoiceMode.POLY && voiceIndex >= 0) {
+                releasedVoiceSlots[voiceIndex] = true
+            } else if (voiceIndex == 0) {
+                leadRemoved = true
+            }
+        }
+        if (playbackMode == VoiceMode.POLY) {
+            for (index in voices.indices) {
+                if (releasedVoiceSlots[index]) recycleOrReleaseVoice(index, wave, morph)
+            }
+        } else if (leadRemoved) {
+            val fromFrequency = if (oldLeadNote in 0..127)
+                Voice.midiFrequency(oldLeadNote) else previousFrequency
+            retargetMonoLead(fromFrequency, glideSec, wave, morph)
+        }
+    }
+
+    private fun retargetMonoLead(
+        fromFrequency: Double?, glideSec: Double, wave: Float, morph: Float
+    ) {
+        val slot = latestHeldSlot()
+        val voice = voices[0]
+        if (slot < 0) {
+            voice.noteOff()
+            unbindVoice(0)
+            return
+        }
+        // Two physical controls may hold the same pitch. Rebinding ownership
+        // without retriggering preserves the current envelope and oscillator.
+        if (voice.active && !voice.releasing && voice.note == holdNote[slot]) {
+            bindVoice(0, slot)
+            return
+        }
+        val legato = playbackMode == VoiceMode.LEGATO && voice.active && !voice.releasing
+        voice.begin(
+            holdNote[slot], holdVelocity[slot], ++eventOrder, fromFrequency,
+            glideSec, wave, morph, legato
+        )
+        bindVoice(0, slot)
+        previousFrequency = Voice.midiFrequency(holdNote[slot])
     }
 
     private fun changeMode(mode: VoiceMode, glideSec: Double, wave: Float, morph: Float) {
@@ -358,104 +441,205 @@ class OrbitalSynth(
         if (mode == VoiceMode.POLY) {
             restoreHeldPolyVoices(wave, morph)
         } else {
-            for (index in 1 until voices.size) voices[index].noteOff()
-            val newest = latestHeldNote()
-            if (newest >= 0) {
+            for (index in 1 until voices.size) {
+                voices[index].noteOff()
+                unbindVoice(index)
+            }
+            val slot = latestHeldSlot()
+            if (slot >= 0) {
                 val voice = voices[0]
-                val legato = mode == VoiceMode.LEGATO &&
-                    voice.active && !voice.releasing
+                val legato = mode == VoiceMode.LEGATO && voice.active && !voice.releasing
                 voice.begin(
-                    newest, heldVelocities[newest], ++eventOrder, previousFrequency,
+                    holdNote[slot], holdVelocity[slot], ++eventOrder, previousFrequency,
                     glideSec, wave, morph, legato
                 )
-                previousFrequency = Voice.midiFrequency(newest)
+                bindVoice(0, slot)
+                previousFrequency = Voice.midiFrequency(holdNote[slot])
             } else {
                 voices[0].noteOff()
+                unbindVoice(0)
             }
         }
     }
 
     /**
-     * A switch from mono/legato to poly should expose the keys that are *still held*.
-     * The mono lead voice remains continuous, while the other voice slots are rebuilt
-     * in most-recent-key order (including independently held instances of one pitch).
-     * Reuse storage and never steal the continuing lead during a mode transition.
+     * Restore exact remaining holds (including same-pitch duplicates) when
+     * returning from mono/legato to poly. Keep the continuing lead untouched,
+     * then choose the newest other holds for available secondary slots.
      */
     private fun restoreHeldPolyVoices(wave: Float, morph: Float) {
-        if (voices.size <= 1) return
-        restoredCounts.fill(0)
-        val lead = voices[0]
-        if (lead.active && !lead.releasing && lead.note in heldNotes.indices) {
-            restoredCounts[lead.note] = 1
+        restoredHolds.fill(false)
+        val leadSlot = voiceHold[0]
+        if (leadSlot >= 0 && holdActive[leadSlot] && voices[0].active &&
+            !voices[0].releasing && voices[0].note == holdNote[leadSlot]
+        ) {
+            restoredHolds[leadSlot] = true
+        } else {
+            unbindVoice(0)
+            val replacement = latestHeldSlot()
+            if (replacement >= 0) {
+                voices[0].begin(
+                    holdNote[replacement], holdVelocity[replacement], ++eventOrder,
+                    null, 0.0, wave, morph
+                )
+                bindVoice(0, replacement)
+                restoredHolds[replacement] = true
+            }
         }
 
-        for (slot in 1 until voices.size) {
-            var newest = -1
-            var newestOrder = Long.MIN_VALUE
-            for (pitch in heldNotes.indices) {
-                if (heldCounts[pitch] > restoredCounts[pitch] && heldOrders[pitch] > newestOrder) {
-                    newest = pitch
-                    newestOrder = heldOrders[pitch]
-                }
-            }
-            if (newest == -1) break
-
-            val target = chooseSecondaryVoice()
-            target.begin(
-                newest, heldVelocities[newest], ++eventOrder,
+        for (slotIndex in 1 until voices.size) {
+            val holdIndex = newestUnrestoredHold()
+            if (holdIndex < 0) break
+            val voiceIndex = chooseSecondaryVoiceIndex()
+            voices[voiceIndex].begin(
+                holdNote[holdIndex], holdVelocity[holdIndex], ++eventOrder,
                 null, 0.0, wave, morph
             )
-            restoredCounts[newest]++
+            bindVoice(voiceIndex, holdIndex)
+            restoredHolds[holdIndex] = true
         }
     }
 
-    private fun chooseSecondaryVoice(): Voice {
-        for (index in 1 until voices.size) {
-            val voice = voices[index]
-            if (!voice.active) return voice
+    /**
+     * When all voice slots were occupied, older held keys may have been stolen.
+     * Releasing the current owner should transfer the freed slot to a surviving
+     * held key, particularly when two sources hold the same pitch with one voice.
+     */
+    private fun recycleOrReleaseVoice(voiceIndex: Int, wave: Float, morph: Float) {
+        val replacement = newestUnvoicedHold()
+        val voice = voices[voiceIndex]
+        if (replacement < 0) {
+            voice.noteOff()
+            return
         }
+        if (!voice.releasing && voice.active && voice.note == holdNote[replacement]) {
+            // Keep phase/envelope continuous for same-pitch stacked ownership.
+            bindVoice(voiceIndex, replacement)
+        } else {
+            voice.begin(
+                holdNote[replacement], holdVelocity[replacement], ++eventOrder,
+                null, 0.0, wave, morph
+            )
+            bindVoice(voiceIndex, replacement)
+        }
+    }
 
-        var selected = voices[1]
-        for (index in 2 until voices.size) {
-            val voice = voices[index]
-            if ((voice.releasing && !selected.releasing) ||
-                (voice.releasing == selected.releasing &&
-                    (voice.envelopeLevel < selected.envelopeLevel ||
-                        (voice.envelopeLevel == selected.envelopeLevel &&
-                            voice.startedAt < selected.startedAt)))
-            ) {
-                selected = voice
+    private fun newestUnvoicedHold(): Int {
+        var selected = -1
+        var newestOrder = Long.MIN_VALUE
+        for (slot in holdActive.indices) {
+            if (holdActive[slot] && holdVoice[slot] < 0 && holdOrder[slot] > newestOrder) {
+                selected = slot
+                newestOrder = holdOrder[slot]
             }
         }
         return selected
     }
 
-    private fun latestHeldNote(): Int {
-        var candidate = -1
-        var latest = Long.MIN_VALUE
-        for (note in heldNotes.indices) {
-            if (heldNotes[note] && heldOrders[note] > latest) {
-                latest = heldOrders[note]
-                candidate = note
-            }
-        }
-        return candidate
+    private fun freeHoldSlot(): Int {
+        for (slot in holdActive.indices) if (!holdActive[slot]) return slot
+        return -1
     }
 
-    private fun chooseVoice(): Voice {
-        for (voice in voices) if (!voice.active) return voice
-
-        var result = voices[0]
-        for (voice in voices) {
-            if (voice.releasing && !result.releasing) {
-                result = voice
-            } else if (voice.releasing == result.releasing) {
-                if (voice.envelopeLevel < result.envelopeLevel ||
-                    (voice.envelopeLevel == result.envelopeLevel && voice.startedAt < result.startedAt)
-                ) result = voice
+    private fun newestMatchingHold(
+        note: Int, sourceId: Long, channel: Int, tagged: Boolean
+    ): Int {
+        var selected = -1
+        var newestOrder = Long.MIN_VALUE
+        for (slot in holdActive.indices) {
+            if (holdActive[slot] && holdTagged[slot] == tagged &&
+                holdNote[slot] == note &&
+                (!tagged || (holdSource[slot] == sourceId && holdChannel[slot] == channel)) &&
+                holdOrder[slot] > newestOrder
+            ) {
+                newestOrder = holdOrder[slot]
+                selected = slot
             }
         }
-        return result
+        return selected
+    }
+
+    private fun latestHeldSlot(): Int {
+        var selected = -1
+        var newestOrder = Long.MIN_VALUE
+        for (slot in holdActive.indices) {
+            if (holdActive[slot] && holdOrder[slot] > newestOrder) {
+                newestOrder = holdOrder[slot]
+                selected = slot
+            }
+        }
+        return selected
+    }
+
+    private fun newestUnrestoredHold(): Int {
+        var selected = -1
+        var newestOrder = Long.MIN_VALUE
+        for (slot in holdActive.indices) {
+            if (holdActive[slot] && !restoredHolds[slot] && holdOrder[slot] > newestOrder) {
+                newestOrder = holdOrder[slot]
+                selected = slot
+            }
+        }
+        return selected
+    }
+
+    /**
+     * Unbind an old hold before voice stealing. The hold may remain pressed, but
+     * its later off must not affect the new owner occupying that voice slot.
+     */
+    private fun unbindVoice(voiceIndex: Int) {
+        val previous = voiceHold[voiceIndex]
+        if (previous >= 0 && holdVoice[previous] == voiceIndex) holdVoice[previous] = -1
+        voiceHold[voiceIndex] = -1
+    }
+
+    private fun bindVoice(voiceIndex: Int, holdIndex: Int) {
+        unbindVoice(voiceIndex)
+        voiceHold[voiceIndex] = holdIndex
+        holdVoice[holdIndex] = voiceIndex
+    }
+
+    private fun removeHold(holdIndex: Int): Int {
+        holdActive[holdIndex] = false
+        val index = holdVoice[holdIndex]
+        if (index >= 0 && voiceHold[index] == holdIndex) {
+            unbindVoice(index)
+            return index
+        }
+        holdVoice[holdIndex] = -1
+        return -1
+    }
+
+    private fun chooseSecondaryVoiceIndex(): Int {
+        for (index in 1 until voices.size) if (!voices[index].active) return index
+        var selected = 1
+        for (index in 2 until voices.size) {
+            val voice = voices[index]
+            val best = voices[selected]
+            if ((voice.releasing && !best.releasing) ||
+                (voice.releasing == best.releasing &&
+                    (voice.envelopeLevel < best.envelopeLevel ||
+                        (voice.envelopeLevel == best.envelopeLevel &&
+                            voice.startedAt < best.startedAt)))
+            ) selected = index
+        }
+        return selected
+    }
+
+    private fun chooseVoiceIndex(): Int {
+        for (index in voices.indices) if (!voices[index].active) return index
+        var selected = 0
+        for (index in 1 until voices.size) {
+            val voice = voices[index]
+            val best = voices[selected]
+            if ((voice.releasing && !best.releasing) ||
+                (voice.releasing == best.releasing &&
+                    (voice.envelopeLevel < best.envelopeLevel ||
+                        (voice.envelopeLevel == best.envelopeLevel &&
+                            voice.startedAt < best.startedAt)))
+            ) selected = index
+        }
+        return selected
     }
 
     private fun softClip(value: Float): Float {
@@ -466,9 +650,16 @@ class OrbitalSynth(
     }
 
     private sealed interface Event {
-        data class NoteOn(val note: Int, val velocity: Float) : Event
-        data class NoteOff(val note: Int) : Event
+        data class NoteOn(
+            val note: Int, val velocity: Float,
+            val sourceId: Long = 0L, val channel: Int = 0, val tagged: Boolean = false
+        ) : Event
+        data class NoteOff(
+            val note: Int, val sourceId: Long = 0L,
+            val channel: Int = 0, val tagged: Boolean = false
+        ) : Event
         data class Mode(val mode: VoiceMode) : Event
+        data class SourceAllNotesOff(val sourceId: Long) : Event
         data object AllNotesOff : Event
     }
 
