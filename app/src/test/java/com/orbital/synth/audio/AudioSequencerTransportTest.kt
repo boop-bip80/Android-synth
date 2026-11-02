@@ -348,6 +348,14 @@ class AudioSequencerTransportTest {
         assertEquals(60, fake.transport.selection.sourcePattern.steps[0].notes.single().midiNote)
         fake.renderFrames(12_001)
         assertTrue(fake.noteOnCalls >= 2) // step 1 and generated step 2
+        fake.transport.onWorkerStop()
+        assertTrue(fake.held.isEmpty())
+        val priorOns = fake.noteOnCalls
+        fake.transport.onWorkerStart() // desired playback is resumed from step 0
+        fake.renderFrames(1)
+        assertEquals(priorOns, fake.noteOnCalls)
+        assertFalse(60 in fake.held)
+        assertEquals(setOf(1, 2), fake.transport.enabledSteps)
         assertTrue(fake.transport.setStepNotes(0, listOf(
             com.orbital.synth.core.music.SequencerNote(62)
         )))
@@ -367,6 +375,10 @@ class AudioSequencerTransportTest {
         fake.render()
         assertEquals(1, fake.transport.playhead)
         assertFalse(0 in fake.transport.enabledSteps)
+        assertTrue(fake.transport.setStepCount(64))
+        fake.render()
+        assertEquals(64, fake.transport.stepCount)
+        assertEquals(1, fake.transport.playhead) // ordinal remains safe modulo new length
     }
 
     @Test
