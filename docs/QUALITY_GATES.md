@@ -4,7 +4,7 @@ This is a release gate, not a claim that a gate has passed.
 
 ## G0 — Repository/toolchain
 - All Gradle plugins and Android dependencies pinned and resolving.
-- `./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` passes on CI.
+- `gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` passes on CI.
 - Debug APK is uploaded with immutable workflow run provenance.
 - License/third-party source notices tracked; no bundled proprietary samples.
 

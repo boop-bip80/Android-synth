@@ -3,44 +3,61 @@
 ## Pinned toolchain
 
 - JDK 17
-- Gradle 8.11.1 (run with the installed Gradle CLI; this repository intentionally has no unverified wrapper binary)
+- Gradle 8.11.1 (installed by CI; no unverified wrapper binary committed)
 - Android Gradle Plugin 8.9.2
-- Kotlin / Compose Compiler Gradle Plugin 2.1.20
-- Android SDK platform 35, build-tools 35.0.0
+- Kotlin and Compose Compiler Gradle Plugin 2.1.20
+- Android SDK platform 35 and build-tools 35.0.0
 - Compose BOM 2025.04.00
 - Minimum Android API 26; compile / target API 35
 
-Android documentation lists Gradle 8.11.1 and JDK 17 for AGP 8.9. Kotlin 2.x uses its dedicated Compose compiler Gradle plugin.
+AGP 8.9's Android compatibility table requires Gradle 8.11.1 and JDK 17. Kotlin 2.x uses its dedicated Compose compiler plugin. Versions are intentionally pinned; no dynamic dependency selectors.
 
 ## Local build (optional)
 
-Install Android SDK 35, JDK 17 and Gradle 8.11.1. Configure the local SDK using `ANDROID_HOME` or a Git-ignored `local.properties`.
+Install Android SDK 35, JDK 17 and Gradle 8.11.1. Configure the SDK with `ANDROID_HOME` or Git-ignored `local.properties`.
 
 ```sh
 gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-The resulting debug APK is `app/build/outputs/apk/debug/app-debug.apk`. Android 26+ device required. The debug APK is installable; it is not Play Store signed.
+After a successful build, the debug APK is `app/build/outputs/apk/debug/app-debug.apk` (Android 26+). It is a developer APK, not a Play Store release.
 
-## CI emulator (no local emulator required)
+## CI emulator (no local emulator needed)
 
-Open [Actions](../.github/workflows/android.yml) > **Android — build, JVM tests and emulator**. Every push to `main`, pull request and manual dispatch runs:
+The [Android — build, JVM tests and emulator workflow](../.github/workflows/android.yml) runs on pushes to `main`, pull requests, and manual dispatches. Its jobs:
 
-1. Pure Kotlin DSP/music unit tests, app unit tests, Android lint and debug APK assembly.
-2. Android 35 x86_64 emulator startup, instrumentation smoke tests, real app launch via `adb shell am start -W`.
-3. Real `adb shell screencap` captured after launch.
+1. Run portable Kotlin DSP/music JUnit4 tests, Android app unit tests, Android lint, debug APK assembly.
+2. Boot an Android API 35 x86_64 emulator, run instrumented smoke tests, explicitly launch `com.orbital.synth/.MainActivity`.
+3. Capture a **real** app screenshot via `adb shell screencap -p`.
 
-Artifacts (14-day retention):
-- `orbital-debug-apk`: installable debug APK.
-- `orbital-api35-emulator-screenshot`: actual screen from an emulated Android device, *not* the original concept artwork.
-- `orbital-android-test-results`: instrumentation XML/HTML reports, if generated.
-- `orbital-lint`: static analysis HTML, if generated.
+After **successful execution**, the run provides artifacts (14-day retention):
 
-Emulator startup/build can take many minutes. Passing CI verifies API 35 emulation, not physical-device latency, USB MIDI, performance, battery, or audio quality. Test those on real devices before shipping.
+- `orbital-debug-apk`: the installable developer build.
+- `orbital-api35-emulator-screenshot`: actual emulator screenshot, never the generated design mockup.
+- `orbital-android-test-results`: instrumentation reports if generated.
+- `orbital-lint`: lint report if generated.
+
+### Interpreting status honestly
+
+- **Queued / pending / waiting:** no build or emulator claim can be made. If the job shows no assigned runner, this is a scheduling/permissions/runner-capacity diagnostic, not a source-code error.
+- **Failed:** inspect the first failed step and logs, fix in source, rerun; do not count tests as passed.
+- **Cancelled:** not a pass or failure; check concurrency and newer runs.
+- **Green:** confirms that toolchain/build, selected host tests, instrumentation and screenshot capture passed for that commit. Hardware low-latency, thermal, Bluetooth and physical-MIDI claims still need real devices.
+
+A precise CI status report should include workflow run URL, commit SHA, job conclusion and artifacts. Link to artifacts only from a verified run.
+
+## Real-device checklist
+
+- Speaker and wired USB audio output, interruptions, audio focus and lifecycle.
+- Median/p95 output latency and underruns during 16-voice plus effects stress.
+- Physical MIDI keyboard connection/disconnection; note on/off, velocity, CC and pitch bend.
+- Multi-touch keyboard release/cancel; portrait, landscape, small phones, large font scales.
+- Thermal throttling, CPU and battery with long sessions.
 
 ## Troubleshooting
 
-- `SDK location not found`: install Android SDK 35 and set `ANDROID_HOME` or create local.properties (do not commit SDK paths).
-- `Gradle requires Java 17`: install and select JDK 17.
-- `No emulator tests found`: verify the `:app` module's `androidTest` sources and test runner; the CI job should fail rather than pretend a pass.
-- Audio on emulator is not a proxy for low-latency hardware.
+- `SDK location not found`: install SDK 35 and configure `ANDROID_HOME` or `local.properties`.
+- `Gradle requires Java 17`: select JDK 17.
+- `No emulator tests found`: inspect `:app` Android instrumentation source and test runner.
+- No emulator runner assigned: inspect account/repository GitHub Actions settings and hosted-runner availability; changing Android code cannot make a queued job start.
+- Emulator audio results are not substitutes for physical-device latency measurements.
