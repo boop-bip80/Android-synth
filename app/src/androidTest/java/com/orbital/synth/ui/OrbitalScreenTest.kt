@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.core.music.SequencerNote
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -438,4 +439,85 @@ class OrbitalScreenTest {
         assertEquals(1f to 0f, expressionCoordinates(500f, 200f, 100f, 100f))
         assertEquals(.5f to .5f, expressionCoordinates(10f, 10f, 0f, 100f))
     }
+
+    @Test fun stepInspectorEditsPitchWithoutDroppingChordVoices() {
+        val edits = mutableListOf<Pair<Int, List<SequencerNote>>>()
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(
+                    enabledSteps = setOf(0),
+                    sequenceNotesByStep = listOf(
+                        listOf(SequencerNote(60), SequencerNote(67, velocity = 110)),
+                    ),
+                ),
+                onNoteOn = {}, onNoteOff = {}, onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+                onSequencerToggle = {}, onStepToggle = {},
+                onSequencerStepNotesChange = { step, notes -> edits += step to notes },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Increase step note pitch").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(0, edits.single().first)
+            assertEquals(61, edits.single().second[0].midiNote)
+            assertEquals(67, edits.single().second[1].midiNote)
+            assertEquals(110, edits.single().second[1].velocity)
+        }
+    }
+
+    @Test fun emptyStepAddsValidatedDefaultPitchThroughHost() {
+        val edits = mutableListOf<Pair<Int, List<SequencerNote>>>()
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(
+                    octave = 4,
+                    sequenceNotesByStep = listOf(emptyList()),
+                ),
+                onNoteOn = {}, onNoteOff = {}, onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+                onSequencerToggle = {}, onStepToggle = {},
+                onSequencerStepNotesChange = { step, notes -> edits += step to notes },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Add note to selected step").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(0, edits.single().first)
+            assertEquals(60, edits.single().second.single().midiNote)
+        }
+    }
+
+    @Test fun sequenceSaveUsesTrimmedNameAndRequiresHostCallback() {
+        var saved: String? = null
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(),
+                onNoteOn = {}, onNoteOff = {}, onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+                onSaveSequence = { saved = it },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Save sequence as a new pattern").performScrollTo().performClick()
+        compose.onNodeWithTag("sequenceNameInput").performTextReplacement("  Solar Pattern  ")
+        compose.onNodeWithText("SAVE").performClick()
+        compose.runOnIdle { assertEquals("Solar Pattern", saved) }
+    }
+
+    @Test fun sequenceEditingAndSaveControlsAreDisabledWithoutHost() {
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(sequenceNotesByStep = listOf(listOf(SequencerNote(60)))),
+                onNoteOn = {}, onNoteOff = {}, onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Save sequence as a new pattern")
+            .performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Increase step note pitch")
+            .performScrollTo().assertIsNotEnabled()
+    }
+
 }
