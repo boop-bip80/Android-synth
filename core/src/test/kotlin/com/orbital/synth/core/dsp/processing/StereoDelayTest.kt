@@ -173,11 +173,14 @@ class StereoDelayTest {
         // At this instant the 1-sample tap is one, while the 128-sample tap
         // reads zero. A direct tap switch would immediately drop wet audio.
         delay.configure(128f / 8_000f, feedback = 0f, wet = 1f, pingPong = 0f)
-        delay.process(0f, 0f, out, 0)
+        // Continue the held signal. A one-frame old tap reads the previous
+        // *input* every frame, so switching the input to zero would legitimately
+        // erase the old echo even when the tap crossfade is perfectly smooth.
+        delay.process(1f, 0f, out, 0)
         assertEquals("First sample must preserve the previous tap", 1f, out[0], 0f)
         var previous = out[0]
         repeat(8) {
-            delay.process(0f, 0f, out, 0)
+            delay.process(1f, 0f, out, 0)
             assertTrue("Tap transition stepped upward", out[0] <= previous)
             previous = out[0]
         }
@@ -192,13 +195,14 @@ class StereoDelayTest {
         repeat(200) { delay.process(0f, 0f, out, 0) }
         repeat(24) { delay.process(1f, 0f, out, 0) }
         delay.configure(128f / 8_000f, feedback = 0f, wet = 1f)
-        delay.process(0f, 0f, out, 0)
+        delay.process(1f, 0f, out, 0)
         assertEquals(1f, out[0], 0f)
 
         // An update while fading must be queued: restarting from the newly
         // selected (silent) tap would cause a large discontinuity on this frame.
+        // Hold input high so the one-sample previous tap remains nonzero.
         delay.configure(64f / 8_000f, feedback = 0f, wet = 1f)
-        delay.process(0f, 0f, out, 0)
+        delay.process(1f, 0f, out, 0)
         assertTrue("A second control edit interrupted the current fade", out[0] > 0.97f)
 
         repeat(300) { frame ->
