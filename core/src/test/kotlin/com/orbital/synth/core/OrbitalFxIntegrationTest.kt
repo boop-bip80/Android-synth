@@ -148,6 +148,93 @@ class OrbitalFxIntegrationTest {
         }
     }
 
+    @Test fun disablingFxCrossfadesExactOldWetBusToDryThenStaysBitExactDry() {
+        val fading = fixedSynth().apply { setParameter(ParameterId.FX_AMOUNT, 1f) }
+        val continuouslyWet = fixedSynth().apply { setParameter(ParameterId.FX_AMOUNT, 1f) }
+        val continuouslyDry = fixedSynth()
+        val initial = FloatArray(4_096 * 2)
+        for (synth in listOf(fading, continuouslyWet, continuouslyDry)) {
+            synth.noteOn(69)
+            synth.renderStereo(initial, 4_096)
+        }
+
+        fading.setParameter(ParameterId.FX_AMOUNT, 0f)
+        val fadeFrames = 480 // 10 ms at the fixedSynth() 48 kHz rate
+        val fadeOut = FloatArray(fadeFrames * 2)
+        val oldWet = FloatArray(fadeOut.size)
+        val dry = FloatArray(fadeOut.size)
+        fading.renderStereo(fadeOut, fadeFrames)
+        continuouslyWet.renderStereo(oldWet, fadeFrames)
+        continuouslyDry.renderStereo(dry, fadeFrames)
+
+        for (frame in 0 until fadeFrames) {
+            val wetFraction = 1f - (frame + 1f) / fadeFrames
+            for (channel in 0..1) {
+                val index = frame * 2 + channel
+                val expected = dry[index] * (1f - wetFraction) + oldWet[index] * wetFraction
+                assertEquals(
+                    "Fade-out must preserve old wet FX configuration and drive",
+                    expected, fadeOut[index], 0.0002f
+                )
+            }
+        }
+        // Exactly dry after 10 ms; the next buffer is bit-for-bit equal to
+        // an engine that never enabled FX, not an asymptotic wet tail.
+        val offOutput = FloatArray(1_024 * 2)
+        val dryOutput = FloatArray(offOutput.size)
+        fading.renderStereo(offOutput, 1_024)
+        continuouslyDry.renderStereo(dryOutput, 1_024)
+        assertArrayEquals(dryOutput, offOutput, 0f)
+    }
+
+    @Test fun rapidFxToggleReversesFadeWithoutReplayingOrRestartingWetHistory() {
+        val toggled = fixedSynth().apply { setParameter(ParameterId.FX_AMOUNT, 0.8f) }
+        val continuouslyWet = fixedSynth().apply { setParameter(ParameterId.FX_AMOUNT, 0.8f) }
+        val continuouslyDry = fixedSynth()
+        val initial = FloatArray(4_096 * 2)
+        for (synth in listOf(toggled, continuouslyWet, continuouslyDry)) {
+            synth.noteOn(72)
+            synth.renderStereo(initial, 4_096)
+        }
+
+        // The first 128 samples fade toward dry, then reverse before completing.
+        toggled.setParameter(ParameterId.FX_AMOUNT, 0f)
+        val down = FloatArray(128 * 2)
+        val wetDown = FloatArray(down.size)
+        val dryDown = FloatArray(down.size)
+        toggled.renderStereo(down, 128)
+        continuouslyWet.renderStereo(wetDown, 128)
+        continuouslyDry.renderStereo(dryDown, 128)
+        for (frame in 0 until 128) {
+            val fraction = 1f - (frame + 1f) / 480f
+            val i = frame * 2
+            assertEquals(
+                dryDown[i] * (1f - fraction) + wetDown[i] * fraction,
+                down[i], 0.0002f
+            )
+        }
+
+        toggled.setParameter(ParameterId.FX_AMOUNT, 0.8f)
+        val up = FloatArray(128 * 2)
+        val wetUp = FloatArray(up.size)
+        val dryUp = FloatArray(up.size)
+        toggled.renderStereo(up, 128)
+        continuouslyWet.renderStereo(wetUp, 128)
+        continuouslyDry.renderStereo(dryUp, 128)
+        val startFraction = 1f - 128f / 480f
+        for (frame in 0 until 128) {
+            val fraction = startFraction + (1f - startFraction) * (frame + 1f) / 480f
+            val i = frame * 2
+            assertEquals(
+                "Reenable must reverse from the current wet fraction",
+                dryUp[i] * (1f - fraction) + wetUp[i] * fraction,
+                up[i], 0.0003f
+            )
+            assertTrue(up[i].isFinite() && abs(up[i]) <= 1.00001f)
+            assertTrue(up[i + 1].isFinite() && abs(up[i + 1]) <= 1.00001f)
+        }
+    }
+
     private fun fixedSynth() = OrbitalSynth().apply {
         setParameter(ParameterId.WAVE, 0.17f)
         setParameter(ParameterId.MORPH, 0.55f)
