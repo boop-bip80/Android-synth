@@ -60,6 +60,24 @@ internal fun keyboardHitNote(
 }
 
 /**
+ * TalkBack actions cover the entire keyboard visible at the current width,
+ * including a second octave on larger screens. Unplayable MIDI notes are omitted.
+ */
+internal fun keyboardAccessibleNotes(whiteCount: Int, octave: Int): List<Pair<Int, String>> {
+    if (whiteCount < 2) return emptyList()
+    val names = listOf(
+        "C", "C sharp", "D", "D sharp", "E", "F",
+        "F sharp", "G", "G sharp", "A", "A sharp", "B",
+    )
+    val base = (octave + 1) * 12
+    return (0..whiteKeyOffset(whiteCount - 1)).mapNotNull { semitone ->
+        val note = base + semitone
+        if (note !in 0..127) null
+        else note to "Play ${names[semitone % 12]} ${octave + semitone / 12}"
+    }
+}
+
+/**
  * Tracks every pointer independently, even when moving across key boundaries.
  * Releasing a finger, cancellation, or disposal always balances note-offs.
  */
@@ -101,15 +119,8 @@ internal fun OrbitalKeyboard(
                 .height(preferredHeight ?: if (whiteCount == 15) 142.dp else 158.dp)
                 .semantics {
                     contentDescription = "Multitouch piano keyboard. Swipe across keys to play; use OCT buttons to change range."
-                    customActions = (0..12).mapNotNull { semitone ->
-                        val note = (octave + 1) * 12 + semitone
-                        if (note !in 0..127) return@mapNotNull null
-                        val name = listOf(
-                            "C", "C sharp", "D", "D sharp", "E", "F",
-                            "F sharp", "G", "G sharp", "A", "A sharp", "B", "C",
-                        )[semitone]
-                        val octaveName = octave + if (semitone == 12) 1 else 0
-                        CustomAccessibilityAction("Play $name $octaveName") {
+                    customActions = keyboardAccessibleNotes(whiteCount, octave).map { (note, label) ->
+                        CustomAccessibilityAction(label) {
                             pressNote(note)
                             accessibilityScope.launch {
                                 try {
