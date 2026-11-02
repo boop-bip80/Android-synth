@@ -332,4 +332,114 @@ class MidiPortSessionTest {
         )
     }
 
+    @Test
+    fun sostenutoCapturesOnlyKeysPhysicallyHeldAtPedalDownOnItsChannel() {
+        val events = Events()
+        val port = MidiPortSession(events)
+        port.feed(byteArrayOf(
+            0x90.toByte(), 60, 100,
+            0xB0.toByte(), 66, 127, // capture C4
+            0x90.toByte(), 62, 90,  // D4 is struck AFTER the pedal
+            0x91.toByte(), 67, 80,  // channel 1 is independent
+            0x80.toByte(), 60, 35, 62, 36,
+            0x81.toByte(), 67, 37
+        ))
+        assertEquals(
+            listOf(
+                "on:0:60:100", "on:0:62:90", "on:1:67:80",
+                "off:0:62:36", "off:1:67:37"
+            ),
+            events.notes
+        )
+        port.feed(byteArrayOf(0xB0.toByte(), 66, 0))
+        port.close()
+        assertEquals("off:0:60:0", events.notes.last())
+        assertEquals(6, events.notes.size)
+    }
+
+    @Test
+    fun notesHeldByBothPedalsStopOnlyAfterBothAreLiftedInEitherOrder() {
+        val events = Events()
+        val port = MidiPortSession(events)
+
+        port.feed(byteArrayOf(
+            0x90.toByte(), 60, 100,
+            0xB0.toByte(), 66, 127, 64, 127,
+            0x80.toByte(), 60, 42,
+            0xB0.toByte(), 64, 0
+        ))
+        assertEquals(listOf("on:0:60:100"), events.notes)
+        port.feed(byteArrayOf(0xB0.toByte(), 66, 0))
+        assertEquals(listOf("on:0:60:100", "off:0:60:0"), events.notes)
+
+        port.feed(byteArrayOf(
+            0x90.toByte(), 62, 100,
+            0xB0.toByte(), 66, 127, 64, 127,
+            0x80.toByte(), 62, 42,
+            0xB0.toByte(), 66, 0
+        ))
+        assertEquals(1, events.notes.count { it == "off:0:60:0" })
+        assertEquals(0, events.notes.count { it.startsWith("off:0:62:") })
+        port.feed(byteArrayOf(0xB0.toByte(), 64, 0))
+        port.close()
+        assertEquals(1, events.notes.count { it == "off:0:62:0" })
+        assertEquals(4, events.notes.size)
+    }
+
+    @Test
+    fun channelModeAndResetControllersRespectBothPedalsWithoutDoubleRelease() {
+        val events = Events()
+        val port = MidiPortSession(events)
+        port.feed(byteArrayOf(
+            0x90.toByte(), 60, 110, 61, 105,
+            0xB0.toByte(), 66, 127, 64, 127,
+            0x80.toByte(), 60, 0,
+            0xB0.toByte(), 123, 0,
+            0x80.toByte(), 61, 0 // stale after All Notes Off
+        ))
+        assertEquals(2, events.notes.size)
+        // CC121 drops both latches, but a third, physically pressed key survives.
+        port.feed(byteArrayOf(0x90.toByte(), 62, 95, 0xB0.toByte(), 121, 0))
+        assertEquals(
+            listOf("on:0:60:110", "on:0:61:105", "on:0:62:95", "off:0:60:0", "off:0:61:0"),
+            events.notes
+        )
+        port.feed(byteArrayOf(0x80.toByte(), 62, 33))
+        assertEquals("off:0:62:33", events.notes.last())
+
+        port.feed(byteArrayOf(
+            0x90.toByte(), 64, 110,
+            0xB0.toByte(), 66, 127,
+            0x80.toByte(), 64, 0,
+            0xB0.toByte(), 120, 0, 66, 0
+        ))
+        port.close()
+        assertEquals(1, events.notes.count { it == "off:0:64:0" })
+        assertEquals(1, events.notes.count { it == "off:0:62:33" })
+    }
+
+    @Test
+    fun repeatedSostenutoDownDoesNotCaptureLaterRetriggersOfSamePitch() {
+        val events = Events()
+        val port = MidiPortSession(events)
+        port.feed(byteArrayOf(
+            0x90.toByte(), 60, 100,
+            0xB0.toByte(), 66, 127,
+            0x90.toByte(), 60, 110, 61, 90,
+            0xB0.toByte(), 66, 127, // repeat down is not a fresh capture
+            0x80.toByte(), 60, 30, 61, 31, 60, 32
+        ))
+        assertEquals(
+            listOf(
+                "on:0:60:100", "on:0:60:110", "on:0:61:90",
+                "off:0:60:30", "off:0:61:31"
+            ),
+            events.notes
+        )
+        port.feed(byteArrayOf(0xB0.toByte(), 66, 0))
+        port.close()
+        assertEquals("off:0:60:0", events.notes.last())
+        assertEquals(6, events.notes.size)
+    }
+
 }
