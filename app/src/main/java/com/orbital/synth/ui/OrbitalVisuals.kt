@@ -155,16 +155,23 @@ internal fun OrbitalDisplay(
                 style = Stroke(width = (1 + ring % 2).dp.toPx()),
             )
         }
+        val orbitFrequency = 3.0 + m.toDouble() * 2.0
+        val orbitYScale = .88f + m * .12f
+        val orbitSamples = OrbitalTraceMath.samples
         for (layer in 0..7) {
             val path = Path()
-            for (i in 0..180) {
-                val a = i * (PI * 2.0 / 180.0)
-                val phase = motion.toDouble() * PI * 2 + layer * .43
-                val twist = sin(a * (3.0 + m.toDouble() * 2.0) + phase) * .13 +
-                    sin(a * 7.0 - phase * .65) * .055
+            val phase = motion.toDouble() * PI * 2 + layer * .43
+            val shiftedPhase = phase * .65
+            val phaseCosine = cos(shiftedPhase)
+            val phaseSine = sin(shiftedPhase)
+            for (i in orbitSamples.indices) {
+                val sample = orbitSamples[i]
+                val twist = OrbitalTraceMath.twist(
+                    sample, orbitFrequency, phase, phaseCosine, phaseSine,
+                )
                 val rr = radius.toDouble() * (.55 + layer * .049 + twist)
-                val x = c.x + cos(a).toFloat() * rr.toFloat()
-                val y = c.y + sin(a).toFloat() * rr.toFloat() * (.88f + m * .12f)
+                val x = c.x + sample.cosine.toFloat() * rr.toFloat()
+                val y = c.y + sample.sine.toFloat() * rr.toFloat() * orbitYScale
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
             path.close()
