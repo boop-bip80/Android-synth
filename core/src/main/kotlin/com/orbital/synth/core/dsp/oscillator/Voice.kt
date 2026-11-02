@@ -164,6 +164,10 @@ internal class Voice(private val sampleRate: Int) {
                 // switch (including old filter charges and operator phase changes).
                 engineSwitchSamples = max(1, (sampleRate * 0.008).toInt())
                 engineSwitchSeed = lastRenderedSample
+                // Inactive analog filter charges must not leak into a new held-note
+                // topology after temporarily playing FM or phase distortion.
+                if (requestedModel == 1) ladder.reset()
+                if (requestedModel == 2) sem.reset()
                 if (requestedModel == 3) fm.noteOn(note, 1f)
                 if (requestedModel == 4) phaseDistortion.noteOn(note, 1f)
             }
@@ -528,6 +532,10 @@ internal class Voice(private val sampleRate: Int) {
                     stage = Stage.OFF
                     active = false
                     releasing = false
+                    // Digital operators use sustained internal envelopes; the parent
+                    // ADSR owns release, so retire operator state only once silent.
+                    fm.hardStop()
+                    phaseDistortion.hardStop()
                 }
             }
             Stage.OFF -> return 0f
