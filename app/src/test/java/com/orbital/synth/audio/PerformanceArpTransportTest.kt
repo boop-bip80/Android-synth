@@ -90,7 +90,10 @@ class PerformanceArpTransportTest {
         assertEquals(0f, fake.render()[0], 0f)
         assertTrue(fake.held.isEmpty())
         fake.transport.inputNoteOn(-1, 0, 67)
-        assertEquals(1f, fake.render(1)[0], 0f)
+        // A key pressed between clock ticks enters on the next quantized pulse.
+        val nextPulse = fake.render(6_000)
+        assertEquals(0f, nextPulse[0], 0f)
+        assertEquals(1f, nextPulse[(6_000 - 192) * 2], 0f)
         assertEquals(
             setOf(Triple(PerformanceArpTransport.ARP_SOURCE_ID, 0, 67)),
             fake.held.keys.toSet()
