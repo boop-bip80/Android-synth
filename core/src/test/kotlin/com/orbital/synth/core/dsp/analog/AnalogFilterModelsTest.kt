@@ -159,10 +159,10 @@ class AnalogFilterModelsTest {
         val sem = SemFilter(48_000)
         val semBaseline = SemFilter(48_000)
         for (filter in arrayOf(ladder, ladderBaseline)) {
-            filter.configure(1_200f, 0.15f, 0f)
+            filter.configure(1_200f, 0f, 0f)
         }
         for (filter in arrayOf(sem, semBaseline)) {
-            filter.configure(1_200f, 0.15f, 0f, 0f)
+            filter.configure(1_200f, 0f, 0f, 0f)
         }
         repeat(4_000) {
             ladder.process(0.2f)
@@ -170,8 +170,8 @@ class AnalogFilterModelsTest {
             sem.process(0.2f)
             semBaseline.process(0.2f)
         }
-        ladder.configure(1_200f, 0.15f, 1f)
-        sem.configure(1_200f, 0.15f, 1f, 1f)
+        ladder.configure(1_200f, 0f, 1f)
+        sem.configure(1_200f, 0f, 1f, 1f)
         val firstLadderDelta = abs(ladder.process(0.2f) - ladderBaseline.process(0.2f))
         val firstSemDelta = abs(sem.process(0.2f) - semBaseline.process(0.2f))
         assertTrue("Ladder drive should not jump within one sample", firstLadderDelta < 0.04f)
