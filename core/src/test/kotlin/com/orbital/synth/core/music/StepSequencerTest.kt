@@ -99,6 +99,42 @@ class StepSequencerTest {
             seq.advance(1))
     }
 
+    @Test fun liveEditReleasesHeldNotesWithoutRestartingStepPhase() {
+        val sequencer = StepSequencer(pattern(
+            SequencerStep(listOf(note(60, gate = 1.0))),
+            SequencerStep(),
+            SequencerStep(),
+            SequencerStep(),
+        ))
+        sequencer.start()
+        assertEquals(
+            listOf(TimedNoteEvent(0, NoteEventKind.NOTE_ON, 60, 100)),
+            sequencer.advance(1000),
+        )
+        val changed = pattern(
+            SequencerStep(listOf(note(60, gate = 1.0))),
+            SequencerStep(),
+            SequencerStep(listOf(note(67, gate = 1.0))),
+            SequencerStep(),
+        )
+        assertEquals(
+            listOf(TimedNoteEvent(1000, NoteEventKind.NOTE_OFF, 60)),
+            sequencer.editPatternPreservingPhase(changed),
+        )
+        // A restarted pattern would incorrectly replay step zero at sample 1000.
+        assertTrue(sequencer.advance(11_000).isEmpty())
+        assertEquals(
+            listOf(TimedNoteEvent(12_000, NoteEventKind.NOTE_ON, 67, 100)),
+            sequencer.advance(1),
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun liveEditRejectsClockDivisionChanges() {
+        val sequencer = StepSequencer()
+        sequencer.editPatternPreservingPhase(StepPattern(subdivisionsPerBeat = 8))
+    }
+
     @Test fun tempoReconfigurationReleasesHeldNotesAndReanchors() {
         val seq = StepSequencer(pattern(SequencerStep(listOf(note(60)))))
         seq.start()
