@@ -23,9 +23,18 @@ class OrbitalSmokeTest {
     @Test
     fun mainActivitySurvivesBackgroundForegroundAndRecreation() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            // Exercise the audio/MIDI start/stop owners as the user backgrounds the app.
-            scenario.moveToState(Lifecycle.State.CREATED)
-            scenario.moveToState(Lifecycle.State.RESUMED)
+            // Three rapid focus cycles exercise AudioTrack/MIDI teardown and restart.
+            // Each transition waits for the ActivityScenario lifecycle to settle.
+            repeat(3) {
+                scenario.moveToState(Lifecycle.State.CREATED)
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                scenario.onActivity { activity ->
+                    assertTrue(
+                        "Foreground activity must retain its window after cycle " + it,
+                        activity.window.decorView.isAttachedToWindow,
+                    )
+                }
+            }
             scenario.recreate()
             scenario.onActivity { activity ->
                 assertTrue("Recreated activity must have an attached window", activity.window.decorView.isAttachedToWindow)
