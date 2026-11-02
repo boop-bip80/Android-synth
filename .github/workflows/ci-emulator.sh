@@ -10,11 +10,21 @@ collect_diagnostics() {
   trap - EXIT
   set +e
   printf '%s\n' "$status" > artifacts/emulator-exit-status.txt
-  adb shell getprop ro.build.version.sdk > artifacts/android-version.txt 2>&1
-  adb logcat -d -t 3000 -v threadtime > artifacts/emulator-logcat.txt 2>&1
-  adb shell dumpsys activity activities > artifacts/activity-state.txt 2>&1
-  adb shell dumpsys window > artifacts/window-state.txt 2>&1
-  adb exec-out screencap -p > artifacts/diagnostic-screen.png 2>/dev/null
+  # Bound diagnostics independently: an unresponsive ADB daemon must not
+  # consume the remaining workflow budget or hide the original test failure.
+  timeout 15s adb shell getprop ro.build.version.sdk > artifacts/android-version.txt 2>&1
+  timeout 15s adb logcat -d -t 3000 -v threadtime > artifacts/emulator-logcat.txt 2>&1
+  timeout 15s adb shell dumpsys activity activities > artifacts/activity-state.txt 2>&1
+  timeout 15s adb shell dumpsys window > artifacts/window-state.txt 2>&1
+  timeout 15s adb shell dumpsys media.audio_policy > artifacts/audio-policy.txt 2>&1
+  timeout 15s adb shell dumpsys media.audio_flinger > artifacts/audio-flinger.txt 2>&1
+  timeout 15s adb shell dumpsys midi > artifacts/midi-state.txt 2>&1
+  timeout 15s adb shell dumpsys meminfo com.orbital.synth > artifacts/app-memory.txt 2>&1
+  {
+    timeout 10s adb shell wm size
+    timeout 10s adb shell wm density
+  } > artifacts/display-state.txt 2>&1
+  timeout 15s adb exec-out screencap -p > artifacts/diagnostic-screen.png 2>/dev/null
   exit "$status"
 }
 trap collect_diagnostics EXIT
