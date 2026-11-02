@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -19,6 +20,7 @@ import com.orbital.synth.core.preset.loadPatch
 import com.orbital.synth.ui.OrbitalScreen
 import com.orbital.synth.ui.OrbitalUiState
 import com.orbital.synth.ui.PlayMode
+import kotlinx.coroutines.delay
 
 /**
  * Composes the UI around one long-lived synthesizer and one Android audio output.
@@ -44,6 +46,10 @@ class MainActivity : ComponentActivity() {
         selectFactoryPatch(0)
 
         audioOutput = AndroidAudioOutput(applicationContext, synth)
+        screenState = screenState.copy(
+            sequencerTempo = audioOutput.sequencerTempo,
+            enabledSteps = audioOutput.sequencerEnabledSteps
+        )
         midiManager = AndroidMidiManager(applicationContext, object : MidiMessageListener {
             override fun onNoteOn(channel: Int, note: Int, velocity: Int) {
                 if (velocity == 0) {
@@ -79,6 +85,17 @@ class MainActivity : ComponentActivity() {
         })
 
         setContent {
+            // Poll ONLY for visual playhead feedback; musical note timing is
+            // computed at sample offsets on the dedicated audio render worker.
+            LaunchedEffect(Unit) {
+                while (true) {
+                    val step = audioOutput.sequencerPlayhead
+                    if (screenState.sequencerStep != step) {
+                        screenState = screenState.copy(sequencerStep = step)
+                    }
+                    delay(32L)
+                }
+            }
             MaterialTheme {
                 OrbitalScreen(
                     state = screenState,
@@ -93,6 +110,26 @@ class MainActivity : ComponentActivity() {
                     onOctaveChange = { octave ->
                         synth.allNotesOff()
                         screenState = screenState.copy(octave = octave.coerceIn(0, 8))
+                    },
+                    onSequencerToggle = {
+                        val next = !screenState.sequencerRunning
+                        audioOutput.setSequencerPlaying(next)
+                        screenState = screenState.copy(sequencerRunning = next)
+                    },
+                    onStepToggle = { step ->
+                        if (step in 0..15) {
+                            val newEnabled = step !in screenState.enabledSteps
+                            audioOutput.setSequencerStepEnabled(step, newEnabled)
+                            val updated = screenState.enabledSteps.toMutableSet().apply {
+                                if (newEnabled) add(step) else remove(step)
+                            }
+                            screenState = screenState.copy(enabledSteps = updated)
+                        }
+                    },
+                    onSequencerTempoChange = { bpm ->
+                        val next = bpm.coerceIn(20, 300)
+                        audioOutput.setSequencerTempo(next)
+                        screenState = screenState.copy(sequencerTempo = next)
                     },
                     onPreviousPatch = { selectFactoryPatch(patchIndex - 1) },
                     onNextPatch = { selectFactoryPatch(patchIndex + 1) }
@@ -149,6 +186,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         synth.allNotesOff()
+        audioOutput.setSequencerPlaying(false)
+        screenState = screenState.copy(sequencerRunning = false, sequencerStep = -1)
         midiManager.stop()
         audioOutput.stop()
         super.onStop()
