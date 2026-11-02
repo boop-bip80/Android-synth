@@ -4,15 +4,26 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class FactoryPatternsTest {
-    @Test fun eachFactoryPatternIsDistinctSixteenStepAndNonSilent() {
-        assertEquals(10, FactoryPatterns.ALL.size)
+    @Test fun eachFactoryPatternHasUniqueIdValidLengthAndSound() {
+        assertEquals(12, FactoryPatterns.ALL.size)
         assertEquals(FactoryPatterns.ALL.size, FactoryPatterns.ALL.map { it.id }.toSet().size)
         assertSame(FactoryPatterns.DEFAULT, FactoryPatterns.byId("aurora"))
         for (factory in FactoryPatterns.ALL) {
-            assertEquals(16, factory.pattern.steps.size)
+            assertTrue(factory.pattern.steps.size in 1..64)
             assertTrue(factory.pattern.steps.any { it.notes.isNotEmpty() })
             assertNotNull(FactoryPatterns.byId(factory.id))
         }
+    }
+
+    @Test fun polymetricFactoryPatternsExposeThirtyTwoAndSixtyFourSteps() {
+        val eclipse = FactoryPatterns.byId("eclipse-32")!!
+        val deepOrbit = FactoryPatterns.byId("deep-orbit-64")!!
+        assertEquals(32, eclipse.pattern.steps.size)
+        assertEquals(64, deepOrbit.pattern.steps.size)
+        assertEquals(4, eclipse.pattern.subdivisionsPerBeat)
+        assertEquals(4, deepOrbit.pattern.subdivisionsPerBeat)
+        assertTrue(eclipse.pattern.steps.any { it.notes.size >= 2 })
+        assertTrue(deepOrbit.pattern.steps.any { it.notes.size >= 2 })
     }
 
     @Test fun everyFactoryPatternReturnsBalancedNotesAfterTransportStop() {
