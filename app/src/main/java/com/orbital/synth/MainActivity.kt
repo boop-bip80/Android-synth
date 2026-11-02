@@ -88,8 +88,10 @@ class MainActivity : ComponentActivity() {
             }
 
             override fun onPitchBend(channel: Int, value: Int) {
-                // Pitch-bend routing is enabled when the DSP engine supports
-                // per-channel bend; ignoring it is safer than retuning all notes.
+                // Standard global ±2-semitone bend. Per-note MPE bend requires
+                // channel-associated voices and is intentionally not claimed yet.
+                val bend = (value.coerceIn(0, 16_383) - 8_192) / 8_192f
+                synth.setPitchBend(bend * 2f)
             }
         })
 
