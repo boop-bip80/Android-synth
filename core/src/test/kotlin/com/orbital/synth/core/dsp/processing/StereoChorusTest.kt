@@ -115,4 +115,27 @@ class StereoChorusTest {
             assertEquals(first[i * 2 + 1], out[1], 0f)
         }
     }
+
+    @Test fun liveWetEditsSlewInsteadOfHardSwitchingAndEventuallyReachTargets() {
+        val chorus = StereoChorus(8_000)
+        val out = FloatArray(2)
+        chorus.configure(rateHz = 0.6f, depth = 1f, wet = 0f)
+        repeat(256) { chorus.process(0f, 0f, out, 0) }
+
+        // Turning on 100% chorus should preserve almost all of the first dry attack,
+        // instead of instantly replacing it with an empty 16 ms wet history.
+        chorus.configure(rateHz = 0.6f, depth = 1f, wet = 1f)
+        chorus.process(1f, 0f, out, 0)
+        assertTrue("Wet jump removed the dry attack", out[0] > 0.95f)
+        repeat(1_800) { chorus.process(0f, 0f, out, 0) }
+        chorus.process(1f, 0f, out, 0)
+        assertTrue("Wet glide did not settle", abs(out[0]) < 0.05f)
+
+        chorus.configure(rateHz = 0.6f, depth = 1f, wet = 0f)
+        chorus.process(1f, 0f, out, 0)
+        assertTrue("Bypass jumped immediately", abs(out[0]) < 0.05f)
+        repeat(1_800) { chorus.process(0f, 0f, out, 0) }
+        chorus.process(1f, 0f, out, 0)
+        assertTrue("Dry glide did not settle", out[0] > 0.95f)
+    }
 }
