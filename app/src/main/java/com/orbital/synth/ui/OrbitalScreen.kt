@@ -129,6 +129,7 @@ fun OrbitalScreen(
     onSavePatch: ((String) -> Unit)? = null,
     onSelectPatch: ((String) -> Unit)? = null,
     onSelectSequence: ((String) -> Unit)? = null,
+    onSequencerLengthChange: ((Int) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var showPatchLibrary by remember { mutableStateOf(false) }
@@ -386,6 +387,7 @@ fun OrbitalScreen(
                 state.sequenceChoices,
                 state.activeSequenceId,
                 onSelectSequence,
+                onSequencerLengthChange,
             )
             Tab.FX -> FxPanel(parameter, onParameterChange)
         }
@@ -938,6 +940,73 @@ private fun SequenceSelector(
     }
 }
 
+/** Length requests are declarative: only the host transport changes the actual pattern. */
+@Composable
+private fun SequenceLengthPanel(
+    stepCount: Int,
+    onLengthChange: ((Int) -> Unit)?,
+) {
+    val count = stepCount.coerceIn(1, 64)
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Label("PATTERN LENGTH")
+            Spacer(Modifier.weight(1f))
+            Label(count.toString() + " STEPS")
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            listOf(16, 32, 64).forEach { target ->
+                val active = count == target
+                val canChoose = onLengthChange != null && !active
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .border(
+                            1.dp,
+                            if (active) OrbitalPalette.Gold else OrbitalPalette.PanelEdge,
+                            RoundedCornerShape(12.dp),
+                        )
+                        .background(
+                            if (active) OrbitalPalette.Gold.copy(alpha = .13f)
+                            else OrbitalPalette.Panel.copy(alpha = .65f),
+                            RoundedCornerShape(12.dp),
+                        )
+                        .clickable(enabled = canChoose, role = Role.RadioButton) {
+                            onLengthChange?.invoke(target)
+                        }
+                        .semantics {
+                            selected = active
+                            contentDescription = "Set sequence length to " + target + " steps"
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        target.toString(),
+                        color = if (active) OrbitalPalette.Gold else OrbitalPalette.Text,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+            PresetArrow(
+                symbol = "−",
+                description = "Decrease sequence length",
+                enabled = onLengthChange != null && count > 1,
+                onClick = { if (count > 1) onLengthChange?.invoke(count - 1) },
+            )
+            PresetArrow(
+                symbol = "+",
+                description = "Increase sequence length",
+                enabled = onLengthChange != null && count < 64,
+                onClick = { if (count < 64) onLengthChange?.invoke(count + 1) },
+            )
+        }
+    }
+}
+
 @Composable
 private fun SequencerPanel(
     steps: List<Boolean>,
@@ -950,6 +1019,7 @@ private fun SequencerPanel(
     sequenceChoices: List<SequenceChoice>,
     activeSequenceId: String?,
     onSelectSequence: ((String) -> Unit)?,
+    onSequencerLengthChange: ((Int) -> Unit)?,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
         Row(
@@ -961,6 +1031,7 @@ private fun SequencerPanel(
             Pill(if (playing) "STOP" else "PLAY ▶", playing, onTogglePlaying)
         }
         SequenceSelector(sequenceChoices, activeSequenceId, onSelectSequence)
+        SequenceLengthPanel(steps.size, onSequencerLengthChange)
         Label("Tap any step to enable/disable it. The running pattern plays the synthesizer.")
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             // Four 56dp touch targets per row on a phone, eight on a wider display.
