@@ -68,9 +68,9 @@ class OrbitalSynth(
     private val gainSlewCoefficient = (1.0 - exp(-1.0 / (sampleRate * 0.015))).toFloat()
 
     // Master FX are strictly audio-thread-owned and allocated once at initialization.
-    private val fxChorus = StereoChorus(sampleRate)
+    private val fxChorus = StereoChorus(sampleRate).apply { resetForBypass() }
     private val chorusScratch = FloatArray(2)
-    private val fxDelay = StereoDelay(sampleRate, maxDelaySeconds = 1.5f)
+    private val fxDelay = StereoDelay(sampleRate, maxDelaySeconds = 1.5f).apply { resetForBypass() }
     private val fxScratch = FloatArray(2)
     private var previousFxEnabled = false
 
@@ -186,8 +186,10 @@ class OrbitalSynth(
             )
         } else if (previousFxEnabled) {
             // Clear old echoes on bypass so reopening the effect cannot replay stale buffers.
-            fxChorus.reset()
-            fxDelay.reset()
+            // Drop old wet gain along with the tail. Re-enabling at a small
+            // amount must not inherit a previous preset's much larger wet mix.
+            fxChorus.resetForBypass()
+            fxDelay.resetForBypass()
         }
         previousFxEnabled = fxEnabled
         val driveAmount = fxAmount * 0.68f
