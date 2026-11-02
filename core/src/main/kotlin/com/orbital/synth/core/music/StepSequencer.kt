@@ -119,6 +119,25 @@ class StepSequencer(
         return offs
     }
 
+    /**
+     * Apply a live grid/mute edit without restarting the groove at step zero.
+     * Held notes are explicitly released at the edit cursor; pending step timing
+     * and absolute probability ordinals remain unchanged. Subdivisions must be
+     * unchanged because changing the clock requires configure/replacePattern.
+     */
+    fun editPatternPreservingPhase(value: StepPattern): List<TimedNoteEvent> {
+        val replacement = freeze(value)
+        require(replacement.subdivisionsPerBeat == pattern.subdivisionsPerBeat) {
+            "Live edits cannot change subdivisions per beat"
+        }
+        val offs = activeOffTimes.keys.sorted().map {
+            TimedNoteEvent(cursorSample, NoteEventKind.NOTE_OFF, it)
+        }
+        activeOffTimes.clear()
+        pattern = replacement
+        return offs
+    }
+
     /** Tempo/swing edits reset phase at this cursor and explicitly release held notes. */
     fun configure(bpm: Double = this.bpm, swing: Double = this.swing): List<TimedNoteEvent> {
         val newBpm = validBpm(bpm)
