@@ -30,6 +30,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      - name: Validate emulator harness syntax
+        run: bash -n .github/workflows/ci-emulator.sh
       - name: Host tests, lint, app APK and instrumentation test APK
         run: gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
       - name: Upload debug APK
@@ -81,6 +83,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+      - name: Install Android SDK platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
@@ -103,12 +107,14 @@ jobs:
           # The runner executes each nonempty script line in a separate `sh -c`.
           # Use one Bash command so traps, pipefail and exit codes work together.
           script: bash .github/workflows/ci-emulator.sh
-      - name: Upload real emulator screenshot
+      - name: Upload real emulator screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: orbital-api35-emulator-screenshot
-          path: artifacts/orbital-emulator.png
+          path: |
+            artifacts/orbital-emulator.png
+            artifacts/orbital-compact-emulator.png
           if-no-files-found: warn
           retention-days: 14
       - name: Upload emulator diagnostics
@@ -125,6 +131,10 @@ jobs:
             artifacts/android-version.txt
             artifacts/emulator-exit-status.txt
             artifacts/emulator-summary.txt
+            artifacts/emulator-phase.txt
+            artifacts/emulator-provenance.txt
+            artifacts/compact-activity-launch.txt
+            artifacts/compact-window-state.txt
             artifacts/audio-policy.txt
             artifacts/audio-flinger.txt
             artifacts/midi-state.txt
