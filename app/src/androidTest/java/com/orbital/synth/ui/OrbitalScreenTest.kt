@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
@@ -210,6 +211,39 @@ class OrbitalScreenTest {
         assertTrue("Play C sharp 4" in actions)
         assertTrue("Play A sharp 4" in actions)
         assertTrue("Play C 5" in actions)
+    }
+
+    @Test fun wideKeyboardExposesBothOctavesToAccessibility() {
+        val notes = keyboardAccessibleNotes(15, 4)
+        assertEquals(25, notes.size)
+        assertEquals(60 to "Play C 4", notes.first())
+        assertTrue(73 to "Play C sharp 5" in notes)
+        assertEquals(84 to "Play C 6", notes.last())
+        // MIDI notes above 127 cannot be played, even on the wide keyboard.
+        val highRange = keyboardAccessibleNotes(15, 8)
+        assertEquals(20, highRange.size)
+        assertEquals(127, highRange.last().first)
+    }
+
+    @Test fun octaveButtonsExposeDisabledBoundaryStates() {
+        val octave = mutableIntStateOf(0)
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(octave = octave.intValue),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> },
+                onModeChange = {},
+                onOctaveChange = { octave.intValue = it },
+            )
+        }
+        compose.onNodeWithContentDescription("Lower octave").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Raise octave").performClick()
+        compose.runOnIdle { assertEquals(1, octave.intValue) }
+
+        compose.runOnIdle { octave.intValue = 8 }
+        compose.onNodeWithContentDescription("Raise octave").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Lower octave").performClick()
+        compose.runOnIdle { assertEquals(7, octave.intValue) }
     }
 
     @Test fun keyboardHitTestingMatchesBlackAndWhiteGeometry() {
