@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -20,9 +21,13 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.awaitPointerEventScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** MIDI offsets for a diatonic white-key keyboard. */
 internal fun whiteKeyOffset(index: Int): Int {
@@ -69,6 +74,7 @@ internal fun OrbitalKeyboard(
     val noteOn by rememberUpdatedState(onNoteOn)
     val noteOff by rememberUpdatedState(onNoteOff)
     val pressedCounts = remember { mutableStateMapOf<Int, Int>() }
+    val accessibilityScope = rememberCoroutineScope()
 
     BoxWithConstraints(modifier) {
         val whiteCount = if (maxWidth >= 560.dp) 15 else 8
@@ -76,7 +82,22 @@ internal fun OrbitalKeyboard(
             Modifier
                 .fillMaxWidth()
                 .height(if (whiteCount == 15) 142.dp else 158.dp)
-                .semantics { contentDescription = "Multitouch piano keyboard. Swipe across keys to play; use OCT buttons to change range." }
+                .semantics {
+                    contentDescription = "Multitouch piano keyboard. Swipe across keys to play; use OCT buttons to change range."
+                    customActions = (0 until 8).map { index ->
+                        val note = (octave + 1) * 12 + whiteKeyOffset(index)
+                        val noteName = listOf("C", "D", "E", "F", "G", "A", "B", "C")[index]
+                        val octaveName = octave + if (index == 7) 1 else 0
+                        CustomAccessibilityAction("Play " + noteName + octaveName) {
+                            noteOn(note)
+                            accessibilityScope.launch {
+                                delay(300)
+                                noteOff(note)
+                            }
+                            true
+                        }
+                    }
+                }
                 .pointerInput(octave, whiteCount) {
                     awaitPointerEventScope {
                         val pointerToNote = mutableMapOf<PointerId, Int>()
