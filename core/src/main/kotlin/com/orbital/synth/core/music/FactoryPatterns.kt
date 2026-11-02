@@ -122,9 +122,31 @@ object FactoryPatterns {
         bpm = 132.0, swing = .22,
     )
 
+    /** Three clock-aligned lanes cycle at 4, 8 and 16 steps. */
+    val SPECTRAL_WEAVE = FactorySequence(
+        "spectral-weave", "Spectral Weave",
+        AdvancedPatternComposer.polymeter(
+            PatternComposer.euclidean(4, 3, 36, velocity = 109, gate = .50,
+                accentEvery = 2, accentVelocity = 124),
+            PatternComposer.euclidean(8, 5, 67, rotation = 2, velocity = 82, gate = .61),
+            PatternComposer.euclidean(16, 7, 79, rotation = 4, velocity = 73, gate = .28),
+        ), bpm = 124.0, swing = .16,
+    )
+
+    /** Stable scale-walk phrase for editable melodic sketching. */
+    val HALO_WALK = FactorySequence(
+        "halo-walk", "Halo Walk",
+        AdvancedPatternComposer.melodicWalk(
+            steps = 16, scale = MusicalScales.DORIAN, tonicPitchClass = 2,
+            lowestMidiNote = 57, highestMidiNote = 81, startMidiNote = 62,
+            maxDegreeLeap = 3, restProbability = .14, seed = 20261102L,
+            velocity = 89, gate = .62,
+        ), bpm = 108.0, swing = .10,
+    )
+
     val ALL: List<FactorySequence> =
         listOf(AURORA, COMET_ARP, ION_BASS, CHORD_CLOUD, PRISM_PULSE, LUNAR_PLUCK,
-            NEBULA_CIRCUIT, GRAVITY_GARDEN)
+            NEBULA_CIRCUIT, GRAVITY_GARDEN, SPECTRAL_WEAVE, HALO_WALK)
 
     val DEFAULT: FactorySequence get() = AURORA
     fun byId(id: String): FactorySequence? = ALL.firstOrNull { it.id == id }
