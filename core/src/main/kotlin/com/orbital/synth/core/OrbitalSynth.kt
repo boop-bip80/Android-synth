@@ -6,6 +6,7 @@ import com.orbital.synth.core.dsp.processing.Drive
 import com.orbital.synth.core.dsp.processing.FxBypassCrossfade
 import com.orbital.synth.core.dsp.processing.StereoChorus
 import com.orbital.synth.core.dsp.processing.StereoDelay
+import com.orbital.synth.core.dsp.processing.StereoReverb
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicIntegerArray
@@ -82,6 +83,8 @@ class OrbitalSynth(
     private val chorusScratch = FloatArray(2)
     private val fxDelay = StereoDelay(sampleRate, maxDelaySeconds = 1.5f).apply { resetForBypass() }
     private val fxScratch = FloatArray(2)
+    private val fxReverb = StereoReverb(sampleRate).apply { resetForBypass() }
+    private val reverbScratch = FloatArray(2)
     private val fxCrossfade = FxBypassCrossfade(sampleRate)
     // Hold the old drive amount across a fade-out; Fx_AMOUNT=0 must not alter
     // the wet signal before the 10 ms master-bus crossfade reaches true dry.
@@ -229,10 +232,17 @@ class OrbitalSynth(
                 wet = fxAmount * 0.52f,
                 pingPong = 0.72f
             )
+            fxReverb.configure(
+                decaySeconds = 1.25f + fxAmount * 3.35f,
+                damping = 0.36f + (1f - movement) * 0.24f,
+                wet = fxAmount * 0.30f,
+                diffusion = 0.70f + movement * 0.25f,
+                stereoWidth = 0.92f,
+            )
             driveTarget = fxAmount * 0.68f
         }
         // This target can reverse mid-ramp without jumping. On disable, leave
-        // chorus/delay configuration and driveTarget unchanged until fade-out is done.
+        // chorus/delay/reverb configuration and driveTarget unchanged until fade-out.
         fxCrossfade.setEnabled(fxEnabled)
 
         // AudioTrack normally keeps requesting blocks even when no keys are held. Avoid
@@ -287,9 +297,10 @@ class OrbitalSynth(
                     0
                 )
                 fxDelay.process(chorusScratch[0], chorusScratch[1], fxScratch, 0)
+                fxReverb.process(fxScratch[0], fxScratch[1], reverbScratch, 0)
                 fxCrossfade.process(
                     dryLeft, dryRight,
-                    softClip(fxScratch[0]), softClip(fxScratch[1]),
+                    softClip(reverbScratch[0]), softClip(reverbScratch[1]),
                     output, offset
                 )
                 if (fxCrossfade.isFullyDry) {
@@ -297,6 +308,7 @@ class OrbitalSynth(
                     // Re-enabling starts with empty wet history and zero wet mix.
                     fxChorus.resetForBypass()
                     fxDelay.resetForBypass()
+                    fxReverb.resetForBypass()
                     smoothedDrive = 0f
                     driveTarget = 0f
                 }

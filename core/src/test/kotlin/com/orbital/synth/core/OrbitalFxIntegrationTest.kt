@@ -65,6 +65,31 @@ class OrbitalFxIntegrationTest {
         assertTrue("Dry output must be silent after release", dryPeak < 0.00001f)
     }
 
+    @Test fun diffuseReverbTailIsAudibleBeforeFirstDelayEcho() {
+        val wet = fixedSynth().apply {
+            setParameter(ParameterId.FX_AMOUNT, 1f)
+            setParameter(ParameterId.RELEASE, 0f)
+        }
+        val dry = fixedSynth().apply { setParameter(ParameterId.RELEASE, 0f) }
+        val lead = FloatArray(2_048 * 2)
+        for (engine in listOf(wet, dry)) {
+            engine.noteOn(72)
+            engine.renderStereo(lead, 2_048)
+            engine.allNotesOff()
+        }
+        val wetTail = FloatArray(8_192 * 2)
+        val dryTail = FloatArray(wetTail.size)
+        wet.renderStereo(wetTail, 8_192)
+        dry.renderStereo(dryTail, 8_192)
+        // Voice release is only ~20 ms; the stereo delay is 290 ms. A signal
+        // 100–170 ms later can therefore come from the new reverb, not either.
+        val first = 4_800 * 2
+        val wetPeak = (first until wetTail.size).maxOf { abs(wetTail[it]) }
+        val dryPeak = (first until dryTail.size).maxOf { abs(dryTail[it]) }
+        assertTrue("Integrated reverb should retain an early diffuse tail", wetPeak > 0.00001f)
+        assertTrue("The released dry voice should be silent", dryPeak < 0.00001f)
+    }
+
     @Test fun extremeEffectsAndBypassNeverProduceNonFiniteOutput() {
         val synth = OrbitalSynth()
         synth.setParameter(ParameterId.FX_AMOUNT, 1f)
@@ -89,7 +114,7 @@ class OrbitalFxIntegrationTest {
         for (sample in block) assertTrue(sample.isFinite())
     }
 
-    @Test fun bypassClearsChorusAndDelayHistoryBeforeReenablingFx() {
+    @Test fun bypassClearsChorusDelayAndReverbHistoryBeforeReenablingFx() {
         val synth = fixedSynth().apply {
             setParameter(ParameterId.RELEASE, 0f)
             setParameter(ParameterId.FX_AMOUNT, 1f)
@@ -103,7 +128,7 @@ class OrbitalFxIntegrationTest {
         synth.renderStereo(block, 4_096)
         assertEquals(0, synth.activeVoiceCount)
 
-        // Both processors must forget pre-bypass audio; no delayed echoes should be
+        // All processors must forget pre-bypass audio; no delayed tails should be
         // resurrected when the musician turns FX back on while the synth is silent.
         synth.setParameter(ParameterId.FX_AMOUNT, 1f)
         synth.renderStereo(block, 4_096)

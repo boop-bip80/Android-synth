@@ -1,6 +1,6 @@
 # ORBITAL — Android wavetable synthesizer
 
-**Status (2026-11-02): twenty-four development PRs (#15–#38) are merged into `main`, including source-isolated MIDI/touch/sequence notes, the 1–64-step sequencer, native length controls, and smooth FX bypass.** The current GitHub Actions build is **queued without an assigned runner**; its JVM tests, Android lint, APK assembly and API 35 emulator have not executed. The earlier baseline (`e64632f`) was locally reported to pass 89 core JVM tests, 31 Android JVM tests, Android lint and both debug APK assemblies with JDK 17, Android SDK 35 and Gradle 8.11.1. **Those results predate the newer changes and must not be treated as verification of current `main`.** Real-device installability, audio latency, controller interoperability and performance remain unverified.
+**Status (2026-11-02): development PRs #40–#45 are merged into `main`, adding unison, stereo reverb, resilient MIDI, editable sequence voices, saved user patterns and stronger Android CI.** The combined source, including app integration, **passed a local build** with JDK 17, Android SDK 35 and Gradle 8.11.1: **150 core JVM tests, 57 Android JVM tests, Android lint, debug APK and instrumentation APK assembly**. This is host-side verification, not a completed GitHub emulator run. Earlier hosted workflows exposed an obsolete `sdkmanager tools` default in the SDK setup action; the workflow now explicitly requests `platform-tools`. A **green API 35 emulator run and real-device measurements remain required** before calling this production-ready.
 
 ![Original ORBITAL generated concept artwork — UI reference, not a running-app screenshot](design/orbital-ui-reference.png)
 
@@ -10,15 +10,26 @@ ORBITAL is a touch-first, sound-design-oriented Android synthesizer. The interfa
 
 | Area | Code currently present | Verification still required |
 | --- | --- | --- |
-| Synthesis | Portable Kotlin engine with **16 voices**, **five band-limited wavetable families**, oscillator morphing, alias-conscious mip crossfades, slew-limited filter/pan modulation, voice stealing, mono/poly/legato, portamento and pitch bend. New bounded, preallocated source/channel/note ownership preserves independent holds across MIDI ports, keyboard and sequencer—even when voices are stolen. | New source-ownership regressions are in source; run current JVM tests and measure CPU/pitch/aliasing on devices |
-| Tone and movement | ADSR, resonant filter, LFO/modulation, drive, stereo chorus and delay with smoothed live controls. The master bus now uses a **10 ms reversible FX bypass crossfade**, retaining the wet path during fade-out and clearing echo state at exact dry. | End-to-end FX comparison tests are in source; listening, load and sample-rate testing still required |
-| Android audio and MIDI | AudioTrack worker with focus/lifecycle handling; MIDI per-port source IDs and per-channel sustain (CC64), reset/panic and disconnect cleanup. Touch (`-1`), sequencer (`-2`) and positive MIDI port IDs reach the same source-aware synth engine without cross-releasing notes. | Confirm real output routes, USB/Bluetooth controllers, background behavior and latency |
-| Interface | Native Compose sound/play/sequence/FX views based on the committed generated concept: interactive orbital morph/motion surface, chromatic accessible keyboard, XY pad, patch library, factory-sequence picker, responsive **1–64-step grid**, 16/32/64 length presets and ±1 controls. The keyboard stays anchored while the editor scrolls. | Compose instrumentation cases are in source; actual emulator screenshot and real touch/TalkBack/font/orientation testing pending |
-| Musical tools | Sample-addressed sequencer with worker-safe **1–64-step** pattern loading, resizing, per-step notes and muting; 12 factory patterns (including 32-step *Eclipse Shift* and 64-step *Deep Orbit*); velocity/gates/ties/probability/swing; 20 scales, Euclidean patterns, polymetric layering and seeded melodic walks. Full per-note editing is currently available to code, while on-screen cells toggle steps. | Verify timing under load, app lifecycle, rapid edits and concurrent touch/MIDI |
-| Sounds and storage | **16 factory sound patches**, **12 factory sequencer patterns**, versioned patch model/import/export, local preset persistence, selectable user patch bank and save-as UI. | Exercise migration, file access and saved-user-patch flows on Android |
-| Quality automation | Prior baseline: **120 local JVM tests** passed at `e64632f`. Numerous further core/JVM/Compose/instrumentation regressions are committed but not yet run. The **API 35 x86_64 GitHub emulator workflow** compiles instrumentation, exercises repeated resume cycles and Android audio services, checks focused window/PNG and retains bounded system diagnostics/artifacts. | Await a completed hosted run of the latest `main` and inspect test reports, emulator image, APK and failures |
+| Synthesis | Portable Kotlin engine with **16 voices**, **five band-limited wavetable families**, oscillator morphing, alias-conscious mip crossfades, slew-limited filter/pan automation, voice stealing, mono/poly/legato, portamento and pitch bend. **Three-oscillator unison** has neutral defaults, up to ±30 cents detune and 10 ms slews; preallocated source/channel/note ownership keeps MIDI, touch and sequencer notes independent. | Profile aliasing, CPU, stereo imaging and tuning on real devices |
+| Tone and movement | ADSR, resonant filter, LFO/modulation, drive, stereo chorus, delay and an **eight-line stereo FDN reverb** with diffusion, room decay, damping and width. The reverb is wired into the actual master wet path, behind the **10 ms reversible FX bypass**, with tail reset at exact dry. | Listening, long-session stability, CPU and thermal profiling still required |
+| Android audio and MIDI | AudioTrack worker with focus/lifecycle handling; MIDI per-port source IDs, per-channel sustain (CC64), CC123 sustained note release, CC120 immediate panic and disconnect cleanup. **Per-device open epochs** reject stale hot-plug callbacks after device-ID reuse. | Confirm real output routes, USB/Bluetooth controllers, background behavior and latency |
+| Interface | Native Compose sound/play/sequence/FX views based on the committed generated concept: interactive orbital surface, chromatic accessible keyboard, XY pad, patch library, **unison/detune controls**, responsive **1–64-step grid** and a **per-note step inspector** for pitch, velocity, gate, chance, ties and chord voices. The keyboard stays anchored while the editor scrolls. | Run the committed Compose instrumentation and inspect real emulator screenshots and touch/TalkBack behavior |
+| Musical tools | Sample-addressed sequencer with worker-safe pattern loading, resizing, per-step note editing and muting; 12 factory patterns (including 32-step *Eclipse Shift* and 64-step *Deep Orbit*); swing, 20 scales, Euclidean patterns, polymetric layers and seeded melodic walks. | Verify timing under load, rapid edits and simultaneous MIDI/touch |
+| Sounds and storage | **16 factory sound patches**, **12 factory sequencer patterns**, versioned patch import/export, local preset bank and save-as UI. User-created sequences have a validated, versioned codec, atomic app-private storage and a selectable library; Save Sequence captures the current audible grid. | Exercise on-device migration, user-file corruption and save/load flows |
+| Quality automation | **207 JVM tests passed locally** (150 core, 57 Android); lint and both debug APK assemblies also passed. The **API 35 x86_64 GitHub emulator workflow** compiles instrumentation, exercises repeated lifecycle/audio tests, captures normal and 360 dp / 1.3× font screenshots, and retains bounded diagnostics and provenance. | Await a completed hosted `main` emulator run; host compilation alone cannot validate instrumentation or screenshots |
 
-These are descriptions of code in this repository, **not claims of passing tests on the latest commit or a finished commercial instrument**. In particular, per-note MPE and guaranteed low-latency playback are not verified.
+These are descriptions of code and a local host-build result, **not claims of a green GitHub emulator run or a finished commercial instrument**. In particular, per-note MPE and guaranteed low-latency playback are not verified.
+
+## November 2 deeper development: PRs #40–#45
+
+- [#40](https://github.com/boop-bip80/Android-synth/pull/40) — MIDI device-reconnect epochs and sustain-aware channel-mode handling.
+- [#41](https://github.com/boop-bip80/Android-synth/pull/41) — three-oscillator unison/detune with smooth live changes.
+- [#42](https://github.com/boop-bip80/Android-synth/pull/42) — eight-line stereo FDN reverb and corrected delay-glide test setup.
+- [#43](https://github.com/boop-bip80/Android-synth/pull/43) — strict, versioned user-sequence codec and atomic storage; patch compatibility.
+- [#44](https://github.com/boop-bip80/Android-synth/pull/44) — API 35 instrumentation hardening, compact screenshot and SDK setup fix.
+- [#45](https://github.com/boop-bip80/Android-synth/pull/45) — native step-note inspector, save-sequence dialog and accessible controls.
+
+MainActivity integration connects the new UI editor to the audio worker, loads saved sequences off the UI thread and preserves factory sequences. The reverb is in the real audio bus; neither is merely an isolated demo class.
 
 ## November 2 development merges
 
@@ -45,7 +56,7 @@ These are descriptions of code in this repository, **not claims of passing tests
 - [#33](https://github.com/boop-bip80/Android-synth/pull/33) and [#35](https://github.com/boop-bip80/Android-synth/pull/35) — 1–64-step worker-safe editing, 32/64-step polymetric factory loops, stale-edit guards and lifecycle tests.
 - [#32](https://github.com/boop-bip80/Android-synth/pull/32) — Android audio device/lifecycle instrumentation and time-bounded AudioFlinger/policy/MIDI diagnostics.
 
-**Remaining limitations:** The UI currently toggles steps but does not provide per-note velocity/gate/probability editing or persistent user sequence storage; external MIDI timing is processed at audio-block boundaries; per-note MPE, release signing, deterministic low-latency guarantees and real-device validation are not implemented or verified.
+**Remaining limitations:** Save Sequence stores the *audible* pattern—muted steps become rests rather than retaining hidden muted notes. External MIDI timing is handled at audio-block boundaries; per-note MPE, independent reverb parameter panels, release signing, deterministic low-latency guarantees and real-device validation are not implemented or verified.
 
 ## Project layout
 
@@ -62,7 +73,7 @@ Use the [Android CI workflow](.github/workflows/android.yml) from the repository
 
 - `orbital-debug-apk` — unsigned-for-Play debug install package, signed with the Android debug key.
 - `orbital-debug-android-test-apk` — compiled instrumentation test APK.
-- `orbital-api35-emulator-screenshot` — actual UI captured via `adb shell screencap`, separate from the concept image.
+- `orbital-api35-emulator-screenshot` — actual UI captured via `adb shell screencap` in default Pixel 6 and compact 360 dp / 1.3× font configurations, separate from the concept image.
 - `orbital-api35-emulator-diagnostics` — emulator logcat, activity/window dumps, launch/exit status, screenshot checksum, bounded AudioFlinger/policy/MIDI/memory/display diagnostics and a diagnostic screen capture, when the emulator starts.
 - `orbital-host-test-reports` and `orbital-android-test-results` — JVM and instrumentation test reports, when generated; Android lint report is separate.
 
@@ -80,10 +91,10 @@ The repository uses AGP 8.9.2 and Kotlin/Compose Compiler 2.1.20. See the [build
 
 ## Next validation milestones
 
-1. Run all host tests, Android lint and APK compilation on the **new merged main**, and inspect failures.
-2. Pass API 35 emulator launch, instrumentation and screenshot checks with evidence.
-3. Profile real Android phones for audio underruns, latency, battery, thermal behavior and MIDI controller compatibility.
-4. Complete accessibility/interaction playtests and release signing before claiming production readiness.
+1. Pass the API 35 emulator launch, instrumentation and both screenshot checks on the **new merged main** and inspect downloadable evidence.
+2. Profile real Android phones for reverb/unison CPU, audio underruns, latency, battery, thermals and MIDI controller compatibility.
+3. Preserve muted-note edit layers across sequence saves; add undo/redo and dedicated sound-design controls without compromising touch ergonomics.
+4. Complete accessibility/interaction playtests and reproducible release signing before claiming production readiness.
 
 ## License
 

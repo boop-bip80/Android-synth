@@ -10,7 +10,7 @@ This document fixes interfaces for parallel work. A feature is not complete unle
 ## Public DSP surface
 In `core/src/main/kotlin/com/orbital/synth/core/OrbitalSynth.kt`:
 ```kotlin
-enum class ParameterId { WAVE, MORPH, CUTOFF, RESONANCE, MOVEMENT, FX_AMOUNT, ATTACK, DECAY, SUSTAIN, RELEASE, LFO_RATE, LFO_DEPTH, GLIDE }
+enum class ParameterId { WAVE, MORPH, CUTOFF, RESONANCE, MOVEMENT, FX_AMOUNT, ATTACK, DECAY, SUSTAIN, RELEASE, LFO_RATE, LFO_DEPTH, GLIDE, UNISON, DETUNE }
 class OrbitalSynth(sampleRate: Int = 48000, maxVoices: Int = 16) {
     fun noteOn(note: Int, velocity: Float = 1f)
     fun noteOff(note: Int)
@@ -42,8 +42,14 @@ data class OrbitalUiState(
 ```
 Do not render the full mockup PNG as the app screen: build real functional Android controls, with the artwork as reference. Include accessible semantics, device-size adaptation, reduced-motion behavior.
 
+The current sequencer UI also accepts immutable `sequenceNotesByStep` data (lists of `SequencerNote`), `onSequencerStepNotesChange(step, notes)` and `onSaveSequence(name)` callbacks. The host supplies these and must not block the main thread for persistence. Changes to MIDI pitch, gate, chance, velocity, ties or chords must cross into the worker-owned `AudioSequencerTransport` queue; a direct mutable UI sequencer is not authoritative.
+
 ## App/audio integration
 `AndroidAudioOutput` under `com.orbital.synth.audio` owns AudioTrack lifecycle, a dedicated render thread, reliable start/stop, defensive audio focus. `MainActivity` (integrator-owned) wires UI callbacks to the engine and audio output.
+
+The master wet bus is `Drive → StereoChorus → StereoDelay → StereoReverb → FxBypassCrossfade`, using preallocated stereo scratch frames. The bypass crossfade must finish before chorus, delay and reverb tails are invalidated. Both unison controls default to zero and old patch files must remain sonically neutral when loaded.
+
+`SequenceDirectoryStore` persists versioned `UserSequence` files under app-private `filesDir/sequences` with blocking I/O only on `Dispatchers.IO`. The UI saves the audible pattern (muted steps are encoded as rests); user selections are queued to the audio worker through `loadSequencerPattern`. This flattening is an explicit current limitation for future nondestructive mute-layer storage.
 
 ## Workstream ownership
 1. DSP synth engine + wavetable/voices: `:core` root and oscillator/voice classes.
