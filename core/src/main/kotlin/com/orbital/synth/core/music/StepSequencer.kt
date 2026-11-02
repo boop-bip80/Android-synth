@@ -183,8 +183,13 @@ class StepSequencer(
             val (lastOrdinal, lastGate) = tiedEnd(ordinal, note)
             val lastStart = sampleAtStep(lastOrdinal)
             val length = sampleAtStep(lastOrdinal + 1) - lastStart
+            // Swing delays the following odd-step onset but must not elongate
+            // the gate of the preceding even step. Odd-step gates instead use
+            // their shortened time until the next fixed even boundary.
+            val straightLength = (sampleRate * 60.0 / (bpm * pattern.subdivisionsPerBeat)).roundToLong()
+            val gateLength = if ((lastOrdinal and 1L) == 0L) minOf(length, straightLength) else length
             activeOffTimes[note.midiNote] =
-                lastStart + maxOf(1L, (length * lastGate).roundToLong())
+                lastStart + maxOf(1L, (gateLength * lastGate).roundToLong())
         }
     }
 

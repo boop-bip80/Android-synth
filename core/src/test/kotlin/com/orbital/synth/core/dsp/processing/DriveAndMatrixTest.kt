@@ -33,4 +33,34 @@ class DriveAndMatrixTest {
         matrix.apply(base, sources, result)
         assertEquals(1f, result[ModDestination.MORPH.ordinal], 0f)
     }
+
+    @Test fun modulationRoutesCancelIndependentlyOfSlotOrder() {
+        val base = FloatArray(ModDestination.entries.size) { 0.5f }
+        val sources = FloatArray(ModSource.entries.size) { 1f }
+        val output = FloatArray(ModDestination.entries.size)
+        val forward = ModulationMatrix(2)
+        forward.setRoute(0, ModSource.LFO1, ModDestination.PITCH, 0.8f)
+        forward.setRoute(1, ModSource.ENV1, ModDestination.PITCH, -0.8f)
+        forward.apply(base, sources, output)
+        assertEquals(0.5f, output[ModDestination.PITCH.ordinal], 1e-5f)
+
+        val reversed = ModulationMatrix(2)
+        reversed.setRoute(0, ModSource.ENV1, ModDestination.PITCH, -0.8f)
+        reversed.setRoute(1, ModSource.LFO1, ModDestination.PITCH, 0.8f)
+        reversed.apply(base, sources, output)
+        assertEquals(0.5f, output[ModDestination.PITCH.ordinal], 1e-5f)
+
+        reversed.setRoute(1, ModSource.LFO1, ModDestination.PITCH, 1f)
+        reversed.apply(base, sources, output)
+        assertEquals(0.7f, output[ModDestination.PITCH.ordinal], 1e-5f)
+    }
+
+    @Test fun modulationMaySafelyUseDestinationAsBaseBuffer() {
+        val matrix = ModulationMatrix(1)
+        matrix.setRoute(0, ModSource.AFTERTOUCH, ModDestination.FX_AMOUNT, -0.25f)
+        val buffer = FloatArray(ModDestination.entries.size) { 0.7f }
+        val sources = FloatArray(ModSource.entries.size) { 1f }
+        matrix.apply(buffer, sources, buffer)
+        assertEquals(0.45f, buffer[ModDestination.FX_AMOUNT.ordinal], 1e-5f)
+    }
 }

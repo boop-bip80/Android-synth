@@ -1,6 +1,7 @@
 package com.orbital.synth.core.dsp.processing
 
 import kotlin.math.roundToInt
+import kotlin.math.max
 
 enum class EnvelopeStage { IDLE, ATTACK, DECAY, SUSTAIN, RELEASE }
 
@@ -27,11 +28,50 @@ class AdsrEnvelope(sampleRate: Int = 48_000) {
     init { configure(0.01f, 0.1f, 0.7f, 0.2f) }
 
     fun configure(attackSeconds: Float, decaySeconds: Float, sustainLevel: Float, releaseSeconds: Float) {
+        val previousAttack = attackSamples
+        val previousDecay = decaySamples
+        val previousRelease = releaseSamples
+        val previousSustain = sustain
         attackSamples = toSamples(attackSeconds)
         decaySamples = toSamples(decaySeconds)
         releaseSamples = toSamples(releaseSeconds)
         sustain = sanitizeLevel(sustainLevel)
-        if (stage == EnvelopeStage.SUSTAIN) level = sustain
+        // Voice controls can change during a held note. Retarget a moving segment
+        // from its *current* level, so changing attack/decay/release times or
+        // sustain while a segment is active does not create an amplitude step.
+        // Unchanged parameters leave the countdown completely untouched.
+        when (stage) {
+            EnvelopeStage.ATTACK -> if (attackSamples != previousAttack) {
+                if (attackSamples == 0) {
+                    level = 1f
+                    beginDecay()
+                } else {
+                    remaining = rescaleRemaining(remaining, previousAttack, attackSamples)
+                    increment = (1f - level) / remaining
+                }
+            }
+            EnvelopeStage.DECAY -> if (decaySamples != previousDecay || sustain != previousSustain) {
+                if (decaySamples == 0) {
+                    level = sustain
+                    stage = EnvelopeStage.SUSTAIN
+                } else {
+                    if (decaySamples != previousDecay) {
+                        remaining = rescaleRemaining(remaining, previousDecay, decaySamples)
+                    }
+                    increment = (sustain - level) / remaining
+                }
+            }
+            EnvelopeStage.SUSTAIN -> level = sustain
+            EnvelopeStage.RELEASE -> if (releaseSamples != previousRelease) {
+                if (releaseSamples == 0) {
+                    reset()
+                } else {
+                    remaining = rescaleRemaining(remaining, previousRelease, releaseSamples)
+                    increment = -level / remaining
+                }
+            }
+            EnvelopeStage.IDLE -> Unit
+        }
     }
 
     /** Reset to zero on a retrigger; preserve the level on a legato note. */
@@ -101,6 +141,10 @@ class AdsrEnvelope(sampleRate: Int = 48_000) {
         val safe = (if (seconds.isFinite()) seconds else 0f).coerceIn(0f, 30f)
         return (safe * sampleRate).roundToInt()
     }
+
+    private fun rescaleRemaining(current: Int, oldDuration: Int, newDuration: Int): Int =
+        max(1, if (oldDuration == 0) newDuration else
+            ((current.toLong() * newDuration + oldDuration / 2) / oldDuration).toInt())
 
     private fun sanitizeLevel(value: Float): Float =
         (if (value.isFinite()) value else 0f).coerceIn(0f, 1f)

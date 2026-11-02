@@ -30,8 +30,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Host JVM tests, Android unit tests, lint and APK
-        run: gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --stacktrace --no-daemon
+      - name: Host tests, lint, app APK and instrumentation test APK
+        run: gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
       - name: Upload debug APK
         if: always()
         uses: actions/upload-artifact@v4
@@ -46,6 +46,18 @@ jobs:
         with:
           name: orbital-lint
           path: app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload host test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-host-test-reports
+          path: |
+            core/build/test-results/
+            core/build/reports/tests/
+            app/build/test-results/
+            app/build/reports/tests/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -80,15 +92,9 @@ jobs:
           disk-size: 6000M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: |
-            gradle :app:connectedDebugAndroidTest --stacktrace --no-daemon
-            adb shell am force-stop com.orbital.synth || true
-            adb shell am start -W -n com.orbital.synth/.MainActivity
-            sleep 4
-            mkdir -p artifacts
-            adb shell screencap -p /sdcard/orbital-ui.png
-            adb pull /sdcard/orbital-ui.png artifacts/orbital-emulator.png
-            test -s artifacts/orbital-emulator.png
+          # The runner executes each nonempty script line in a separate `sh -c`.
+          # Use one Bash command so traps, pipefail and exit codes work together.
+          script: bash .github/workflows/ci-emulator.sh
       - name: Upload real emulator screenshot
         if: always()
         uses: actions/upload-artifact@v4
@@ -96,6 +102,18 @@ jobs:
           name: orbital-api35-emulator-screenshot
           path: artifacts/orbital-emulator.png
           if-no-files-found: warn
+          retention-days: 14
+      - name: Upload emulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-api35-emulator-diagnostics
+          path: |
+            artifacts/emulator-logcat.txt
+            artifacts/activity-state.txt
+            artifacts/activity-launch.txt
+            artifacts/diagnostic-screen.png
+          if-no-files-found: ignore
           retention-days: 14
       - name: Upload instrumentation results
         if: always()

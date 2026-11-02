@@ -44,4 +44,47 @@ class AdsrEnvelopeTest {
         repeat(47) { env.next() }
         assertEquals(EnvelopeStage.IDLE, env.stage)
     }
+
+    @Test fun changingAttackTimeRetainsCurrentLevelAndRetimesRemainingSegment() {
+        val env = AdsrEnvelope(8_000)
+        env.configure(0.01f, 0f, 1f, 0.01f) // 80 attack frames.
+        env.noteOn()
+        repeat(40) { env.next() }
+        val midpoint = env.level
+        assertEquals(0.5f, midpoint, 1e-5f)
+
+        // Double attack time with half the original segment remaining: 80 new frames.
+        env.configure(0.02f, 0f, 1f, 0.01f)
+        assertEquals(midpoint, env.level, 0f)
+        assertTrue(env.next() > midpoint)
+        repeat(78) { env.next() }
+        assertEquals(EnvelopeStage.ATTACK, env.stage)
+        env.next()
+        assertEquals(EnvelopeStage.SUSTAIN, env.stage)
+        assertEquals(1f, env.level, 0f)
+    }
+
+    @Test fun sustainAutomationInDecayAndReleaseRetimingRemainContinuous() {
+        val env = AdsrEnvelope(8_000)
+        env.configure(0f, 0.01f, 0.5f, 0.02f)
+        env.noteOn()
+        repeat(20) { env.next() }
+        val decayLevel = env.level
+        env.configure(0f, 0.01f, 0.2f, 0.02f)
+        assertEquals("Decay target change must not jump", decayLevel, env.level, 0f)
+        assertTrue(env.next() < decayLevel)
+        repeat(59) { env.next() }
+        assertEquals(EnvelopeStage.SUSTAIN, env.stage)
+        assertEquals(0.2f, env.level, 1e-5f)
+
+        env.noteOff()
+        repeat(40) { env.next() } // 120 of original 160 release frames left.
+        val releaseLevel = env.level
+        env.configure(0f, 0.01f, 0.2f, 0.01f)
+        assertEquals("Release time change must not jump", releaseLevel, env.level, 0f)
+        assertTrue(env.next() < releaseLevel)
+        repeat(59) { env.next() }
+        assertEquals(EnvelopeStage.IDLE, env.stage)
+        assertEquals(0f, env.level, 0f)
+    }
 }

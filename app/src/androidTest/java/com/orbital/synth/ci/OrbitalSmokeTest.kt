@@ -1,6 +1,7 @@
 package com.orbital.synth.ci
 
 import androidx.test.core.app.ActivityScenario
+import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.MainActivity
 import com.orbital.synth.core.OrbitalSynth
@@ -15,6 +16,19 @@ class OrbitalSmokeTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 assertTrue("Main activity must have a visible window", activity.window.decorView.isAttachedToWindow)
+            }
+        }
+    }
+
+    @Test
+    fun mainActivitySurvivesBackgroundForegroundAndRecreation() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            // Exercise the audio/MIDI start/stop owners as the user backgrounds the app.
+            scenario.moveToState(Lifecycle.State.CREATED)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            scenario.recreate()
+            scenario.onActivity { activity ->
+                assertTrue("Recreated activity must have an attached window", activity.window.decorView.isAttachedToWindow)
             }
         }
     }

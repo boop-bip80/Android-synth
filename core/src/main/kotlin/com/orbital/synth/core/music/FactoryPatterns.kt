@@ -98,8 +98,33 @@ object FactoryPatterns {
         }), bpm = 104.0, swing = .12,
     )
 
+    /** Interlocking 5:3:7 Euclidean attacks on one sixteen-step grid. */
+    val NEBULA_CIRCUIT = FactorySequence(
+        "nebula-circuit", "Nebula Circuit",
+        PatternComposer.layer(
+            PatternComposer.euclidean(16, 5, 48, velocity = 105, gate = .40,
+                accentEvery = 2, accentVelocity = 124),
+            PatternComposer.euclidean(16, 3, 67, rotation = 2, velocity = 83, gate = .68),
+            PatternComposer.euclidean(16, 7, 76, rotation = 6, velocity = 77, gate = .28),
+        ),
+        bpm = 118.0, swing = .08,
+    )
+
+    /** Syncopated bass pulse against a sparse high-register response. */
+    val GRAVITY_GARDEN = FactorySequence(
+        "gravity-garden", "Gravity Garden",
+        PatternComposer.layer(
+            PatternComposer.euclidean(16, 7, 36, velocity = 104, gate = .61,
+                accentEvery = 3, accentVelocity = 126),
+            PatternComposer.euclidean(16, 4, 72, rotation = 3, velocity = 86, gate = .34),
+            PatternComposer.euclidean(16, 9, 79, rotation = 1, velocity = 68, gate = .22),
+        ),
+        bpm = 132.0, swing = .22,
+    )
+
     val ALL: List<FactorySequence> =
-        listOf(AURORA, COMET_ARP, ION_BASS, CHORD_CLOUD, PRISM_PULSE, LUNAR_PLUCK)
+        listOf(AURORA, COMET_ARP, ION_BASS, CHORD_CLOUD, PRISM_PULSE, LUNAR_PLUCK,
+            NEBULA_CIRCUIT, GRAVITY_GARDEN)
 
     val DEFAULT: FactorySequence get() = AURORA
     fun byId(id: String): FactorySequence? = ALL.firstOrNull { it.id == id }

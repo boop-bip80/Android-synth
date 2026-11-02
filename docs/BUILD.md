@@ -17,17 +17,19 @@ AGP 8.9's Android compatibility table requires Gradle 8.11.1 and JDK 17. Kotlin 
 Install Android SDK 35, JDK 17 and Gradle 8.11.1. Configure the SDK with `ANDROID_HOME` or Git-ignored `local.properties`.
 
 ```sh
-gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
 After a successful build, the debug APK is `app/build/outputs/apk/debug/app-debug.apk` (Android 26+). It is a developer APK, not a Play Store release.
+
+On 2026-11-02, this host command passed locally: **89 core JVM tests, 31 Android JVM tests, lint with no errors, debug app APK and instrumentation test APK compilation**. The GitHub-hosted emulator and physical-device tests are separate gates and have **not** been confirmed green.
 
 ## CI emulator (no local emulator needed)
 
 The [Android — build, JVM tests and emulator workflow](../.github/workflows/android.yml) runs on pushes to `main`, pull requests, and manual dispatches. Its jobs:
 
-1. Run portable Kotlin DSP/music JUnit4 tests, Android app unit tests, Android lint, debug APK assembly.
-2. Boot an Android API 35 x86_64 emulator, run instrumented smoke tests, explicitly launch `com.orbital.synth/.MainActivity`.
+1. Run portable Kotlin DSP/music JUnit4 tests, Android app unit tests, Android lint, debug APK assembly and instrumentation test APK compilation.
+2. Boot an Android API 35 x86_64 emulator, run instrumented smoke tests (including background/resume/recreate lifecycle), explicitly launch `com.orbital.synth/.MainActivity` and verify `am start -W` reports success.
 3. Capture a **real** app screenshot via `adb shell screencap -p`.
 
 After **successful execution**, the run provides artifacts (14-day retention):
@@ -35,7 +37,11 @@ After **successful execution**, the run provides artifacts (14-day retention):
 - `orbital-debug-apk`: the installable developer build.
 - `orbital-api35-emulator-screenshot`: actual emulator screenshot, never the generated design mockup.
 - `orbital-android-test-results`: instrumentation reports if generated.
+- `orbital-api35-emulator-diagnostics`: logcat, activity dump, launch result and diagnostic screen if the runner reached the emulator script.
+- `orbital-host-test-reports`: portable/core and Android JVM test reports, even when those tests fail and produced output.
 - `orbital-lint`: lint report if generated.
+
+Uploads use an always-run step, so a failed build can still expose partial test or diagnostic artifacts. Artifact presence by itself does **not** mean the job passed. Emulator startup failures may happen before any logcat file can be captured.
 
 ### Interpreting status honestly
 

@@ -3,6 +3,7 @@ package com.orbital.synth.core
 import com.orbital.synth.core.dsp.oscillator.Voice
 import com.orbital.synth.core.dsp.oscillator.WavetableBank
 import com.orbital.synth.core.dsp.processing.Drive
+import com.orbital.synth.core.dsp.processing.StereoChorus
 import com.orbital.synth.core.dsp.processing.StereoDelay
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
@@ -56,6 +57,8 @@ class OrbitalSynth(
     private val heldCounts = IntArray(128)
     private val heldVelocities = FloatArray(128)
     private val heldOrders = LongArray(128)
+    // Reused only on the render thread when converting a held mono chord to polyphony.
+    private val restoredCounts = IntArray(128)
 
     private var eventOrder = 0L
     private var previousFrequency: Double? = null
@@ -65,6 +68,8 @@ class OrbitalSynth(
     private val gainSlewCoefficient = (1.0 - exp(-1.0 / (sampleRate * 0.015))).toFloat()
 
     // Master FX are strictly audio-thread-owned and allocated once at initialization.
+    private val fxChorus = StereoChorus(sampleRate)
+    private val chorusScratch = FloatArray(2)
     private val fxDelay = StereoDelay(sampleRate, maxDelaySeconds = 1.5f)
     private val fxScratch = FloatArray(2)
     private var previousFxEnabled = false
@@ -167,6 +172,12 @@ class OrbitalSynth(
         // Constant delay time prevents knob movements from abruptly changing tap positions.
         // Configuration only occurs once per render block, never in the sample loop.
         if (fxEnabled) {
+            fxChorus.configure(
+                rateHz = 0.24f + movement * 0.86f,
+                depth = 0.36f + movement * 0.55f,
+                wet = fxAmount * 0.42f,
+                stereoWidth = 0.94f
+            )
             fxDelay.configure(
                 timeSeconds = 0.29f,
                 feedback = 0.36f + fxAmount * 0.40f,
@@ -175,10 +186,27 @@ class OrbitalSynth(
             )
         } else if (previousFxEnabled) {
             // Clear old echoes on bypass so reopening the effect cannot replay stale buffers.
+            fxChorus.reset()
             fxDelay.reset()
         }
         previousFxEnabled = fxEnabled
         val driveAmount = fxAmount * 0.68f
+
+        // AudioTrack normally keeps requesting blocks even when no keys are held. Avoid
+        // evaluating sixteen idle voices, the trigonometric LFO and pitch pow() for every
+        // silent frame. Keep the LFO clock and gain slew advancing sample-by-sample so
+        // later notes behave exactly as if the silent blocks had been fully rendered.
+        if (!fxEnabled && active == 0 && voices.none { it.hasTail }) {
+            java.util.Arrays.fill(output, 0, frames * 2, 0f)
+            for (frame in 0 until frames) {
+                smoothedMasterGain +=
+                    (targetMasterGain - smoothedMasterGain) * gainSlewCoefficient
+                lfoPhase += lfoIncrement
+                if (lfoPhase >= 1.0) lfoPhase -= 1.0
+            }
+            return
+        }
+
         var offset = 0
 
         for (frame in 0 until frames) {
@@ -207,9 +235,15 @@ class OrbitalSynth(
             val dryRight = softClip(right * smoothedMasterGain)
             if (fxEnabled) {
                 // Preallocated scratch prevents Pair/array creation per frame.
-                fxDelay.process(
+                fxChorus.process(
                     Drive.process(dryLeft, driveAmount),
                     Drive.process(dryRight, driveAmount),
+                    chorusScratch,
+                    0
+                )
+                fxDelay.process(
+                    chorusScratch[0],
+                    chorusScratch[1],
                     fxScratch,
                     0
                 )
@@ -319,7 +353,9 @@ class OrbitalSynth(
     private fun changeMode(mode: VoiceMode, glideSec: Double, wave: Float, morph: Float) {
         if (playbackMode == mode) return
         playbackMode = mode
-        if (mode != VoiceMode.POLY) {
+        if (mode == VoiceMode.POLY) {
+            restoreHeldPolyVoices(wave, morph)
+        } else {
             for (index in 1 until voices.size) voices[index].noteOff()
             val newest = latestHeldNote()
             if (newest >= 0) {
@@ -335,6 +371,61 @@ class OrbitalSynth(
                 voices[0].noteOff()
             }
         }
+    }
+
+    /**
+     * A switch from mono/legato to poly should expose the keys that are *still held*.
+     * The mono lead voice remains continuous, while the other voice slots are rebuilt
+     * in most-recent-key order (including independently held instances of one pitch).
+     * Reuse storage and never steal the continuing lead during a mode transition.
+     */
+    private fun restoreHeldPolyVoices(wave: Float, morph: Float) {
+        if (voices.size <= 1) return
+        restoredCounts.fill(0)
+        val lead = voices[0]
+        if (lead.active && !lead.releasing && lead.note in heldNotes.indices) {
+            restoredCounts[lead.note] = 1
+        }
+
+        for (slot in 1 until voices.size) {
+            var newest = -1
+            var newestOrder = Long.MIN_VALUE
+            for (pitch in heldNotes.indices) {
+                if (heldCounts[pitch] > restoredCounts[pitch] && heldOrders[pitch] > newestOrder) {
+                    newest = pitch
+                    newestOrder = heldOrders[pitch]
+                }
+            }
+            if (newest == -1) break
+
+            val target = chooseSecondaryVoice()
+            target.begin(
+                newest, heldVelocities[newest], ++eventOrder,
+                null, 0.0, wave, morph
+            )
+            restoredCounts[newest]++
+        }
+    }
+
+    private fun chooseSecondaryVoice(): Voice {
+        for (index in 1 until voices.size) {
+            val voice = voices[index]
+            if (!voice.active) return voice
+        }
+
+        var selected = voices[1]
+        for (index in 2 until voices.size) {
+            val voice = voices[index]
+            if ((voice.releasing && !selected.releasing) ||
+                (voice.releasing == selected.releasing &&
+                    (voice.envelopeLevel < selected.envelopeLevel ||
+                        (voice.envelopeLevel == selected.envelopeLevel &&
+                            voice.startedAt < selected.startedAt)))
+            ) {
+                selected = voice
+            }
+        }
+        return selected
     }
 
     private fun latestHeldNote(): Int {

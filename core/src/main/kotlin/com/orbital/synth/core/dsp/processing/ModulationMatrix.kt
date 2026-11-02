@@ -28,7 +28,14 @@ class ModulationMatrix(val routeCount: Int = 8) {
         depth[slot] = 0f
     }
 
-    /** Copy base destination values then accumulate route contributions and clamp 0..1. */
+    /**
+     * Copy base destination values, accumulate every route, then clamp once.
+     *
+     * Clamping after individual routes makes the result depend on slot order:
+     * a +0.8 route followed by -0.8 cannot cancel if the first is prematurely
+     * clipped at 1.0. A final clamp is both cheaper and musically predictable.
+     * [sources] must be a separate array from [destination].
+     */
     fun apply(base: FloatArray, sources: FloatArray, destination: FloatArray) {
         require(base.size >= ModDestination.entries.size)
         require(destination.size >= ModDestination.entries.size)
@@ -41,8 +48,10 @@ class ModulationMatrix(val routeCount: Int = 8) {
             val value = sources[sourceIndex[i]]
             if (!value.isFinite()) continue
             val destinationId = destinationIndex[i]
-            destination[destinationId] = (destination[destinationId] +
-                value.coerceIn(-1f, 1f) * depth[i]).coerceIn(0f, 1f)
+            destination[destinationId] += value.coerceIn(-1f, 1f) * depth[i]
+        }
+        for (i in ModDestination.entries.indices) {
+            destination[i] = destination[i].coerceIn(0f, 1f)
         }
     }
 }

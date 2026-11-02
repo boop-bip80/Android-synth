@@ -89,6 +89,27 @@ class OrbitalFxIntegrationTest {
         for (sample in block) assertTrue(sample.isFinite())
     }
 
+    @Test fun bypassClearsChorusAndDelayHistoryBeforeReenablingFx() {
+        val synth = fixedSynth().apply {
+            setParameter(ParameterId.RELEASE, 0f)
+            setParameter(ParameterId.FX_AMOUNT, 1f)
+        }
+        val block = FloatArray(4_096 * 2)
+        synth.noteOn(72)
+        synth.renderStereo(block, 4_096)
+        synth.allNotesOff()
+
+        synth.setParameter(ParameterId.FX_AMOUNT, 0f)
+        synth.renderStereo(block, 4_096)
+        assertEquals(0, synth.activeVoiceCount)
+
+        // Both processors must forget pre-bypass audio; no delayed echoes should be
+        // resurrected when the musician turns FX back on while the synth is silent.
+        synth.setParameter(ParameterId.FX_AMOUNT, 1f)
+        synth.renderStereo(block, 4_096)
+        for (sample in block) assertEquals(0f, sample, 0f)
+    }
+
     private fun fixedSynth() = OrbitalSynth().apply {
         setParameter(ParameterId.WAVE, 0.17f)
         setParameter(ParameterId.MORPH, 0.55f)

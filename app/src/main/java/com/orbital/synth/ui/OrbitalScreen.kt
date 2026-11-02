@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,17 +16,26 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,6 +45,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.platform.testTag
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,9 +57,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,6 +76,9 @@ import kotlin.math.roundToInt
 
 enum class PlayMode { POLY, MONO, LEGATO }
 
+/** The persistence layer owns IDs and patch data; UI needs only selectable metadata. */
+data class PatchChoice(val id: String, val name: String, val isFactory: Boolean)
+
 data class OrbitalUiState(
     val patchName: String = "AURORA",
     val playMode: PlayMode = PlayMode.POLY,
@@ -73,6 +90,9 @@ data class OrbitalUiState(
     val sequencerTempo: Int = 112,
     val presetIndex: Int = 0,
     val presetCount: Int = 0,
+    val patchChoices: List<PatchChoice> = emptyList(),
+    val activePatchId: String? = null,
+    val patchFeedback: String? = null,
 )
 
 private enum class Tab(val title: String) {
@@ -100,8 +120,17 @@ fun OrbitalScreen(
     onSequencerTempoChange: ((Int) -> Unit)? = null,
     onPreviousPatch: (() -> Unit)? = null,
     onNextPatch: (() -> Unit)? = null,
+    onSavePatch: ((String) -> Unit)? = null,
+    onSelectPatch: ((String) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
+    var showPatchLibrary by remember { mutableStateOf(false) }
+    var showSaveDialog by remember { mutableStateOf(false) }
+    var newPatchName by remember { mutableStateOf("") }
+    val snackbarHost = remember { SnackbarHostState() }
+    LaunchedEffect(state.patchFeedback) {
+        state.patchFeedback?.takeIf { it.isNotBlank() }?.let { snackbarHost.showSnackbar(it) }
+    }
     val externalSequencer = onSequencerToggle != null && onStepToggle != null
     val parameter: (ParameterId) -> Float = { id ->
         (state.parameters[id] ?: defaultValue(id)).coerceIn(0f, 1f)
@@ -161,7 +190,11 @@ fun OrbitalScreen(
             Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 9.dp),
             verticalArrangement = Arrangement.spacedBy(if (compactHeight) 6.dp else 12.dp),
         ) {
-        Header(state.patchName)
+        Header(
+            patch = state.patchName,
+            onOpenLibrary = { showPatchLibrary = true },
+            libraryEnabled = onSavePatch != null || onSelectPatch != null,
+        )
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -175,8 +208,9 @@ fun OrbitalScreen(
                             selected = active
                             contentDescription = "Tab " + tab.title
                         }
-                        .clickable { selectedTab = tab }
-                        .padding(vertical = 9.dp),
+                        .clickable(role = Role.Tab) { selectedTab = tab }
+                        .heightIn(min = 48.dp)
+                        .padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
@@ -208,6 +242,7 @@ fun OrbitalScreen(
         when (selectedTab) {
             Tab.SOUND -> {
                 BoxWithConstraints(Modifier.fillMaxWidth().height(244.dp)) {
+                    val layoutWidth = maxWidth
                     OrbitalDisplay(morph, move, Modifier.fillMaxSize())
                     Column(
                         Modifier
@@ -217,7 +252,7 @@ fun OrbitalScreen(
                     ) {
                         Label("WAVETABLE  /  FACTORY BANK")
                         Row(
-                            Modifier.width(maxWidth * .67f),
+                            Modifier.width(layoutWidth * .67f),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(1.dp),
                         ) {
@@ -232,9 +267,9 @@ fun OrbitalScreen(
                                 modifier = Modifier.weight(1f),
                                 color = OrbitalPalette.Text,
                                 textAlign = TextAlign.Center,
-                                fontSize = if (maxWidth < 380.dp) 14.sp else 17.sp,
+                                fontSize = if (layoutWidth < 380.dp) 14.sp else 17.sp,
                                 fontWeight = FontWeight.Light,
-                                letterSpacing = if (maxWidth < 380.dp) 1.sp else 2.sp,
+                                letterSpacing = if (layoutWidth < 380.dp) 1.sp else 2.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -286,16 +321,20 @@ fun OrbitalScreen(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Box(Modifier.weight(1f).clickable { selectedTab = Tab.FX }) {
+                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.FX }
+                        .semantics { contentDescription = "Edit envelope" }) {
                         SignalTile("ENV", parameter(ParameterId.ATTACK), OrbitalPalette.Violet, Modifier.fillMaxWidth())
                     }
-                    Box(Modifier.weight(1f).clickable { selectedTab = Tab.FX }) {
+                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.FX }
+                        .semantics { contentDescription = "Edit LFO" }) {
                         SignalTile("LFO", parameter(ParameterId.LFO_RATE), OrbitalPalette.Cyan, Modifier.fillMaxWidth())
                     }
-                    Box(Modifier.weight(1f).clickable { selectedTab = Tab.PLAY }) {
-                        SignalTile("MPE", parameter(ParameterId.GLIDE), OrbitalPalette.Gold, Modifier.fillMaxWidth())
+                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.PLAY }
+                        .semantics { contentDescription = "Edit glide" }) {
+                        SignalTile("GLIDE", parameter(ParameterId.GLIDE), OrbitalPalette.Gold, Modifier.fillMaxWidth())
                     }
-                    Box(Modifier.weight(1f).clickable { selectedTab = Tab.SEQ }) {
+                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.SEQ }
+                        .semantics { contentDescription = "Edit sequencer" }) {
                         SignalTile("MOD", move, OrbitalPalette.Violet, Modifier.fillMaxWidth())
                     }
                 }
@@ -344,20 +383,193 @@ fun OrbitalScreen(
             horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             Label("OCT")
-            Pill("−", false, { onOctaveChange((state.octave - 1).coerceAtLeast(0)) })
+            Pill("−", false, { onOctaveChange((state.octave - 1).coerceAtLeast(0)) }, description = "Lower octave")
             Text(
                 state.octave.toString(),
                 color = OrbitalPalette.Text,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(horizontal = 2.dp),
             )
-            Pill("+", false, { onOctaveChange((state.octave + 1).coerceAtMost(8)) })
+            Pill("+", false, { onOctaveChange((state.octave + 1).coerceAtMost(8)) }, description = "Raise octave")
             Spacer(Modifier.weight(1f))
             PlayMode.entries.forEach { mode ->
-                Pill(mode.name, state.playMode == mode, { onModeChange(mode) })
+                Pill(mode.name, state.playMode == mode, { onModeChange(mode) }, role = Role.RadioButton)
             }
         }
         Spacer(Modifier.height(if (compactHeight) 0.dp else 6.dp))
+        }
+        SnackbarHost(hostState = snackbarHost, modifier = Modifier.align(Alignment.BottomCenter))
+    }
+
+    if (showPatchLibrary) {
+        PatchLibraryDialog(
+            patches = state.patchChoices,
+            activeId = state.activePatchId,
+            canSelect = onSelectPatch != null,
+            canSave = onSavePatch != null,
+            onDismiss = { showPatchLibrary = false },
+            onSaveAs = {
+                showPatchLibrary = false
+                newPatchName = state.patchName.take(64)
+                showSaveDialog = true
+            },
+            onSelect = { id ->
+                showPatchLibrary = false
+                onSelectPatch?.invoke(id)
+            },
+        )
+    }
+    if (showSaveDialog) {
+        AlertDialog(
+            onDismissRequest = { showSaveDialog = false },
+            containerColor = OrbitalPalette.Panel,
+            title = { Text("SAVE PATCH", color = OrbitalPalette.Text, letterSpacing = 1.5.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Label("SAVE THE CURRENT SOUND UNDER A NEW NAME")
+                    OutlinedTextField(
+                        value = newPatchName,
+                        onValueChange = { newPatchName = it.take(64) },
+                        singleLine = true,
+                        label = { Text("Patch name") },
+                        modifier = Modifier.fillMaxWidth().testTag("patchNameInput"),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = newPatchName.isNotBlank(),
+                    onClick = {
+                        val name = newPatchName.trim()
+                        if (name.isNotEmpty()) {
+                            showSaveDialog = false
+                            onSavePatch?.invoke(name)
+                        }
+                    },
+                ) { Text("SAVE AS", color = OrbitalPalette.Cyan) }
+            },
+            dismissButton = { TextButton(onClick = { showSaveDialog = false }) { Text("CANCEL") } },
+        )
+    }
+}
+
+/** User patches and factory presets use the same selectable bank, but never share IDs. */
+@Composable
+private fun PatchLibraryDialog(
+    patches: List<PatchChoice>,
+    activeId: String?,
+    canSelect: Boolean,
+    canSave: Boolean,
+    onDismiss: () -> Unit,
+    onSaveAs: () -> Unit,
+    onSelect: (String) -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // Keep the patch list scrollable without letting the dialog cover a short landscape display.
+        val listMaxHeight = (maxHeight - 200.dp).coerceIn(100.dp, 430.dp)
+        Surface(
+            modifier = Modifier.fillMaxWidth().widthIn(max = 440.dp),
+            shape = RoundedCornerShape(22.dp),
+            color = OrbitalPalette.Panel,
+            shadowElevation = 14.dp,
+        ) {
+            Column(
+                Modifier.padding(17.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "PATCH LIBRARY",
+                        color = OrbitalPalette.Text,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = 1.6.sp,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) { Text("CLOSE") }
+                }
+                Label("FACTORY + PERSONAL SOUNDS")
+                Column(
+                    Modifier.heightIn(max = listMaxHeight).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    if (patches.isEmpty()) {
+                        Text(
+                            "No patches loaded yet. Save your current sound to begin a personal bank.",
+                            color = OrbitalPalette.Muted,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(8.dp),
+                        )
+                    }
+                    listOf(true, false).forEach { factory ->
+                        val group = patches.filter { it.isFactory == factory }
+                        if (group.isNotEmpty()) {
+                            Text(
+                                if (factory) "FACTORY" else "MY PATCHES",
+                                color = if (factory) OrbitalPalette.Cyan else OrbitalPalette.Gold,
+                                fontSize = 10.sp,
+                                letterSpacing = 1.2.sp,
+                                modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+                            )
+                            group.forEach { choice ->
+                                val active = choice.id == activeId
+                                val tint = if (choice.isFactory) OrbitalPalette.Cyan else OrbitalPalette.Gold
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 56.dp)
+                                        .border(
+                                            1.dp,
+                                            if (active) tint else OrbitalPalette.PanelEdge,
+                                            RoundedCornerShape(12.dp),
+                                        )
+                                        .background(
+                                            if (active) tint.copy(alpha = .15f) else OrbitalPalette.Void,
+                                            RoundedCornerShape(12.dp),
+                                        )
+                                        .clickable(enabled = canSelect, role = Role.Button) { onSelect(choice.id) }
+                                        .semantics {
+                                            contentDescription =
+                                                "Load ${choice.name}, ${if (choice.isFactory) "factory" else "user"} patch"
+                                            selected = active
+                                        }
+                                        .padding(horizontal = 13.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text("◉", color = tint, fontSize = 11.sp)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        choice.name,
+                                        modifier = Modifier.weight(1f),
+                                        color = OrbitalPalette.Text,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (active) Text("ACTIVE", color = tint, fontSize = 9.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+                if (canSave) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 52.dp)
+                            .border(1.dp, OrbitalPalette.Gold, RoundedCornerShape(12.dp))
+                            .background(OrbitalPalette.Gold.copy(alpha = .12f), RoundedCornerShape(12.dp))
+                            .clickable(role = Role.Button, onClick = onSaveAs)
+                            .semantics { contentDescription = "Save current sound as a new patch" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("+ SAVE CURRENT SOUND", color = OrbitalPalette.Gold,
+                            letterSpacing = 1.sp, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
         }
     }
 }
@@ -371,7 +583,7 @@ private fun PresetArrow(
 ) {
     Box(
         Modifier
-            .size(40.dp)
+            .size(48.dp)
             .border(
                 1.dp,
                 if (enabled) OrbitalPalette.Cyan.copy(alpha = .60f) else OrbitalPalette.PanelEdge,
@@ -397,7 +609,7 @@ private fun PresetArrow(
 }
 
 @Composable
-private fun Header(patch: String) {
+private fun Header(patch: String, onOpenLibrary: () -> Unit, libraryEnabled: Boolean) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -423,7 +635,17 @@ private fun Header(patch: String) {
         )
         Spacer(Modifier.weight(1f))
         Text("●", color = OrbitalPalette.Teal, fontSize = 10.sp,
-            modifier = Modifier.semantics { contentDescription = "Synthesizer ready, patch $patch" })
+            modifier = Modifier.semantics { contentDescription = "Patch loaded: $patch" })
+        Box(
+            Modifier
+                .size(48.dp)
+                .clickable(enabled = libraryEnabled, role = Role.Button, onClick = onOpenLibrary)
+                .semantics { contentDescription = "Open patch library" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("☰", color = if (libraryEnabled) OrbitalPalette.Cyan else OrbitalPalette.Muted,
+                fontSize = 22.sp)
+        }
     }
 }
 
@@ -433,7 +655,13 @@ private fun Label(text: String) {
 }
 
 @Composable
-private fun Pill(label: String, active: Boolean, onClick: () -> Unit) {
+private fun Pill(
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    description: String? = null,
+    role: Role = Role.Button,
+) {
     Box(
         Modifier
             .border(
@@ -446,8 +674,14 @@ private fun Pill(label: String, active: Boolean, onClick: () -> Unit) {
                 else OrbitalPalette.Panel.copy(alpha = .45f),
                 RoundedCornerShape(50),
             )
-            .clickable(onClick = onClick)
+            .clickable(role = role, onClick = onClick)
+            .semantics {
+                if (role == Role.RadioButton) selected = active
+                if (description != null) contentDescription = description
+            }
+            .heightIn(min = 48.dp)
             .padding(horizontal = 9.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             label,
@@ -467,6 +701,7 @@ private fun PlayPanel(
     onModeChange: (PlayMode) -> Unit,
     onParameterChange: (ParameterId, Float) -> Unit,
 ) {
+    val updateParameter by rememberUpdatedState(onParameterChange)
     Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
         Text("PERFORMANCE", color = OrbitalPalette.Text, fontSize = 13.sp, letterSpacing = 2.sp)
         OrbitalDisplay(morph, movement, Modifier.fillMaxWidth().height(188.dp))
@@ -477,10 +712,37 @@ private fun PlayPanel(
                 .height(168.dp)
                 .border(1.dp, OrbitalPalette.PanelEdge, RoundedCornerShape(16.dp))
                 .background(OrbitalPalette.Panel, RoundedCornerShape(16.dp))
+                .semantics {
+                    contentDescription = "Expression pad. Morph ${percent(morph)}; movement ${percent(movement)}."
+                    customActions = listOf(
+                        CustomAccessibilityAction("Increase morph") {
+                            updateParameter(ParameterId.MORPH, (morph + .05f).coerceAtMost(1f)); true
+                        },
+                        CustomAccessibilityAction("Decrease morph") {
+                            updateParameter(ParameterId.MORPH, (morph - .05f).coerceAtLeast(0f)); true
+                        },
+                        CustomAccessibilityAction("Increase movement") {
+                            updateParameter(ParameterId.MOVEMENT, (movement + .05f).coerceAtMost(1f)); true
+                        },
+                        CustomAccessibilityAction("Decrease movement") {
+                            updateParameter(ParameterId.MOVEMENT, (movement - .05f).coerceAtLeast(0f)); true
+                        },
+                    )
+                }
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { point ->
+                        val p = expressionCoordinates(
+                            point.x, point.y, size.width.toFloat(), size.height.toFloat(),
+                        )
+                        updateParameter(ParameterId.MORPH, p.first)
+                        updateParameter(ParameterId.MOVEMENT, p.second)
+                    })
+                }
                 .pointerInput(Unit) {
                     fun update(x: Float, y: Float) {
-                        onParameterChange(ParameterId.MORPH, (x / size.width).coerceIn(0f, 1f))
-                        onParameterChange(ParameterId.MOVEMENT, (1f - y / size.height).coerceIn(0f, 1f))
+                        val p = expressionCoordinates(x, y, size.width.toFloat(), size.height.toFloat())
+                        updateParameter(ParameterId.MORPH, p.first)
+                        updateParameter(ParameterId.MOVEMENT, p.second)
                     }
                     detectDragGestures(
                         onDragStart = { update(it.x, it.y) },
@@ -510,11 +772,26 @@ private fun PlayPanel(
         Text("VOICE MODE", color = OrbitalPalette.Muted, fontSize = 10.sp, letterSpacing = 1.2.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PlayMode.entries.forEach { option ->
-                Pill(option.name, mode == option) { onModeChange(option) }
+                Pill(option.name, mode == option, { onModeChange(option) }, role = Role.RadioButton)
             }
         }
         ParameterSlider("GLIDE", glide, ParameterId.GLIDE, onParameterChange, "Slow pitch transition")
     }
+}
+
+/** Pointer math is independent of display density and clamps drags off the canvas. */
+internal fun expressionCoordinates(
+    x: Float,
+    y: Float,
+    width: Float,
+    height: Float,
+): Pair<Float, Float> {
+    if (!x.isFinite() || !y.isFinite() ||
+        !width.isFinite() || !height.isFinite() || width <= 0f || height <= 0f
+    ) {
+        return .5f to .5f
+    }
+    return (x / width).coerceIn(0f, 1f) to (1f - y / height).coerceIn(0f, 1f)
 }
 
 @Composable
@@ -537,15 +814,19 @@ private fun SequencerPanel(
             Pill(if (playing) "STOP" else "PLAY ▶", playing, onTogglePlaying)
         }
         Label("Tap any step to enable/disable it. The running pattern plays the synthesizer.")
-        for (row in 0..1) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                for (i in row * 8 until row * 8 + 8) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // 8 columns are too narrow to touch reliably on a 360dp phone.
+            val columns = if (maxWidth >= 480.dp) 8 else 4
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (row in 0 until 16 / columns) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (i in row * columns until row * columns + columns) {
                     val enabled = steps[i]
                     val current = playhead == i
                     Box(
                         Modifier
                             .weight(1f)
-                            .height(68.dp)
+                            .height(56.dp)
                             .border(
                                 1.dp,
                                 if (current) OrbitalPalette.Gold
@@ -558,7 +839,11 @@ private fun SequencerPanel(
                                 else OrbitalPalette.Panel,
                                 RoundedCornerShape(8.dp),
                             )
-                            .clickable { onStepToggle(i) },
+                            .toggleable(value = enabled, role = Role.Checkbox) { onStepToggle(i) }
+                            .semantics {
+                                contentDescription = "Step ${i + 1}, ${if (enabled) "on" else "off"}" +
+                                    (if (current) ", playing" else "")
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -566,6 +851,8 @@ private fun SequencerPanel(
                             color = if (enabled) OrbitalPalette.Text else OrbitalPalette.Muted,
                             fontSize = 11.sp,
                         )
+                    }
+                        }
                     }
                 }
             }
@@ -575,6 +862,7 @@ private fun SequencerPanel(
             value = bpm.toFloat(),
             onValueChange = { onTempoChange(it.roundToInt().coerceIn(60, 180)) },
             valueRange = 60f..180f,
+            modifier = Modifier.semantics { contentDescription = "Sequencer tempo, $bpm beats per minute" },
             colors = SliderDefaults.colors(
                 thumbColor = OrbitalPalette.Cyan,
                 activeTrackColor = OrbitalPalette.Cyan,

@@ -55,6 +55,35 @@ class OrbitalSynthTest {
         assertTrue(rms(left) > 0.001)
     }
 
+    @Test fun extendedIdleRenderingKeepsFutureNotesIdenticalAcrossBufferSizes() {
+        val largeBuffers = OrbitalSynth()
+        val smallBuffers = OrbitalSynth()
+        for (synth in listOf(largeBuffers, smallBuffers)) {
+            synth.setParameter(ParameterId.MOVEMENT, 0.85f)
+            synth.setParameter(ParameterId.LFO_RATE, 0.71f)
+            synth.setParameter(ParameterId.LFO_DEPTH, 0.72f)
+        }
+
+        // The optimized silence path must advance time without touching the guard region.
+        val silentBlock = FloatArray(48_000 * 2 + 4) { 9f }
+        largeBuffers.renderStereo(silentBlock, 48_000)
+        for (index in 0 until 48_000 * 2) assertEquals(0f, silentBlock[index], 0f)
+        for (index in 48_000 * 2 until silentBlock.size) {
+            assertEquals(9f, silentBlock[index], 0f)
+        }
+
+        val shortBlock = FloatArray(480 * 2)
+        repeat(100) { smallBuffers.renderStereo(shortBlock, 480) }
+        largeBuffers.noteOn(69)
+        smallBuffers.noteOn(69)
+        val a = FloatArray(8_192)
+        val b = FloatArray(a.size)
+        largeBuffers.renderStereo(a, a.size / 2)
+        smallBuffers.renderStereo(b, b.size / 2)
+        assertArrayEquals("Idle rendering changed future oscillator/LFO timing", a, b, 0f)
+        assertTrue(rms(a) > 0.001)
+    }
+
     @Test fun sixteenNotesAreBoundedAndTheSeventeenthStealsAvoice() {
         val synth = OrbitalSynth(maxVoices = 16)
         for (note in 48..63) synth.noteOn(note, 0.9f)
@@ -129,6 +158,53 @@ class OrbitalSynthTest {
         assertEquals(64, voice.note)
         voice.begin(67, 1f, 3L, null, 0.0, 0f, 0f, legato = false)
         assertEquals(0f, voice.envelopeLevel, 0f)
+    }
+
+    @Test fun returningFromMonoToPolyRestoresHeldChordWithoutDroppingLead() {
+        val synth = OrbitalSynth(maxVoices = 3)
+        synth.setParameter(ParameterId.RELEASE, 0f)
+        val audio = FloatArray(8_192)
+        synth.setVoiceMode(VoiceMode.MONO)
+        synth.noteOn(60)
+        synth.noteOn(64)
+        synth.noteOn(67)
+        synth.renderStereo(audio, 1_024)
+        assertEquals(1, synth.activeVoiceCount)
+
+        synth.setVoiceMode(VoiceMode.POLY)
+        synth.renderStereo(audio, 1_024)
+        assertEquals("All three held keys should sound again in poly", 3,
+            synth.activeVoiceCount)
+
+        // There is no phantom note: releasing each held key releases its voice.
+        synth.noteOff(60)
+        synth.renderStereo(audio, 4_096)
+        assertEquals(2, synth.activeVoiceCount)
+        synth.noteOff(64)
+        synth.noteOff(67)
+        synth.renderStereo(audio, 4_096)
+        assertEquals(0, synth.activeVoiceCount)
+    }
+
+    @Test fun returningFromMonoToPolyRestoresStackedHoldsWithinVoiceLimit() {
+        val synth = OrbitalSynth(maxVoices = 2)
+        synth.setParameter(ParameterId.RELEASE, 0f)
+        val audio = FloatArray(8_192)
+        synth.setVoiceMode(VoiceMode.LEGATO)
+        synth.noteOn(69)
+        synth.noteOn(69)
+        synth.renderStereo(audio, 512)
+        assertEquals(1, synth.activeVoiceCount)
+
+        synth.setVoiceMode(VoiceMode.POLY)
+        synth.renderStereo(audio, 512)
+        assertEquals(2, synth.activeVoiceCount)
+        synth.noteOff(69)
+        synth.renderStereo(audio, 4_096)
+        assertEquals(1, synth.activeVoiceCount)
+        synth.noteOff(69)
+        synth.renderStereo(audio, 4_096)
+        assertEquals(0, synth.activeVoiceCount)
     }
 
     @Test fun wavetableMorphAndFilterProduceAudiblyDifferentOutputs() {

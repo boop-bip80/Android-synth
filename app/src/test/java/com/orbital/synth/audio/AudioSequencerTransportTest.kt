@@ -61,7 +61,8 @@ class AudioSequencerTransportTest {
         fake.render()
         assertEquals(0, fake.noteOnCalls)
         assertFalse(0 in fake.transport.enabledSteps)
-        assertTrue(1 in fake.transport.enabledSteps)
+        // Factory step 1 is intentionally a rest; step 2 remains enabled.
+        assertTrue(2 in fake.transport.enabledSteps)
         assertEquals(0f, fake.output[0], 0f)
     }
 

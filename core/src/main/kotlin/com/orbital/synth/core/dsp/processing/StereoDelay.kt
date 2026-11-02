@@ -28,7 +28,7 @@ class StereoDelay(sampleRate: Int = 48_000, maxDelaySeconds: Float = 3f) {
     /** All parameters are clamped. Time is seconds; other values are normalized 0..1. */
     fun configure(timeSeconds: Float, feedback: Float, wet: Float, pingPong: Float = 0.5f) {
         val seconds = (if (timeSeconds.isFinite()) timeSeconds else 0.375f)
-            .coerceIn(1f / sampleRate, maxSeconds)
+            .coerceIn(1f / effectiveSampleRate, maxSeconds)
         // Delay time is limited to the allocated buffer, in samples.
         length = (seconds * effectiveSampleRate).toInt().coerceIn(1, historySize - 2)
         this.feedback = (if (feedback.isFinite()) feedback else 0f).coerceIn(0f, 0.92f)

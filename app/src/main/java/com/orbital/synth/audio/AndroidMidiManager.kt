@@ -27,6 +27,9 @@ class AndroidMidiManager(
     private val lock = Any()
     private val connections = mutableMapOf<Int, DeviceConnection>()
     private val opening = mutableSetOf<Int>()
+    // A device can disappear while openDevice() is still in flight. Do not
+    // attach its late callback to an already detached physical controller.
+    private val detached = mutableSetOf<Int>()
 
     @Volatile private var started = false
     @Volatile private var disposed = false
@@ -49,11 +52,21 @@ class AndroidMidiManager(
             started = true
             callbackForSession = object : MidiManager.DeviceCallback() {
                 override fun onDeviceAdded(device: MidiDeviceInfo) {
+                    synchronized(lock) { if (generation == session) detached.remove(device.id) }
                     openIfNeeded(device, session)
                 }
 
                 override fun onDeviceRemoved(device: MidiDeviceInfo) {
-                    if (isCurrent(session)) disconnect(device.id)
+                    // Check the session and detach under one lock. Otherwise
+                    // a stale callback could disconnect a *new* start session.
+                    val previous = synchronized(lock) {
+                        if (!started || generation != session) null else {
+                            detached.add(device.id)
+                            opening.remove(device.id)
+                            connections.remove(device.id)
+                        }
+                    }
+                    previous?.close()
                 }
             }
             registeredCallback = callbackForSession
@@ -86,6 +99,7 @@ class AndroidMidiManager(
             started = false
             generation++ // invalidate in-flight openDevice callbacks from this session
             opening.clear()
+            detached.clear()
             oldConnections = connections.values.toList()
             connections.clear()
             oldCallback = registeredCallback
@@ -97,9 +111,6 @@ class AndroidMidiManager(
         oldConnections.forEach { it.close() }
     }
 
-    private fun isCurrent(session: Long): Boolean =
-        synchronized(lock) { started && generation == session }
-
     override fun close() {
         synchronized(lock) { disposed = true }
         stop()
@@ -109,7 +120,8 @@ class AndroidMidiManager(
         val midi = manager ?: return
         if (info.outputPortCount <= 0) return
         synchronized(lock) {
-            if (!started || generation != session || info.id in opening || info.id in connections) return
+            if (!started || generation != session || info.id in detached ||
+                info.id in opening || info.id in connections) return
             opening.add(info.id)
         }
         try {
@@ -123,7 +135,7 @@ class AndroidMidiManager(
     private fun onDeviceOpened(info: MidiDeviceInfo, device: MidiDevice?, session: Long) {
         val shouldConnect = synchronized(lock) {
             if (generation == session) opening.remove(info.id)
-            started && generation == session && info.id !in connections
+            started && generation == session && info.id !in connections && info.id !in detached
         }
         if (!shouldConnect || device == null) {
             runCatching { device?.close() }
@@ -139,11 +151,11 @@ class AndroidMidiManager(
                 null
             } ?: continue
 
-            val decoder = MidiStreamDecoder(listener)
+            val portSession = MidiPortSession(listener)
             val receiver = object : MidiReceiver() {
                 override fun onSend(message: ByteArray, offset: Int, count: Int, timestamp: Long) {
                     try {
-                        decoder.feed(message, offset, count)
+                        portSession.feed(message, offset, count)
                     } catch (failure: Exception) {
                         Log.w("OrbitalMidi", "Rejected invalid MIDI callback data", failure)
                     }
@@ -151,16 +163,18 @@ class AndroidMidiManager(
             }
             try {
                 port.connect(receiver)
-                ports.add(PortConnection(port, receiver))
+                ports.add(PortConnection(port, receiver, portSession))
             } catch (failure: Exception) {
                 Log.w("OrbitalMidi", "Could not attach MIDI receiver", failure)
+                portSession.close()
                 runCatching { port.close() }
             }
         }
 
         val connection = DeviceConnection(device, ports)
         val accepted = synchronized(lock) {
-            if (started && generation == session && info.id !in connections && ports.isNotEmpty()) {
+            if (started && generation == session && info.id !in detached &&
+                info.id !in connections && ports.isNotEmpty()) {
                 connections[info.id] = connection
                 true
             } else false
@@ -168,17 +182,16 @@ class AndroidMidiManager(
         if (!accepted) connection.close()
     }
 
-    private fun disconnect(id: Int) {
-        val previous = synchronized(lock) {
-            opening.remove(id)
-            connections.remove(id)
-        }
-        previous?.close()
-    }
-
-    private class PortConnection(val port: MidiOutputPort, val receiver: MidiReceiver) {
+    private class PortConnection(
+        val port: MidiOutputPort,
+        val receiver: MidiReceiver,
+        val session: MidiPortSession
+    ) {
         fun close() {
             runCatching { port.disconnect(receiver) }
+            // Release only pitches held by this port, including unplug while
+            // a key remains down, before the device is finally released.
+            runCatching { session.close() }
             runCatching { port.close() }
         }
     }

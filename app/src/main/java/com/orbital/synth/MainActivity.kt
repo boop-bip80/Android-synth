@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -17,10 +18,14 @@ import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.VoiceMode
 import com.orbital.synth.core.preset.FactoryPresets
 import com.orbital.synth.core.preset.loadPatch
+import com.orbital.synth.preset.PatchOutcome
+import com.orbital.synth.preset.UserPatchRepository
 import com.orbital.synth.ui.OrbitalScreen
 import com.orbital.synth.ui.OrbitalUiState
+import com.orbital.synth.ui.PatchChoice
 import com.orbital.synth.ui.PlayMode
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Composes the UI around one long-lived synthesizer and one Android audio output.
@@ -32,6 +37,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var synth: OrbitalSynth
     private lateinit var audioOutput: AndroidAudioOutput
     private lateinit var midiManager: AndroidMidiManager
+    private lateinit var userPatches: UserPatchRepository
 
     private var patchIndex = 0
     private var screenState by mutableStateOf(OrbitalUiState())
@@ -46,6 +52,8 @@ class MainActivity : ComponentActivity() {
         selectFactoryPatch(0)
 
         audioOutput = AndroidAudioOutput(applicationContext, synth)
+        userPatches = UserPatchRepository(applicationContext, synth)
+        refreshPatchChoices()
         screenState = screenState.copy(
             sequencerTempo = audioOutput.sequencerTempo,
             enabledSteps = audioOutput.sequencerEnabledSteps
@@ -132,7 +140,9 @@ class MainActivity : ComponentActivity() {
                         screenState = screenState.copy(sequencerTempo = next)
                     },
                     onPreviousPatch = { selectFactoryPatch(patchIndex - 1) },
-                    onNextPatch = { selectFactoryPatch(patchIndex + 1) }
+                    onNextPatch = { selectFactoryPatch(patchIndex + 1) },
+                    onSavePatch = ::saveCurrentPatch,
+                    onSelectPatch = ::activatePatch,
                 )
             }
         }
@@ -149,8 +159,78 @@ class MainActivity : ComponentActivity() {
             patchName = patch.name,
             parameters = ParameterId.entries.associateWith { synth.parameter(it) },
             presetIndex = patchIndex,
-            presetCount = patches.size
+            presetCount = patches.size,
+            activePatchId = patch.id,
+            patchFeedback = null,
         )
+    }
+
+    /** Load the persisted bank without blocking either Compose or the audio thread. */
+    private fun refreshPatchChoices() {
+        lifecycleScope.launch {
+            when (val result = userPatches.listAll()) {
+                is PatchOutcome.Success -> {
+                    val factoryIds = FactoryPresets.ALL.map { it.id }.toSet()
+                    screenState = screenState.copy(
+                        patchChoices = result.value.map { patch ->
+                            PatchChoice(patch.id, patch.name, patch.id in factoryIds)
+                        }
+                    )
+                }
+                is PatchOutcome.Failure -> {
+                    screenState = screenState.copy(patchFeedback = result.message)
+                }
+            }
+        }
+    }
+
+    /** Save a snapshot under a collision-safe user patch ID; factory data is immutable. */
+    private fun saveCurrentPatch(name: String) {
+        lifecycleScope.launch {
+            when (val result = userPatches.saveCurrentAs(name)) {
+                is PatchOutcome.Success -> {
+                    val saved = result.value.patch
+                    screenState = screenState.copy(
+                        patchName = saved.name,
+                        activePatchId = saved.id,
+                        patchFeedback = if (result.value.renamedOnCollision) {
+                            "Saved as ${saved.name} (new copy)"
+                        } else {
+                            "Saved ${saved.name}"
+                        },
+                    )
+                    refreshPatchChoices()
+                }
+                is PatchOutcome.Failure -> {
+                    screenState = screenState.copy(patchFeedback = result.message)
+                }
+            }
+        }
+    }
+
+    /** Select factory and user patches through the same validated storage interface. */
+    private fun activatePatch(id: String) {
+        lifecycleScope.launch {
+            when (val result = userPatches.activate(id)) {
+                is PatchOutcome.Success -> {
+                    val patch = result.value
+                    synth.allNotesOff()
+                    val factoryIndex = FactoryPresets.ALL.indexOfFirst { it.id == patch.id }
+                    if (factoryIndex >= 0) patchIndex = factoryIndex
+                    screenState = screenState.copy(
+                        patchName = patch.name,
+                        parameters = ParameterId.entries.associateWith { synth.parameter(it) },
+                        presetIndex = patchIndex,
+                        presetCount = FactoryPresets.ALL.size,
+                        activePatchId = patch.id,
+                        patchFeedback = "Loaded ${patch.name}",
+                    )
+                }
+                is PatchOutcome.Failure -> {
+                    screenState = screenState.copy(patchFeedback = result.message)
+                }
+            }
+        }
     }
 
     private fun updateParameter(parameter: ParameterId, value: Float) {

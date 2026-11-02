@@ -1,6 +1,6 @@
 # ORBITAL — Android wavetable synthesizer
 
-**Status: working source implementation in active development; an Android build/emulator pass has not yet been confirmed.** A debug APK should be treated as installable only once the linked GitHub Actions run succeeds and publishes the artifact. Production audio performance has not been measured on hardware.
+**Status (2026-11-02): local Android build and test compilation passed; GitHub-hosted emulator execution is still unverified.** The local run passed 89 core JVM tests, 31 Android JVM tests, Android lint and both debug APK assemblies with JDK 17, Android SDK 35 and Gradle 8.11.1. This does not establish on-device installability, interaction correctness, latency or audio performance. The GitHub Actions artifact is available only once a workflow run actually uploads it.
 
 ![Original ORBITAL generated concept artwork — UI reference, not a running-app screenshot](design/orbital-ui-reference.png)
 
@@ -10,13 +10,13 @@ ORBITAL is a touch-first, sound-design-oriented Android synthesizer. The interfa
 
 | Area | Code currently present | Verification still required |
 | --- | --- | --- |
-| Synthesis | Polyphonic portable Kotlin engine with **16 voices**, **five band-limited wavetable families**, oscillator morphing, note stealing, mono/poly/legato, portamento and pitch bend | Run host DSP tests; measure pitch, aliasing and CPU on actual devices |
-| Tone and movement | ADSR, resonant filter, LFO/modulation, drive and stereo delay processors; touch-controllable wave, cutoff, resonance, movement and FX | Automated DSP integration and listening tests; stress/sample-rate checks |
-| Android audio and MIDI | AudioTrack render worker with lifecycle handling; Android MIDI device/message handling | Check real output routes, USB controllers, Bluetooth behavior and round-trip latency |
-| Interface | Native Compose sound, play, sequence and FX views; orbital display, controls, accessible touch keyboard, patch navigation | Emulator UI capture plus actual multi-touch, font-scale and orientation playtests |
-| Musical tools | Sixteen-step sequencer with velocity/gate/swing/ties/probability, musical scales and quantization | Verify timing under load, app lifecycle and MIDI interactions |
-| Sounds and storage | **16 factory patches**, **6 factory patterns**, versioned patch model/import/export and local persistence code | Exercise data migration and user-flow tests |
-| Quality automation | JVM/JUnit suites, Android lint, APK build job, **API 35 x86_64 emulator** instrumentation, launch check and screenshot capture workflow | A completed green GitHub Actions run and linked artifacts |
+| Synthesis | Polyphonic portable Kotlin engine with **16 voices**, **five band-limited wavetable families**, oscillator morphing, improved polyphony transitions and idle rendering, note stealing, mono/poly/legato, portamento and pitch bend | Core JVM tests passed locally; measure pitch, aliasing and CPU on actual devices |
+| Tone and movement | ADSR with smoother live edits, resonant filter, LFO/modulation matrix, drive, stereo chorus and delay; touch-controllable wave, cutoff, resonance, movement and FX | Listening tests, stress/sample-rate and actual-device checks |
+| Android audio and MIDI | AudioTrack render worker with lifecycle handling; MIDI parsing with per-port note ownership and disconnect cleanup | Check real output routes, USB controllers, Bluetooth behavior and round-trip latency |
+| Interface | Native Compose sound, play, sequence and FX views; orbital display, accessible keyboard, expressive XY pad, patch library and save-as dialog | Emulator UI capture plus actual multi-touch, font-scale and orientation playtests |
+| Musical tools | Sixteen-step sequencer with velocity/gate/swing/ties/probability; **20 scales**, Euclidean rhythm composition and pattern layering | Verify timing under load, app lifecycle and MIDI interactions |
+| Sounds and storage | **16 factory patches**, **8 factory patterns**, versioned patch model/import/export, local persistence and selectable user patch bank | Exercise migrations and real-device storage flows |
+| Quality automation | **120 local JVM tests passed**, Android lint and debug/instrumentation APK compilation passed; **API 35 x86_64 emulator** instrumentation, launch check and screenshot capture workflow configured | A completed green GitHub Actions emulator run and linked artifacts |
 
 These are descriptions of code in this repository, **not claims of a finished commercial instrument**. In particular, per-note MPE and guaranteed low-latency playback are not verified.
 
@@ -35,23 +35,24 @@ Use the [Android CI workflow](.github/workflows/android.yml) from the repository
 
 - `orbital-debug-apk` — unsigned-for-Play debug install package, signed with the Android debug key.
 - `orbital-api35-emulator-screenshot` — actual UI captured via `adb shell screencap`, separate from the concept image.
-- Instrumentation results and Android lint report, if generated.
+- `orbital-api35-emulator-diagnostics` — emulator logcat, activity-state dump, launch result and a diagnostic screen capture, when the emulator starts.
+- `orbital-host-test-reports` and `orbital-android-test-results` — JVM and instrumentation test reports, when generated; Android lint report is separate.
 
-If no green run appears, the APK and emulator verification are **not yet available**. A queued job is neither a pass nor a compile failure.
+Artifacts from failed runs can be useful for diagnosis but **do not establish a passing build**. If no green run appears, the APK and emulator verification are **not yet available**. A queued job is neither a pass nor a compile failure.
 
 ## Build yourself (optional)
 
 Use **JDK 17**, **Android SDK 35** and **Gradle 8.11.1** (the workflow installs Gradle; no wrapper binary is committed):
 
 ```sh
-gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
 The repository uses AGP 8.9.2 and Kotlin/Compose Compiler 2.1.20. See the [build guide](docs/BUILD.md) for exact configuration. The app supports Android API 26+.
 
 ## Next validation milestones
 
-1. Resolve any Gradle/unit-test/lint failures exposed by the first executing CI runner.
+1. Confirm the locally passing host build on a GitHub Actions runner for this commit.
 2. Pass API 35 emulator launch, instrumentation and screenshot checks with evidence.
 3. Profile real Android phones for audio underruns, latency, battery, thermal behavior and MIDI controller compatibility.
 4. Complete accessibility/interaction playtests and release signing before claiming production readiness.
