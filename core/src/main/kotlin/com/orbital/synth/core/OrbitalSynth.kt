@@ -66,6 +66,7 @@ class OrbitalSynth(
     private val holdVoice = IntArray(holdCapacity) { -1 }
     private val voiceHold = IntArray(maxVoices) { -1 }
     private val restoredHolds = BooleanArray(holdCapacity)
+    private val releasedVoiceSlots = BooleanArray(maxVoices)
 
     private var eventOrder = 0L
     private var previousFrequency: Double? = null
@@ -372,7 +373,7 @@ class OrbitalSynth(
         if (slot < 0) return // Duplicate or unmatched off never releases a different source.
         val voiceIndex = removeHold(slot)
         when (playbackMode) {
-            VoiceMode.POLY -> if (voiceIndex >= 0) voices[voiceIndex].noteOff()
+            VoiceMode.POLY -> if (voiceIndex >= 0) recycleOrReleaseVoice(voiceIndex, wave, morph)
             VoiceMode.MONO, VoiceMode.LEGATO -> {
                 if (voiceIndex == 0) {
                     retargetMonoLead(Voice.midiFrequency(note), glideSec, wave, morph)
@@ -386,18 +387,23 @@ class OrbitalSynth(
     ) {
         var leadRemoved = false
         val oldLeadNote = voices[0].note
-        // Remove all matching holds before choosing a mono fallback; intermediate
+        releasedVoiceSlots.fill(false)
+        // Remove all matching holds before choosing any replacement; intermediate
         // retunes would otherwise create unnecessary ghost tails/clicks.
         for (slot in holdActive.indices) {
             if (!holdActive[slot] || !holdTagged[slot] || holdSource[slot] != sourceId) continue
             val voiceIndex = removeHold(slot)
             if (playbackMode == VoiceMode.POLY && voiceIndex >= 0) {
-                voices[voiceIndex].noteOff()
+                releasedVoiceSlots[voiceIndex] = true
             } else if (voiceIndex == 0) {
                 leadRemoved = true
             }
         }
-        if (leadRemoved && playbackMode != VoiceMode.POLY) {
+        if (playbackMode == VoiceMode.POLY) {
+            for (index in voices.indices) {
+                if (releasedVoiceSlots[index]) recycleOrReleaseVoice(index, wave, morph)
+            }
+        } else if (leadRemoved) {
             val fromFrequency = if (oldLeadNote in 0..127)
                 Voice.midiFrequency(oldLeadNote) else previousFrequency
             retargetMonoLead(fromFrequency, glideSec, wave, morph)
@@ -492,6 +498,42 @@ class OrbitalSynth(
             bindVoice(voiceIndex, holdIndex)
             restoredHolds[holdIndex] = true
         }
+    }
+
+    /**
+     * When all voice slots were occupied, older held keys may have been stolen.
+     * Releasing the current owner should transfer the freed slot to a surviving
+     * held key, particularly when two sources hold the same pitch with one voice.
+     */
+    private fun recycleOrReleaseVoice(voiceIndex: Int, wave: Float, morph: Float) {
+        val replacement = newestUnvoicedHold()
+        val voice = voices[voiceIndex]
+        if (replacement < 0) {
+            voice.noteOff()
+            return
+        }
+        if (!voice.releasing && voice.active && voice.note == holdNote[replacement]) {
+            // Keep phase/envelope continuous for same-pitch stacked ownership.
+            bindVoice(voiceIndex, replacement)
+        } else {
+            voice.begin(
+                holdNote[replacement], holdVelocity[replacement], ++eventOrder,
+                null, 0.0, wave, morph
+            )
+            bindVoice(voiceIndex, replacement)
+        }
+    }
+
+    private fun newestUnvoicedHold(): Int {
+        var selected = -1
+        var newestOrder = Long.MIN_VALUE
+        for (slot in holdActive.indices) {
+            if (holdActive[slot] && holdVoice[slot] < 0 && holdOrder[slot] > newestOrder) {
+                selected = slot
+                newestOrder = holdOrder[slot]
+            }
+        }
+        return selected
     }
 
     private fun freeHoldSlot(): Int {
