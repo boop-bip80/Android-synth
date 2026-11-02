@@ -110,4 +110,73 @@ class AudioSequencerTransportTest {
         assertTrue(fake.transport.isPlaying)
         assertTrue(fake.held.isNotEmpty())
     }
+
+    @Test
+    fun factorySelectionValidatesImmediatelyAndPublishesAtomicWorkerSnapshot() {
+        val fake = Fake()
+        assertEquals(10, fake.transport.factoryPatterns.size)
+        assertEquals("aurora", fake.transport.selectedPatternId)
+        assertEquals("Aurora Orbit", fake.transport.selectedPatternName)
+        assertEquals(16, fake.transport.stepCount)
+        assertFalse(fake.transport.selectFactoryPattern("missing"))
+        assertTrue(fake.transport.selectFactoryPattern("comet"))
+        // Enqueue never mutates worker-owned state on the UI thread.
+        assertEquals("aurora", fake.transport.selectedPatternId)
+        fake.render()
+        val snapshot = fake.transport.selection
+        assertEquals("comet", snapshot.id)
+        assertEquals("Comet Cascade", snapshot.name)
+        assertEquals(16, snapshot.stepCount)
+        assertEquals((0 until 16).toSet(), snapshot.enabledSteps)
+        assertEquals(138, fake.transport.tempo)
+    }
+
+    @Test
+    fun switchingFactoryDuringPlaybackReleasesOldNotesAndStartsNewPattern() {
+        val fake = Fake()
+        fake.transport.setPlaying(true)
+        fake.transport.onWorkerStart()
+        fake.render()
+        assertTrue(fake.held.contains(60))
+        assertTrue(fake.held.contains(67))
+        val before = fake.noteOffCalls
+
+        assertTrue(fake.transport.selectFactoryPattern("comet"))
+        fake.render()
+        assertTrue(fake.transport.isPlaying)
+        assertTrue(fake.noteOffCalls >= before + 2)
+        assertFalse(fake.held.contains(60))
+        assertFalse(fake.held.contains(67))
+        assertTrue(fake.held.contains(48))
+        assertTrue(fake.transport.playhead in 0..15)
+    }
+
+    @Test
+    fun factorySwitchResetsStepEditsTempoAndSwingWhileKeepingGridBounded() {
+        val fake = Fake()
+        fake.transport.setStepEnabled(0, false)
+        fake.render()
+        assertFalse(0 in fake.transport.enabledSteps)
+        fake.transport.setTempo(240)
+        fake.render()
+        assertEquals(240, fake.transport.tempo)
+
+        fake.transport.setStepEnabled(63, true) // beyond current 16-step bank: ignored
+        assertTrue(fake.transport.selectFactoryPattern("ion-bass"))
+        fake.render()
+        assertEquals("ion-bass", fake.transport.selectedPatternId)
+        assertEquals(126, fake.transport.tempo)
+        assertEquals(16, fake.transport.stepCount)
+        assertTrue(0 in fake.transport.enabledSteps)
+        assertFalse(1 in fake.transport.enabledSteps)
+        assertTrue(fake.transport.enabledSteps.all { it in 0 until fake.transport.stepCount })
+
+        // Re-selecting a factory restores its original grid after editing.
+        fake.transport.setStepEnabled(0, false)
+        fake.render()
+        assertFalse(0 in fake.transport.enabledSteps)
+        assertTrue(fake.transport.selectFactoryPattern("ion-bass"))
+        fake.render()
+        assertTrue(0 in fake.transport.enabledSteps)
+    }
 }
