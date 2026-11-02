@@ -16,6 +16,10 @@ class StereoDelay(sampleRate: Int = 48_000, maxDelaySeconds: Float = 3f) {
     private val leftHistory = FloatArray(historySize)
     private val rightHistory = FloatArray(historySize)
     private var index = 0
+    // Number of samples written since the most recent logical reset, saturated at
+    // historySize. A read is valid only after its full delay interval was re-recorded.
+    // This invalidates both channels in O(1), even for multi-second history buffers.
+    private var validFramesSinceReset = 0
     private var length = (sampleRate * 0.375f).toInt().coerceIn(1, historySize - 2)
     private var feedback = 0.3f
     private var mix = 0.2f
@@ -38,8 +42,12 @@ class StereoDelay(sampleRate: Int = 48_000, maxDelaySeconds: Float = 3f) {
     fun process(left: Float, right: Float, output: FloatArray, offset: Int) {
         require(offset >= 0 && offset + 1 < output.size)
         val read = (index + historySize - length) % historySize
-        val delayedL = leftHistory[read]
-        val delayedR = rightHistory[read]
+        // A delay-time change is safe: a longer tap reads silence until enough
+        // post-reset samples exist, while a shorter tap reads only recent new data.
+        // No old pre-reset frame can cross this generation boundary.
+        val historyValid = validFramesSinceReset >= length
+        val delayedL = if (historyValid) leftHistory[read] else 0f
+        val delayedR = if (historyValid) rightHistory[read] else 0f
         val dryL = if (left.isFinite()) left.coerceIn(-8f, 8f) else 0f
         val dryR = if (right.isFinite()) right.coerceIn(-8f, 8f) else 0f
         val cross = pingPong
@@ -51,11 +59,16 @@ class StereoDelay(sampleRate: Int = 48_000, maxDelaySeconds: Float = 3f) {
         output[offset + 1] = (dryR * (1f - mix) + delayedR * mix).coerceIn(-32f, 32f)
         index++
         if (index == historySize) index = 0
+        if (validFramesSinceReset < historySize) validFramesSinceReset++
     }
 
+    /**
+     * Logical reset in constant time. Physical samples are left untouched but are
+     * inaccessible until each delay tap has been replenished by post-reset writes.
+     * Safe across delay reconfiguration and circular-buffer wraparound.
+     */
     fun reset() {
-        leftHistory.fill(0f)
-        rightHistory.fill(0f)
         index = 0
+        validFramesSinceReset = 0
     }
 }
