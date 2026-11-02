@@ -100,6 +100,11 @@ class StereoDelayTest {
         repeat(1_200) { delay.process(0f, 0f, out, 0) }
         delay.process(1f, 0f, out, 0)
         assertTrue("Fully wet glide did not settle", kotlin.math.abs(out[0]) < 0.05f)
+        // Drain the one-frame tap from the preceding full-wet attack before
+        // measuring wet->dry gain smoothing. Otherwise its legitimate echo on
+        // the next sample is mistaken for a discontinuous wet-control change.
+        delay.process(0f, 0f, out, 0)
+        delay.process(0f, 0f, out, 0)
 
         delay.configure(1f / 8_000f, feedback = 0f, wet = 0f, pingPong = 0f)
         delay.process(1f, 0f, out, 0)
