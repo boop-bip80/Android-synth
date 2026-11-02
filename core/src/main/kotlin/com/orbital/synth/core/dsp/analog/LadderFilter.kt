@@ -19,8 +19,8 @@ import kotlin.math.tanh
  * Parameters should be updated at an audio block boundary (not from another thread).
  * A separate instance is required for each voice/channel: state is not shared.
  *
- * No dynamic allocation, trigonometry or coefficient recalculation occurs inside
- * process(). This model does not oversample; high drive at high pitch may alias.
+ * No dynamic allocation or coefficient recalculation occurs inside process();
+ * the saturating implicit solve does evaluate tanh three times per sample. This model does not oversample; high drive at high pitch may alias.
  */
 class LadderFilter(sampleRate: Int = 48_000) {
     init {
@@ -71,6 +71,31 @@ class LadderFilter(sampleRate: Int = 48_000) {
         // Near-zero distortion at d=0; increasingly compressed at d=1.
         saturationGain = 0.05 + 4.95 * d
         saturationNorm = 1.0 / tanh(saturationGain)
+    }
+
+    /**
+     * Snapshot the complete running filter into another preallocated instance.
+     * Useful for a 64-frame voice-stealing tail: the old tone can finish through
+     * its original nonlinear filter while the recycled voice starts a fresh one.
+     * No copy allocation occurs on the audio thread.
+     */
+    fun copyStateTo(destination: LadderFilter) {
+        require(destination.rate == rate) { "Filter sample rates must match" }
+        destination.previousCutoff = previousCutoff
+        destination.previousResonance = previousResonance
+        destination.previousDrive = previousDrive
+        destination.alpha = alpha
+        destination.beta = beta
+        destination.alphaSquared = alphaSquared
+        destination.alphaCubed = alphaCubed
+        destination.alphaFourth = alphaFourth
+        destination.feedback = feedback
+        destination.saturationGain = saturationGain
+        destination.saturationNorm = saturationNorm
+        destination.state1 = state1
+        destination.state2 = state2
+        destination.state3 = state3
+        destination.state4 = state4
     }
 
     /** Explicitly clear stored charge, e.g. when a voice is recycled. */
