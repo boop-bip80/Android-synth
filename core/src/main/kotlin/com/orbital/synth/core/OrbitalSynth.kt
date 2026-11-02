@@ -8,6 +8,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicIntegerArray
 import kotlin.math.PI
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sin
@@ -59,6 +60,9 @@ class OrbitalSynth(
     private var eventOrder = 0L
     private var previousFrequency: Double? = null
     private var lfoPhase = 0.0
+    private var smoothedMasterGain = 0.62f
+    // 15 ms time constant: changing voice counts never jumps the level of held notes.
+    private val gainSlewCoefficient = (1.0 - exp(-1.0 / (sampleRate * 0.015))).toFloat()
 
     // Master FX are strictly audio-thread-owned and allocated once at initialization.
     private val fxDelay = StereoDelay(sampleRate, maxDelaySeconds = 1.5f)
@@ -158,7 +162,7 @@ class OrbitalSynth(
         var active = 0
         for (voice in voices) if (voice.active) active++
         activeVoiceCount = active
-        val masterGain = (0.62 / sqrt(max(1, active).toDouble())).toFloat()
+        val targetMasterGain = (0.62 / sqrt(max(1, active).toDouble())).toFloat()
         val fxEnabled = fxAmount > 0f
         // Constant delay time prevents knob movements from abruptly changing tap positions.
         // Configuration only occurs once per render block, never in the sample loop.
@@ -178,6 +182,10 @@ class OrbitalSynth(
         var offset = 0
 
         for (frame in 0 until frames) {
+            // Sample-rate-independent slew avoids a 29% instantaneous level jump when
+            // a second voice joins an already sustained single note.
+            smoothedMasterGain +=
+                (targetMasterGain - smoothedMasterGain) * gainSlewCoefficient
             val lfo = sin(lfoPhase * 2.0 * PI).toFloat()
             lfoPhase += lfoIncrement
             if (lfoPhase >= 1.0) lfoPhase -= 1.0
@@ -195,8 +203,8 @@ class OrbitalSynth(
                     right += sample * voice.panRight
                 }
             }
-            val dryLeft = softClip(left * masterGain)
-            val dryRight = softClip(right * masterGain)
+            val dryLeft = softClip(left * smoothedMasterGain)
+            val dryRight = softClip(right * smoothedMasterGain)
             if (fxEnabled) {
                 // Preallocated scratch prevents Pair/array creation per frame.
                 fxDelay.process(
