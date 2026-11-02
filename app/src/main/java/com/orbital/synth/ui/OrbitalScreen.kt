@@ -243,7 +243,18 @@ fun OrbitalScreen(
             Tab.SOUND -> {
                 BoxWithConstraints(Modifier.fillMaxWidth().height(244.dp)) {
                     val layoutWidth = maxWidth
-                    OrbitalDisplay(morph, move, Modifier.fillMaxSize())
+                    OrbitalDisplay(
+                        morph = morph,
+                        movement = move,
+                        modifier = Modifier.fillMaxSize(),
+                        onExpressionChange = { nextMorph, nextMovement ->
+                            onParameterChange(ParameterId.MORPH, nextMorph)
+                            onParameterChange(ParameterId.MOVEMENT, nextMovement)
+                        },
+                    )
+                    Box(Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 8.dp)) {
+                        Label("DRAG ORBIT  /  X: MORPH  /  Y: MOTION")
+                    }
                     Column(
                         Modifier
                             .align(Alignment.TopStart)
