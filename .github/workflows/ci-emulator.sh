@@ -75,6 +75,26 @@ orbital_window_drawn() {
   ' "$snapshot"
 }
 
+# A nonempty, MIME-recognized PNG can still be a truncated or tiny placeholder.
+# Assert the real portrait capture has the expected usable display geometry.
+# Read only the PNG signature and IHDR, requiring no Python packages or image tools.
+verify_portrait_capture() {
+  python3 - "$1" <<'PY'
+import struct
+import sys
+
+image_path = sys.argv[1]
+with open(image_path, "rb") as image:
+    header = image.read(24)
+if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
+    raise SystemExit(f"{image_path}: missing PNG signature or IHDR")
+width, height = struct.unpack(">II", header[16:24])
+if width < 600 or height < 1000 or width >= height:
+    raise SystemExit(f"{image_path}: implausible portrait screenshot {width}x{height}")
+print(f"{width}x{height}")
+PY
+}
+
 # A Pixel Launcher ANR is external to ORBITAL, but its system dialog can
 # steal focus over a correctly drawn ORBITAL window. Recover only this exact
 # external package; any ORBITAL ANR still fails the strict app-focus gate.
@@ -168,8 +188,9 @@ sleep 2
 adb exec-out screencap -p > artifacts/orbital-emulator.png
 test -s artifacts/orbital-emulator.png
 test "$(file -b --mime-type artifacts/orbital-emulator.png)" = "image/png"
-printf 'foreground_window=verified\nportrait_ready_poll=%s\nscreenshot_sha256=%s\n' \
-  "$attempt" "$(sha256sum artifacts/orbital-emulator.png | cut -d' ' -f1)" \
+portrait_geometry="$(verify_portrait_capture artifacts/orbital-emulator.png)"
+printf 'foreground_window=verified\nportrait_ready_poll=%s\nportrait_geometry=%s\nscreenshot_sha256=%s\n' \
+  "$attempt" "$portrait_geometry" "$(sha256sum artifacts/orbital-emulator.png | cut -d' ' -f1)" \
   > artifacts/emulator-summary.txt
 
 # Exercise the same real Compose activity at 360 dp wide with 1.3x system fonts.
@@ -217,7 +238,8 @@ sleep 2
 adb exec-out screencap -p > artifacts/orbital-compact-emulator.png
 test -s artifacts/orbital-compact-emulator.png
 test "$(file -b --mime-type artifacts/orbital-compact-emulator.png)" = "image/png"
-printf 'compact_width_dp=360\ncompact_font_scale=1.3\ncompact_ready_poll=%s\ncompact_screenshot_sha256=%s\n' \
-  "$attempt" "$(sha256sum artifacts/orbital-compact-emulator.png | cut -d' ' -f1)" \
+compact_geometry="$(verify_portrait_capture artifacts/orbital-compact-emulator.png)"
+printf 'compact_width_dp=360\ncompact_font_scale=1.3\ncompact_ready_poll=%s\ncompact_geometry=%s\ncompact_screenshot_sha256=%s\n' \
+  "$attempt" "$compact_geometry" "$(sha256sum artifacts/orbital-compact-emulator.png | cut -d' ' -f1)" \
   >> artifacts/emulator-summary.txt
 printf '%s\n' 'complete' > artifacts/emulator-phase.txt
