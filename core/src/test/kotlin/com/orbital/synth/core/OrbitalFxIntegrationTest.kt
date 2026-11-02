@@ -110,6 +110,44 @@ class OrbitalFxIntegrationTest {
         for (sample in block) assertEquals(0f, sample, 0f)
     }
 
+    @Test fun reenablingSmallFxAfterFullWetBypassPreservesDryAttack() {
+        val restored = fixedSynth().apply {
+            setParameter(ParameterId.RELEASE, 0f)
+            setParameter(ParameterId.FX_AMOUNT, 1f)
+        }
+        val dry = fixedSynth().apply {
+            setParameter(ParameterId.RELEASE, 0f)
+        }
+        val scratch = FloatArray(4_096 * 2)
+        restored.noteOn(69)
+        restored.renderStereo(scratch, 4_096)
+        restored.allNotesOff()
+        restored.renderStereo(scratch, 4_096)
+        restored.setParameter(ParameterId.FX_AMOUNT, 0f)
+        restored.renderStereo(scratch, 4_096)
+        assertEquals(0, restored.activeVoiceCount)
+
+        // The previous fully wet controls must not suppress a new note
+        // when FX are reopened at only 10% intensity.
+        restored.setParameter(ParameterId.FX_AMOUNT, 0.1f)
+        restored.noteOn(69)
+        dry.noteOn(69)
+        val restoredAttack = FloatArray(512)
+        val dryAttack = FloatArray(512)
+        restored.renderStereo(restoredAttack, 256)
+        dry.renderStereo(dryAttack, 256)
+        val restoredPower = restoredAttack.sumOf { (it * it).toDouble() }
+        val dryPower = dryAttack.sumOf { (it * it).toDouble() }
+        assertTrue("Dry comparison attack unexpectedly silent", dryPower > 0.001)
+        assertTrue(
+            "FX re-enable inherited stale wet gain and suppressed the attack",
+            restoredPower > dryPower * 0.5
+        )
+        for (sample in restoredAttack) {
+            assertTrue(sample.isFinite() && abs(sample) <= 1.00001f)
+        }
+    }
+
     private fun fixedSynth() = OrbitalSynth().apply {
         setParameter(ParameterId.WAVE, 0.17f)
         setParameter(ParameterId.MORPH, 0.55f)
