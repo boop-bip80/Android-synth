@@ -2,6 +2,7 @@ package com.orbital.synth.core.dsp.oscillator
 
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -44,6 +45,17 @@ internal class Voice(private val sampleRate: Int) {
     private var stage = Stage.OFF
     private var velocity = 0f
     private var phase = 0.0
+    // The two side oscillators track the whole note even while their mix is dry.
+    // Enabling unison mid-note therefore never resets the oscillator clock.
+    private var lowerPhase = 0.0
+    private var upperPhase = 0.0
+    private var unisonMix = 0f
+    private var targetUnisonMix = 0f
+    private var detuneDown = 1.0
+    private var detuneUp = 1.0
+    private var targetDetuneDown = 1.0
+    private var targetDetuneUp = 1.0
+    private val unisonSlewCoefficient = (1.0 - exp(-1.0 / (sampleRate * 0.010))).toFloat()
     private var frequency = 440.0
     private var targetFrequency = 440.0
     private var glideFrames = 0
@@ -77,7 +89,12 @@ internal class Voice(private val sampleRate: Int) {
     // A stolen/retriggered voice contributes a 64-frame fading tail, avoiding hard clicks.
     private var ghostSamples = 0
     private var ghostPhase = 0.0
+    private var ghostLowerPhase = 0.0
+    private var ghostUpperPhase = 0.0
     private var ghostIncrement = 0.0
+    private var ghostLowerIncrement = 0.0
+    private var ghostUpperIncrement = 0.0
+    private var ghostUnisonMix = 0f
     private var ghostLevel = 0f
     private var ghostWave = 0f
     private var ghostMorph = 0f
@@ -123,6 +140,18 @@ internal class Voice(private val sampleRate: Int) {
         }
     }
 
+    /**
+     * Three-oscillator unison: center plus symmetric side voices up to +/-30 cents.
+     * Amount crossfades the original single oscillator into the normalized trio.
+     * Ratios are calculated per render block; only inexpensive slews run per sample.
+     */
+    fun configureUnison(amount: Float, detune: Float) {
+        targetUnisonMix = amount.coerceIn(0f, 1f)
+        val cents = detune.coerceIn(0f, 1f) * 30.0
+        targetDetuneUp = 2.0.pow(cents / 1200.0)
+        targetDetuneDown = 2.0.pow(-cents / 1200.0)
+    }
+
     fun begin(
         midiNote: Int,
         noteVelocity: Float,
@@ -142,7 +171,12 @@ internal class Voice(private val sampleRate: Int) {
         if (active && envelopeLevel > 0.0001f) {
             ghostSamples = 64
             ghostPhase = phase
+            ghostLowerPhase = lowerPhase
+            ghostUpperPhase = upperPhase
             ghostIncrement = frequency / sampleRate
+            ghostLowerIncrement = min(0.45, ghostIncrement * detuneDown)
+            ghostUpperIncrement = min(0.45, ghostIncrement * detuneUp)
+            ghostUnisonMix = unisonMix
             ghostLevel = envelopeLevel * velocity
             ghostWave = wave
             ghostMorph = morph
@@ -158,6 +192,8 @@ internal class Voice(private val sampleRate: Int) {
         stage = Stage.ATTACK
         envelopeLevel = 0f
         phase = 0.0
+        lowerPhase = 0.0
+        upperPhase = 0.0
         integrator1 = 0.0
         integrator2 = 0.0
 
@@ -199,7 +235,10 @@ internal class Voice(private val sampleRate: Int) {
 
     fun preparePitch(maxPitchMultiplier: Double) {
         if (active) {
-            val high = max(frequency, targetFrequency) * maxPitchMultiplier
+            // Reserve additional mip headroom for the sharpest unison side voice.
+            // Include both current and next ratios while a detune move is slewing.
+            val high = max(frequency, targetFrequency) * maxPitchMultiplier *
+                max(detuneUp, targetDetuneUp)
             mipLevel = WavetableBank.levelForFrequency(high, sampleRate)
             mipFade = WavetableBank.fadeToLowerLevel(high, sampleRate, mipLevel)
         }
@@ -218,10 +257,21 @@ internal class Voice(private val sampleRate: Int) {
                 }
 
                 advanceFilterCoefficients()
-                val waveSample = WavetableBank.sample(phase, mipLevel, wave, morph, mipFade)
-                val frequencyNow = min(sampleRate * 0.45, frequency * pitchMultiplier)
-                phase += frequencyNow / sampleRate
+                advanceUnisonControls()
+                val centerSample = WavetableBank.sample(phase, mipLevel, wave, morph, mipFade)
+                val waveSample = if (unisonMix <= 0.000001f) centerSample else {
+                    val low = WavetableBank.sample(lowerPhase, mipLevel, wave, morph, mipFade)
+                    val high = WavetableBank.sample(upperPhase, mipLevel, wave, morph, mipFade)
+                    val trio = (centerSample + low + high) / 3f
+                    centerSample + (trio - centerSample) * unisonMix
+                }
+                val increment = min(sampleRate * 0.45, frequency * pitchMultiplier) / sampleRate
+                phase += increment
+                lowerPhase += min(0.45, increment * detuneDown)
+                upperPhase += min(0.45, increment * detuneUp)
                 if (phase >= 1.0) phase -= floor(phase)
+                if (lowerPhase >= 1.0) lowerPhase -= floor(lowerPhase)
+                if (upperPhase >= 1.0) upperPhase -= floor(upperPhase)
 
                 val input = (waveSample * velocity * amplitude).toDouble()
                 val v3 = input - integrator2
@@ -239,15 +289,34 @@ internal class Voice(private val sampleRate: Int) {
 
         if (ghostSamples > 0) {
             val fade = ghostSamples / 64f
-            result += WavetableBank.sample(
+            val center = WavetableBank.sample(
                 ghostPhase, ghostMip, ghostWave, ghostMorph, ghostMipFade
-            ) *
-                ghostLevel * fade
+            )
+            val fadingWave = if (ghostUnisonMix <= 0.000001f) center else {
+                val low = WavetableBank.sample(
+                    ghostLowerPhase, ghostMip, ghostWave, ghostMorph, ghostMipFade
+                )
+                val high = WavetableBank.sample(
+                    ghostUpperPhase, ghostMip, ghostWave, ghostMorph, ghostMipFade
+                )
+                center + ((center + low + high) / 3f - center) * ghostUnisonMix
+            }
+            result += fadingWave * ghostLevel * fade
             ghostPhase += ghostIncrement
+            ghostLowerPhase += ghostLowerIncrement
+            ghostUpperPhase += ghostUpperIncrement
             if (ghostPhase >= 1.0) ghostPhase -= floor(ghostPhase)
+            if (ghostLowerPhase >= 1.0) ghostLowerPhase -= floor(ghostLowerPhase)
+            if (ghostUpperPhase >= 1.0) ghostUpperPhase -= floor(ghostUpperPhase)
             ghostSamples--
         }
         return result
+    }
+
+    private fun advanceUnisonControls() {
+        unisonMix += (targetUnisonMix - unisonMix) * unisonSlewCoefficient
+        detuneDown += (targetDetuneDown - detuneDown) * unisonSlewCoefficient
+        detuneUp += (targetDetuneUp - detuneUp) * unisonSlewCoefficient
     }
 
     private fun advanceFilterCoefficients() {
