@@ -25,8 +25,9 @@ data class AudioOutputDiagnostics(
  * Streaming stereo Android output for the platform-independent [OrbitalSynth].
  *
  * A single high-priority render worker owns AudioTrack.play/write/release. UI and lifecycle
- * callbacks only request shutdown and pause the track to unblock writes. Device-dependent
- * low-latency mode is requested where available but is not assumed to be granted.
+ * callbacks only request shutdown and pause the track to unblock writes. A separate
+ * pure Kotlin sequencer transport splits audio renders at absolute sample offsets.
+ * Device-dependent low-latency mode is requested but not assumed to be granted.
  */
 class AndroidAudioOutput(
     context: Context,
@@ -63,6 +64,12 @@ class AndroidAudioOutput(
         .build()
     private val hasFocus = AtomicBoolean(false)
     private val renderedFrameCounter = AtomicLong(0)
+    private val audioSequencer = AudioSequencerTransport(
+        sampleRate = sampleRate,
+        renderFrames = { output, frames -> synth.renderStereo(output, frames) },
+        noteOn = { note, velocity -> synth.noteOn(note, velocity) },
+        noteOff = { note -> synth.noteOff(note) }
+    )
 
     private var lifecycleGeneration = 0L
     private var pendingRestartToken: Long? = null
@@ -75,6 +82,16 @@ class AndroidAudioOutput(
     @Volatile private var lastEncoding = AudioFormat.ENCODING_PCM_FLOAT
 
     val isRunning: Boolean get() = running
+    val isSequencerPlaying: Boolean get() = audioSequencer.isPlaying
+    val sequencerPlayhead: Int get() = audioSequencer.playhead
+    val sequencerTempo: Int get() = audioSequencer.tempo
+    val sequencerEnabledSteps: Set<Int> get() = audioSequencer.enabledSteps
+
+    /** All sequencer mutations are queued for the audio render worker. */
+    fun setSequencerPlaying(playing: Boolean) = audioSequencer.setPlaying(playing)
+    fun setSequencerTempo(bpm: Int) = audioSequencer.setTempo(bpm)
+    fun setSequencerStepEnabled(index: Int, enabled: Boolean) =
+        audioSequencer.setStepEnabled(index, enabled)
 
     val diagnostics: AudioOutputDiagnostics
         get() = AudioOutputDiagnostics(
@@ -193,13 +210,16 @@ class AndroidAudioOutput(
             }
             val sampleCount = framesPerWrite * 2
             val floats = FloatArray(sampleCount)
+            val scratch = FloatArray(sampleCount)
             val shorts = if (config.encoding == AudioFormat.ENCODING_PCM_16BIT)
                 ShortArray(sampleCount) else null
 
             config.track.play()
+            audioSequencer.onWorkerStart()
             while (running && !Thread.currentThread().isInterrupted) {
-                // Core owns the synth's command queue and must not block this callback.
-                synth.renderStereo(floats, framesPerWrite)
+                // Sample-addressed notes are applied at exact offsets within the
+                // buffer; UI commands reach the sequencer only on this worker.
+                audioSequencer.renderBlock(floats, scratch, framesPerWrite)
                 if (shorts != null) Pcm16Converter.convert(floats, shorts, sampleCount)
 
                 var written = 0
@@ -231,6 +251,7 @@ class AndroidAudioOutput(
             if (running) Log.e("OrbitalAudio", "Audio render stopped unexpectedly", failure)
         } finally {
             running = false
+            audioSequencer.onWorkerStop()
             lastUnderruns = runCatching { config.track.underrunCount }.getOrDefault(lastUnderruns)
             runCatching { config.track.pause() }
             runCatching { config.track.flush() }
