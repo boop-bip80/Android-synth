@@ -256,7 +256,7 @@ fun OrbitalScreen(
                 x += spacing
             }
         }
-        val compactOrbitLayout = maxWidth < 380.dp || LocalDensity.current.fontScale >= 1.2f
+        val compactOrbitLayout = compactHeight || maxWidth < 380.dp || LocalDensity.current.fontScale >= 1.2f
         Column(
             Modifier.fillMaxSize().padding(
                 horizontal = if (compactHeight) 8.dp else 12.dp,
