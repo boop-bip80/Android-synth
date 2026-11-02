@@ -151,6 +151,9 @@ jobs:
             artifacts/midi-state.txt
             artifacts/app-memory.txt
             artifacts/installed-package.txt
+            artifacts/external-launcher-anr.txt
+            artifacts/portrait-launcher-recovery-launch.txt
+            artifacts/compact-launcher-recovery-launch.txt
             artifacts/display-state.txt
           if-no-files-found: ignore
           retention-days: 14
