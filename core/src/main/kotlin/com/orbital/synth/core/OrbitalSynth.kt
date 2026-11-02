@@ -28,7 +28,8 @@ import kotlin.math.sqrt
  */
 enum class ParameterId {
     WAVE, MORPH, CUTOFF, RESONANCE, MOVEMENT, FX_AMOUNT,
-    ATTACK, DECAY, SUSTAIN, RELEASE, LFO_RATE, LFO_DEPTH, GLIDE
+    ATTACK, DECAY, SUSTAIN, RELEASE, LFO_RATE, LFO_DEPTH, GLIDE,
+    UNISON, DETUNE
 }
 
 enum class VoiceMode { POLY, MONO, LEGATO }
@@ -183,6 +184,8 @@ class OrbitalSynth(
         val lfoRate = parameter(ParameterId.LFO_RATE)
         val lfoDepth = parameter(ParameterId.LFO_DEPTH)
         val glide = parameter(ParameterId.GLIDE)
+        val unison = parameter(ParameterId.UNISON)
+        val detune = parameter(ParameterId.DETUNE)
         val pitchBend = java.lang.Float.intBitsToFloat(bendBits.get()).toDouble()
 
         // Logarithmic time/frequency controls provide fine motion near useful short values.
@@ -197,6 +200,7 @@ class OrbitalSynth(
 
         for (voice in voices) {
             voice.configure(attackSec, decaySec, sustain, releaseSec, cutoffHz, resonance)
+            voice.configureUnison(unison, detune)
         }
         drainEvents(glideSec, wave, morph)
 
@@ -689,6 +693,8 @@ class OrbitalSynth(
             ParameterId.LFO_RATE -> 0.34f
             ParameterId.LFO_DEPTH -> 0.24f
             ParameterId.GLIDE -> 0.0f
+            ParameterId.UNISON -> 0.0f
+            ParameterId.DETUNE -> 0.0f
         }
     }
 }
