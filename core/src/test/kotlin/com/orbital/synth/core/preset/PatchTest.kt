@@ -126,4 +126,19 @@ class PatchTest {
         assertTrue(store.list().isEmpty())
         assertNull(store.load("not-found"))
     }
+    @Test fun unisonDetunePatchKeysRoundTripAndOldPatchesStillLoad() {
+        val enhanced = FactoryPatches.DEFAULT.copy(
+            parameters = FactoryPatches.DEFAULT.parameters +
+                mapOf("UNISON" to .75f, "DETUNE" to .4f),
+        )
+        assertEquals(enhanced, PatchCodec.decode(PatchCodec.encode(enhanced)))
+        assertEquals(0f, FactoryPatches.DEFAULT.parameter("UNISON"), 0f)
+        assertEquals(0f, FactoryPatches.DEFAULT.parameter("DETUNE"), 0f)
+        // Prior ORBITAL-PATCH/1 files contain neither field. They remain readable.
+        val legacy = enhanced.copy(
+            parameters = enhanced.parameters - setOf("UNISON", "DETUNE"),
+        )
+        assertEquals(legacy, PatchCodec.decode(PatchCodec.encode(legacy)))
+    }
+
 }

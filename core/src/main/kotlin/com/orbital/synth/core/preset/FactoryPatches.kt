@@ -9,6 +9,7 @@ object FactoryPatches {
         "ATTACK" to 0.12f, "DECAY" to 0.30f,
         "SUSTAIN" to 0.70f, "RELEASE" to 0.45f,
         "LFO_RATE" to 0.22f, "LFO_DEPTH" to 0.16f, "GLIDE" to 0.00f,
+        "UNISON" to 0.00f, "DETUNE" to 0.00f,
     )
 
     private fun patch(
