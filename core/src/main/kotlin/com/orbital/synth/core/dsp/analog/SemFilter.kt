@@ -15,7 +15,8 @@ import kotlin.math.tanh
  * Cutoff is in Hz, resonance/drive/shape are normalized 0..1. One instance is
  * required per independent channel or synth voice. All functions are intended
  * for the audio render thread. configure() computes TPT coefficients once per
- * block; process() and processBandPass() are allocation-free.
+ * block; process() and bandPassOutput() are allocation-free. All coefficient,
+ * drive and mode controls slew over 3 ms without per-sample tan/tanh setup.
  *
  * The nonlinear input drive is not oversampled and can alias at high settings.
  */
@@ -28,6 +29,7 @@ class SemFilter(sampleRate: Int = 48_000) {
     private var previousCutoff = Float.NaN
     private var previousResonance = Float.NaN
     private var previousDrive = Float.NaN
+    private var previousShape = Float.NaN
     private var mode = 0.0
     private var a1 = 0.0
     private var a2 = 0.0
@@ -35,6 +37,25 @@ class SemFilter(sampleRate: Int = 48_000) {
     private var damping = 2.0
     private var saturationGain = 0.05
     private var saturationNorm = 1.0 / tanh(0.05)
+    // Retargetable, audio-rate 3 ms slews; expensive tan/tanh stays in configure().
+    private val slewLength = (rate * 0.003).toInt().coerceAtLeast(1)
+    private var controlsReady = false
+    private var slewRemaining = 0
+    private var targetA1 = 0.0
+    private var targetA2 = 0.0
+    private var targetA3 = 0.0
+    private var targetDamping = 2.0
+    private var targetGain = 0.05
+    private var targetNorm = 1.0 / tanh(0.05)
+    private var targetMode = 0.0
+    private var stepA1 = 0.0
+    private var stepA2 = 0.0
+    private var stepA3 = 0.0
+    private var stepDamping = 0.0
+    private var stepGain = 0.0
+    private var stepNorm = 0.0
+    private var stepMode = 0.0
+
     private var state1 = 0.0
     private var state2 = 0.0
     private var lastBandPass = 0.0
@@ -57,22 +78,48 @@ class SemFilter(sampleRate: Int = 48_000) {
             .coerceIn(20f, (rate * 0.45).toFloat())
         val q = (if (resonance.isFinite()) resonance else 0.15f).coerceIn(0f, 1f)
         val d = (if (drive.isFinite()) drive else 0f).coerceIn(0f, 1f)
-        mode = (if (shape.isFinite()) shape else 0f).coerceIn(0f, 1f).toDouble()
-        if (cutoff == previousCutoff && q == previousResonance && d == previousDrive) return
+        val selectedShape = (if (shape.isFinite()) shape else 0f).coerceIn(0f, 1f)
+        if (cutoff == previousCutoff && q == previousResonance &&
+            d == previousDrive && selectedShape == previousShape
+        ) return
         previousCutoff = cutoff
         previousResonance = q
         previousDrive = d
+        previousShape = selectedShape
 
         val g = tan(PI * cutoff / rate)
         // Damping remains positive: unlike a naive biquad, the resonant poles
         // are stable across the full supported cutoff and parameter ranges.
-        damping = 2.0 - 1.85 * q
-        val denominator = 1.0 + g * (g + damping)
-        a1 = 1.0 / denominator
-        a2 = g * a1
-        a3 = g * a2
-        saturationGain = 0.05 + 4.95 * d
-        saturationNorm = 1.0 / tanh(saturationGain)
+        val nextDamping = 2.0 - 1.85 * q
+        val denominator = 1.0 + g * (g + nextDamping)
+        targetA1 = 1.0 / denominator
+        targetA2 = g * targetA1
+        targetA3 = g * targetA2
+        targetDamping = nextDamping
+        targetGain = 0.05 + 4.95 * d
+        targetNorm = 1.0 / tanh(targetGain)
+        targetMode = selectedShape.toDouble()
+
+        if (!controlsReady) {
+            controlsReady = true
+            a1 = targetA1
+            a2 = targetA2
+            a3 = targetA3
+            damping = targetDamping
+            saturationGain = targetGain
+            saturationNorm = targetNorm
+            mode = targetMode
+            return
+        }
+        // A rapidly repeated gesture retargets from the current ramp position.
+        slewRemaining = slewLength
+        stepA1 = (targetA1 - a1) / slewLength
+        stepA2 = (targetA2 - a2) / slewLength
+        stepA3 = (targetA3 - a3) / slewLength
+        stepDamping = (targetDamping - damping) / slewLength
+        stepGain = (targetGain - saturationGain) / slewLength
+        stepNorm = (targetNorm - saturationNorm) / slewLength
+        stepMode = (targetMode - mode) / slewLength
     }
 
     /**
@@ -85,6 +132,23 @@ class SemFilter(sampleRate: Int = 48_000) {
         destination.previousCutoff = previousCutoff
         destination.previousResonance = previousResonance
         destination.previousDrive = previousDrive
+        destination.previousShape = previousShape
+        destination.controlsReady = controlsReady
+        destination.slewRemaining = slewRemaining
+        destination.targetA1 = targetA1
+        destination.targetA2 = targetA2
+        destination.targetA3 = targetA3
+        destination.targetDamping = targetDamping
+        destination.targetGain = targetGain
+        destination.targetNorm = targetNorm
+        destination.targetMode = targetMode
+        destination.stepA1 = stepA1
+        destination.stepA2 = stepA2
+        destination.stepA3 = stepA3
+        destination.stepDamping = stepDamping
+        destination.stepGain = stepGain
+        destination.stepNorm = stepNorm
+        destination.stepMode = stepMode
         destination.mode = mode
         destination.a1 = a1
         destination.a2 = a2
@@ -103,8 +167,30 @@ class SemFilter(sampleRate: Int = 48_000) {
         lastBandPass = 0.0
     }
 
+    private fun advanceControls() {
+        if (slewRemaining <= 0) return
+        a1 += stepA1
+        a2 += stepA2
+        a3 += stepA3
+        damping += stepDamping
+        saturationGain += stepGain
+        saturationNorm += stepNorm
+        mode += stepMode
+        slewRemaining--
+        if (slewRemaining == 0) {
+            a1 = targetA1
+            a2 = targetA2
+            a3 = targetA3
+            damping = targetDamping
+            saturationGain = targetGain
+            saturationNorm = targetNorm
+            mode = targetMode
+        }
+    }
+
     /** Allocation-free morph between low-pass, notch and high-pass. */
     fun process(input: Float): Float {
+        advanceControls()
         val x = (if (input.isFinite()) input else 0f).coerceIn(-8f, 8f).toDouble()
         val driven = tanh(saturationGain * x) * saturationNorm
         val v3 = driven - state2
