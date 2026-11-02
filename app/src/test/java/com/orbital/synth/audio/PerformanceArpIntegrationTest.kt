@@ -43,16 +43,16 @@ class PerformanceArpIntegrationTest {
         performance.inputNoteOn(-1L, 0, 72)
         sequence.renderBlock(output, seqScratch, 192)
 
-        assertTrue(-7L to 72 in held)
-        assertTrue(-2L to 60 in held)
-        assertTrue(-2L to 67 in held)
+        assertTrue((-7L to 72) in held)
+        assertTrue((-2L to 60) in held)
+        assertTrue((-2L to 67) in held)
         assertEquals(3f, output[0], 0f)
 
         performance.setEnabled(false)
         sequence.renderBlock(output, seqScratch, 192)
-        assertFalse(-7L to 72 in held)
-        assertTrue(-2L to 60 in held)
-        assertTrue(-2L to 67 in held)
+        assertFalse((-7L to 72) in held)
+        assertTrue((-2L to 60) in held)
+        assertTrue((-2L to 67) in held)
         assertEquals(2f, output[0], 0f)
 
         sequence.onWorkerStop()
