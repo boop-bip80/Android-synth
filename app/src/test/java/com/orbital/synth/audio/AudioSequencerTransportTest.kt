@@ -291,6 +291,39 @@ class AudioSequencerTransportTest {
     }
 
     @Test
+    fun oneStepGridLoopsSafelyAndResumesAfterWorkerLifecycle() {
+        val fake = Fake()
+        assertTrue(fake.transport.setStepCount(1))
+        fake.render()
+        assertEquals(1, fake.transport.stepCount)
+        assertEquals(setOf(0), fake.transport.enabledSteps)
+        fake.transport.setPlaying(true)
+        fake.transport.onWorkerStart()
+        fake.renderFrames(12_001)
+        assertTrue(fake.transport.isPlaying)
+        assertEquals(0, fake.transport.playhead)
+        assertTrue(fake.held.isNotEmpty())
+
+        val noteOffBeforeStop = fake.noteOffCalls
+        fake.transport.onWorkerStop()
+        assertTrue(fake.held.isEmpty())
+        assertTrue(fake.noteOffCalls > noteOffBeforeStop)
+        assertFalse(fake.transport.isPlaying)
+        fake.transport.onWorkerStart()
+        fake.render()
+        assertTrue(fake.transport.isPlaying)
+        assertEquals(0, fake.transport.playhead)
+
+        assertTrue(fake.transport.setStepCount(64))
+        fake.render()
+        assertEquals(64, fake.transport.stepCount)
+        assertTrue(fake.transport.playhead in 0..63)
+        fake.transport.setPlaying(false)
+        fake.render()
+        assertTrue(fake.held.isEmpty())
+    }
+
+    @Test
     fun outdatedGridCommandsCannotMutateNewSelection() {
         val fake = Fake()
         assertTrue(fake.transport.selectFactoryPattern("comet"))
