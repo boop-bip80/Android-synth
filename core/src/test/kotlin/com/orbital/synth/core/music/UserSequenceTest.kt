@@ -61,6 +61,17 @@ class UserSequenceTest {
         assertNull(SequenceCodec.decode(SequenceCodec.encode(legacy)).enabledSteps)
     }
 
+    @Test fun v2SequenceDirectoryStoreRoundTripsExplicitMuteState() {
+        val bank = SequenceDirectoryStore(temporary.root.toPath().resolve("v2-sequences"))
+        val original = sample("v2-bank").copy(enabledSteps = setOf(1, 2))
+        bank.save(original)
+        val restored = bank.load("v2-bank")
+        assertEquals(original, restored)
+        assertEquals(listOf(original), bank.list())
+        assertTrue(restored!!.pattern.steps[0].notes.isNotEmpty())
+        assertTrue(0 !in restored.enabledSteps!!)
+    }
+
     @Test fun v2RejectsDuplicateUnsortedAndOutOfRangeEnabledFlags() {
         val encoded = SequenceCodec.encode(sample("v2-invalid").copy(enabledSteps = setOf(1, 2)))
         rejects { SequenceCodec.decode(encoded.replace("enabled=1,2", "enabled=2,1")) }
