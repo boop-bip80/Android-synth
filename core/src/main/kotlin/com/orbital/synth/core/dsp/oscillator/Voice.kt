@@ -41,6 +41,7 @@ internal class Voice(private val sampleRate: Int) {
     private var glideFrames = 0
     private var glideIncrement = 0.0
     private var mipLevel = 0
+    private var mipFade = 0f
 
     private var attackStep = 1f
     private var decayStep = 0.01f
@@ -54,6 +55,16 @@ internal class Voice(private val sampleRate: Int) {
     private var a1 = 1.0
     private var a2 = 0.0
     private var a3 = 0.0
+    // Cutoff/resonance automation slews coefficient changes over 2 ms to avoid
+    // discontinuities while keeping expensive tan() outside the audio callback.
+    private var coefficientsInitialized = false
+    private var coefficientSlewRemaining = 0
+    private var coefficientStepA1 = 0.0
+    private var coefficientStepA2 = 0.0
+    private var coefficientStepA3 = 0.0
+    private var targetA1 = 1.0
+    private var targetA2 = 0.0
+    private var targetA3 = 0.0
 
     // A stolen/retriggered voice contributes a 64-frame fading tail, avoiding hard clicks.
     private var ghostSamples = 0
@@ -63,6 +74,7 @@ internal class Voice(private val sampleRate: Int) {
     private var ghostWave = 0f
     private var ghostMorph = 0f
     private var ghostMip = 0
+    private var ghostMipFade = 0f
 
     fun configure(
         attackSeconds: Double,
@@ -80,9 +92,27 @@ internal class Voice(private val sampleRate: Int) {
         val safeCutoff = cutoffHz.coerceIn(20.0, sampleRate * 0.45)
         val g = tan(PI * safeCutoff / sampleRate)
         val k = 2.0 - 1.80 * resonance.coerceIn(0f, 1f)
-        a1 = 1.0 / (1.0 + g * (g + k))
-        a2 = g * a1
-        a3 = g * a2
+        val nextA1 = 1.0 / (1.0 + g * (g + k))
+        val nextA2 = g * nextA1
+        val nextA3 = g * nextA2
+        if (!coefficientsInitialized || !active) {
+            a1 = nextA1
+            a2 = nextA2
+            a3 = nextA3
+            targetA1 = nextA1
+            targetA2 = nextA2
+            targetA3 = nextA3
+            coefficientSlewRemaining = 0
+            coefficientsInitialized = true
+        } else if (nextA1 != targetA1 || nextA2 != targetA2 || nextA3 != targetA3) {
+            targetA1 = nextA1
+            targetA2 = nextA2
+            targetA3 = nextA3
+            coefficientSlewRemaining = max(1, (sampleRate * 0.002).toInt())
+            coefficientStepA1 = (targetA1 - a1) / coefficientSlewRemaining
+            coefficientStepA2 = (targetA2 - a2) / coefficientSlewRemaining
+            coefficientStepA3 = (targetA3 - a3) / coefficientSlewRemaining
+        }
     }
 
     fun begin(
@@ -108,6 +138,7 @@ internal class Voice(private val sampleRate: Int) {
             ghostWave = wave
             ghostMorph = morph
             ghostMip = mipLevel
+            ghostMipFade = mipFade
         }
 
         note = midiNote
@@ -160,6 +191,7 @@ internal class Voice(private val sampleRate: Int) {
         if (active) {
             val high = max(frequency, targetFrequency) * maxPitchMultiplier
             mipLevel = WavetableBank.levelForFrequency(high, sampleRate)
+            mipFade = WavetableBank.fadeToLowerLevel(high, sampleRate, mipLevel)
         }
     }
 
@@ -174,7 +206,8 @@ internal class Voice(private val sampleRate: Int) {
                     if (glideFrames == 0) frequency = targetFrequency
                 }
 
-                val waveSample = WavetableBank.sample(phase, mipLevel, wave, morph)
+                advanceFilterCoefficients()
+                val waveSample = WavetableBank.sample(phase, mipLevel, wave, morph, mipFade)
                 val frequencyNow = min(sampleRate * 0.45, frequency * pitchMultiplier)
                 phase += frequencyNow / sampleRate
                 if (phase >= 1.0) phase -= floor(phase)
@@ -195,13 +228,29 @@ internal class Voice(private val sampleRate: Int) {
 
         if (ghostSamples > 0) {
             val fade = ghostSamples / 64f
-            result += WavetableBank.sample(ghostPhase, ghostMip, ghostWave, ghostMorph) *
+            result += WavetableBank.sample(
+                ghostPhase, ghostMip, ghostWave, ghostMorph, ghostMipFade
+            ) *
                 ghostLevel * fade
             ghostPhase += ghostIncrement
             if (ghostPhase >= 1.0) ghostPhase -= floor(ghostPhase)
             ghostSamples--
         }
         return result
+    }
+
+    private fun advanceFilterCoefficients() {
+        if (coefficientSlewRemaining <= 0) return
+        a1 += coefficientStepA1
+        a2 += coefficientStepA2
+        a3 += coefficientStepA3
+        coefficientSlewRemaining--
+        if (coefficientSlewRemaining == 0) {
+            // Snap to exact targets to avoid numerical drift after many edits.
+            a1 = targetA1
+            a2 = targetA2
+            a3 = targetA3
+        }
     }
 
     private fun advanceEnvelope(): Float {
