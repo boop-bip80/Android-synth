@@ -49,15 +49,54 @@ internal object WavetableBank {
     }
 
     /**
-     * [wave] chooses sine -> triangle -> saw -> pulse -> glass (continuous crossfade);
-     * [morph] blends from a pure sine to the selected waveform.
+     * Crossfade the current mip into its next smaller harmonic set before its
+     * highest partial reaches the 45%-of-sample-rate safety limit. At the exact
+     * limit the higher mip has weight zero, so crossing a mip boundary cannot
+     * introduce either an aliased partial or a sudden change in timbre.
+     *
+     * Compute once per audio block using the highest possible glide/bend/LFO
+     * frequency. The audio loop then needs only cheap table interpolation.
      */
-    fun sample(phase: Double, level: Int, wave: Float, morph: Float): Float {
+    fun fadeToLowerLevel(frequencyHz: Double, sampleRate: Int, level: Int): Float {
+        if (level <= 0) return 0f
+        val frequency = if (frequencyHz.isFinite() && frequencyHz > 0.0) frequencyHz else 1.0
+        val cap = harmonicCaps[level.coerceIn(1, harmonicCaps.lastIndex)].toDouble()
+        val safeHarmonics = sampleRate * 0.45 / frequency
+        // A 25% transition region leaves margin for safe interpolation.
+        val position = ((cap * 1.25 - safeHarmonics) / (cap * 0.25)).coerceIn(0.0, 1.0)
+        return (position * position * (3.0 - 2.0 * position)).toFloat()
+    }
+
+    /**
+     * [wave] chooses sine -> triangle -> saw -> pulse -> glass (continuous crossfade);
+     * [morph] blends from a pure sine to the selected waveform. [lowerMipFade]
+     * blends to a harmonically safer table before the selected mip becomes unsafe.
+     */
+    fun sample(
+        phase: Double,
+        level: Int,
+        wave: Float,
+        morph: Float,
+        lowerMipFade: Float = 0f
+    ): Float {
         val normalized = phase - floor(phase)
         val tablePosition = normalized * TABLE_SIZE
         val firstIndex = tablePosition.toInt() and TABLE_MASK
         val fraction = (tablePosition - tablePosition.toInt()).toFloat()
+        val current = sampleAtLevel(firstIndex, fraction, level, wave, morph)
+        val blend = lowerMipFade.coerceIn(0f, 1f)
+        if (level <= 0 || blend <= 0f) return current
+        val safer = sampleAtLevel(firstIndex, fraction, level - 1, wave, morph)
+        return current + (safer - current) * blend
+    }
 
+    private fun sampleAtLevel(
+        firstIndex: Int,
+        fraction: Float,
+        level: Int,
+        wave: Float,
+        morph: Float
+    ): Float {
         val sine = lookup(0, level, firstIndex, fraction)
         if (morph <= 0f) return sine
 
