@@ -65,6 +65,10 @@ data class OrbitalUiState(
     val playMode: PlayMode = PlayMode.POLY,
     val parameters: Map<ParameterId, Float> = emptyMap(),
     val octave: Int = 4,
+    val sequencerRunning: Boolean = false,
+    val enabledSteps: Set<Int> = emptySet(),
+    val sequencerStep: Int = -1,
+    val sequencerTempo: Int = 112,
 )
 
 private enum class Tab(val title: String) {
@@ -87,8 +91,12 @@ fun OrbitalScreen(
     onParameterChange: (ParameterId, Float) -> Unit,
     onModeChange: (PlayMode) -> Unit,
     onOctaveChange: (Int) -> Unit,
+    onSequencerToggle: (() -> Unit)? = null,
+    onStepToggle: ((Int) -> Unit)? = null,
+    onSequencerTempoChange: ((Int) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
+    val externalSequencer = onSequencerToggle != null && onStepToggle != null
     val parameter: (ParameterId) -> Float = { id ->
         (state.parameters[id] ?: defaultValue(id)).coerceIn(0f, 1f)
     }
@@ -109,8 +117,8 @@ fun OrbitalScreen(
     }
 
     // A self-contained 16-step live pattern. Stop/cancellation sends note-off.
-    LaunchedEffect(sequencerPlaying, tempo, state.octave) {
-        if (!sequencerPlaying) {
+    LaunchedEffect(externalSequencer, sequencerPlaying, tempo, state.octave) {
+        if (externalSequencer || !sequencerPlaying) {
             playhead = -1
             return@LaunchedEffect
         }
@@ -253,12 +261,22 @@ fun OrbitalScreen(
                 onParameterChange,
             )
             Tab.SEQ -> SequencerPanel(
-                steps,
-                playhead,
-                sequencerPlaying,
-                { sequencerPlaying = !sequencerPlaying },
-                tempo,
-                { tempo = it },
+                if (externalSequencer) List(16) { it in state.enabledSteps } else steps,
+                if (externalSequencer) state.sequencerStep else playhead,
+                if (externalSequencer) state.sequencerRunning else sequencerPlaying,
+                {
+                    if (externalSequencer) onSequencerToggle?.invoke()
+                    else sequencerPlaying = !sequencerPlaying
+                },
+                if (externalSequencer) state.sequencerTempo else tempo,
+                {
+                    if (externalSequencer) onSequencerTempoChange?.invoke(it)
+                    else tempo = it
+                },
+                {
+                    if (externalSequencer) onStepToggle?.invoke(it)
+                    else steps[it] = !steps[it]
+                },
             )
             Tab.FX -> FxPanel(parameter, onParameterChange)
         }
@@ -416,12 +434,13 @@ private fun PlayPanel(
 
 @Composable
 private fun SequencerPanel(
-    steps: androidx.compose.runtime.snapshots.SnapshotStateList<Boolean>,
+    steps: List<Boolean>,
     playhead: Int,
     playing: Boolean,
     onTogglePlaying: () -> Unit,
     bpm: Int,
     onTempoChange: (Int) -> Unit,
+    onStepToggle: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
         Row(
@@ -454,7 +473,7 @@ private fun SequencerPanel(
                                 else OrbitalPalette.Panel,
                                 RoundedCornerShape(8.dp),
                             )
-                            .clickable { steps[i] = !steps[i] },
+                            .clickable { onStepToggle(i) },
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
