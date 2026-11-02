@@ -1,6 +1,7 @@
 package com.orbital.synth.core.dsp.analog
 
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.sin
 import kotlin.math.sqrt
 import org.junit.Assert.assertEquals
@@ -149,6 +150,64 @@ class AnalogFilterModelsTest {
         // The archived tail retained its own charge when the new voice reset.
         assertTrue(ladderTail.process(0f).isFinite())
         assertTrue(semTail.process(0f).isFinite())
+    }
+
+    @Test
+    fun rapidAutomationSlewsSmoothlyAndRetargetedSnapshotsStaySampleExact() {
+        val ladder = LadderFilter(48_000)
+        val ladderBaseline = LadderFilter(48_000)
+        val sem = SemFilter(48_000)
+        val semBaseline = SemFilter(48_000)
+        for (filter in arrayOf(ladder, ladderBaseline)) {
+            filter.configure(1_200f, 0.15f, 0f)
+        }
+        for (filter in arrayOf(sem, semBaseline)) {
+            filter.configure(1_200f, 0.15f, 0f, 0f)
+        }
+        repeat(4_000) {
+            ladder.process(0.2f)
+            ladderBaseline.process(0.2f)
+            sem.process(0.2f)
+            semBaseline.process(0.2f)
+        }
+        ladder.configure(1_200f, 0.15f, 1f)
+        sem.configure(1_200f, 0.15f, 1f, 1f)
+        val firstLadderDelta = abs(ladder.process(0.2f) - ladderBaseline.process(0.2f))
+        val firstSemDelta = abs(sem.process(0.2f) - semBaseline.process(0.2f))
+        assertTrue("Ladder drive should not jump within one sample", firstLadderDelta < 0.04f)
+        assertTrue("SEM mode/drive should not jump within one sample", firstSemDelta < 0.04f)
+        repeat(500) {
+            ladder.process(0.2f)
+            ladderBaseline.process(0.2f)
+            sem.process(0.2f)
+            semBaseline.process(0.2f)
+        }
+        assertTrue(abs(ladder.process(0.2f) - ladderBaseline.process(0.2f)) > 0.15f)
+        assertTrue(abs(sem.process(0.2f) - semBaseline.process(0.2f)) > 0.10f)
+
+        // Retarget during a running 3 ms ramp and snapshot the whole ongoing
+        // coefficient trajectory, not merely the two integrator charge states.
+        ladder.configure(9_000f, 1f, 0.4f)
+        sem.configure(9_000f, 1f, 0.4f, 0.2f)
+        repeat(17) {
+            ladder.process(0.1f)
+            sem.process(0.1f)
+        }
+        ladder.configure(350f, 0f, 0.2f)
+        sem.configure(350f, 0f, 0.2f, 0.7f)
+        repeat(41) {
+            ladder.process(0.1f)
+            sem.process(0.1f)
+        }
+        val ladderTail = LadderFilter(48_000)
+        val semTail = SemFilter(48_000)
+        ladder.copyStateTo(ladderTail)
+        sem.copyStateTo(semTail)
+        repeat(768) { i ->
+            val input = sin(i * 2.0 * PI * 750.0 / 48_000.0).toFloat()
+            assertEquals(ladder.process(input), ladderTail.process(input), 0f)
+            assertEquals(sem.process(input), semTail.process(input), 0f)
+        }
     }
 
     private fun sineRmsLadder(hertz: Double): Double {
