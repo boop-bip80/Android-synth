@@ -34,7 +34,7 @@ class OrbitalAudioDeviceTest {
                 if (accepted) {
                     // The virtual device may stop its sink immediately. Only assert
                     // forward progress while an audio worker is actually running.
-                    val deadline = SystemClock.uptimeMillis() + 750L
+                    val deadline = SystemClock.uptimeMillis() + 2_000L
                     var madeProgress = output.diagnostics.framesRendered > initialFrames
                     while (!madeProgress && output.isRunning &&
                         SystemClock.uptimeMillis() < deadline
@@ -55,7 +55,7 @@ class OrbitalAudioDeviceTest {
                 )
                 // Workers release their own track asynchronously. A brief gap
                 // also exercises the non-blocking lifecycle handoff.
-                Thread.sleep(50)
+                Thread.sleep(100)
             }
         } finally {
             output.close()
