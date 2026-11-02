@@ -317,6 +317,53 @@ class OrbitalScreenTest {
         compose.runOnIdle { assertEquals(listOf(0), toggled) }
     }
 
+    @Test fun sequenceLengthPresetButtonsQueueOnlyNonActiveChoices() {
+        val requested = mutableListOf<Int>()
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(sequencerStepCount = 32),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> }, onModeChange = {}, onOctaveChange = {},
+                onSequencerLengthChange = { requested += it },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Set sequence length to 32 steps").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Set sequence length to 16 steps").performClick()
+        compose.onNodeWithContentDescription("Set sequence length to 64 steps").performClick()
+        compose.runOnIdle { assertEquals(listOf(16, 64), requested) }
+    }
+
+    @Test fun sequenceLengthStepButtonsEnforceOneAndSixtyFourLimits() {
+        var requested = -1
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(sequencerStepCount = 1),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> }, onModeChange = {}, onOctaveChange = {},
+                onSequencerLengthChange = { requested = it },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Decrease sequence length").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Increase sequence length").performClick()
+        compose.runOnIdle { assertEquals(2, requested) }
+    }
+
+    @Test fun sequenceLengthControlsDoNotPretendToWorkWithoutHost() {
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(sequencerStepCount = 64),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> }, onModeChange = {}, onOctaveChange = {},
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Set sequence length to 16 steps").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Increase sequence length").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Decrease sequence length").assertIsNotEnabled()
+    }
+
     @Test fun factorySequenceSelectorShowsActiveSequenceAndDispatchesStableId() {
         var selectedId: String? = null
         compose.setContent {
