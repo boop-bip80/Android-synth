@@ -1,6 +1,7 @@
 package com.orbital.synth.core.dsp.digital
 
 import kotlin.math.PI
+import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.pow
@@ -69,8 +70,16 @@ class SixOperatorFmVoice(val sampleRate: Int) {
     private var fundamentalHz = 440.0
     private var velocity = 1.0
     private var character = 0.65
+    private var targetCharacter = 0.65
     private var feedback = 0.12
+    private var targetFeedback = 0.12
+    private val macroSlewCoefficient = 1.0 - exp(-1.0 / (sampleRate * 0.007))
     private var feedbackPrevious = 0.0
+    private var algorithmChangePending = false
+    private val transitionFrames = max(1, (sampleRate * 0.005).toInt())
+    private var transitionRemaining = 0
+    private var transitionOffset = 0.0
+    private var previousOutput = 0.0
     var algorithm: FmAlgorithm = FmAlgorithm.ELECTRIC_PIANO
         private set
     var note: Int = -1
@@ -90,8 +99,8 @@ class SixOperatorFmVoice(val sampleRate: Int) {
     ) {
         require(character.isFinite() && feedback.isFinite())
         if (this.algorithm != algorithm) setAlgorithm(algorithm)
-        this.character = character.coerceIn(0f, 1f).toDouble()
-        this.feedback = feedback.coerceIn(0f, 1f).toDouble()
+        targetCharacter = character.coerceIn(0f, 1f).toDouble()
+        targetFeedback = feedback.coerceIn(0f, 1f).toDouble()
     }
 
     /**
@@ -133,6 +142,10 @@ class SixOperatorFmVoice(val sampleRate: Int) {
     }
 
     fun setAlgorithm(next: FmAlgorithm) {
+        // Bridge the first sample of a live routing switch to the previous output.
+        // A short decaying offset avoids a waveform discontinuity without running
+        // two full FM graphs in parallel.
+        if (isActive && algorithm != next) algorithmChangePending = true
         algorithm = next
         java.util.Arrays.fill(routes, 0.0)
         java.util.Arrays.fill(carriers, 0.0)
@@ -199,6 +212,9 @@ class SixOperatorFmVoice(val sampleRate: Int) {
             envelopeStage[i] = 1
         }
         feedbackPrevious = 0.0
+        algorithmChangePending = false
+        transitionRemaining = 0
+        previousOutput = 0.0
         isActive = true
     }
 
@@ -225,6 +241,9 @@ class SixOperatorFmVoice(val sampleRate: Int) {
         isActive = false
         note = -1
         feedbackPrevious = 0.0
+        algorithmChangePending = false
+        transitionRemaining = 0
+        previousOutput = 0.0
     }
 
     fun nextSample(pitchMultiplier: Double = 1.0): Float =
@@ -238,6 +257,9 @@ class SixOperatorFmVoice(val sampleRate: Int) {
         if (!isActive) return 0f
         if (!frequencyHz.isFinite() || !pitchMultiplier.isFinite()) return 0f
         val hz = (frequencyHz * pitchMultiplier).coerceIn(0.0, sampleRate * 0.45)
+        // Sample-rate invariant 7 ms dezippering, independent of block size.
+        character += (targetCharacter - character) * macroSlewCoefficient
+        feedback += (targetFeedback - feedback) * macroSlewCoefficient
         java.util.Arrays.fill(modulationInput, 0.0)
         var output = 0.0
         var live = false
@@ -273,7 +295,20 @@ class SixOperatorFmVoice(val sampleRate: Int) {
             return 0f
         }
         // Carrier sum normalization remains valid through arbitrary operator levels.
-        return (output * velocity / carrierNorm).coerceIn(-1.0, 1.0).toFloat()
+        var normalized = (output * velocity / carrierNorm).coerceIn(-1.0, 1.0)
+        if (algorithmChangePending) {
+            transitionOffset = previousOutput - normalized
+            transitionRemaining = transitionFrames
+            algorithmChangePending = false
+        }
+        if (transitionRemaining > 0) {
+            normalized = (normalized +
+                transitionOffset * transitionRemaining / transitionFrames)
+                .coerceIn(-1.0, 1.0)
+            transitionRemaining--
+        }
+        previousOutput = normalized
+        return normalized.toFloat()
     }
 
     private fun advanceEnvelope(i: Int): Double {
