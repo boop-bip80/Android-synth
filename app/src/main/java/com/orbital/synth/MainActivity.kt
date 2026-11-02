@@ -92,8 +92,10 @@ class MainActivity : ComponentActivity() {
                     onModeChange = ::updatePlayMode,
                     onOctaveChange = { octave ->
                         synth.allNotesOff()
-                        screenState = screenState.copy(octave = octave.coerceIn(1, 7))
-                    }
+                        screenState = screenState.copy(octave = octave.coerceIn(0, 8))
+                    },
+                    onPreviousPatch = { selectFactoryPatch(patchIndex - 1) },
+                    onNextPatch = { selectFactoryPatch(patchIndex + 1) }
                 )
             }
         }
@@ -108,7 +110,9 @@ class MainActivity : ComponentActivity() {
         synth.loadPatch(patch)
         screenState = screenState.copy(
             patchName = patch.name,
-            parameters = ParameterId.entries.associateWith { synth.parameter(it) }
+            parameters = ParameterId.entries.associateWith { synth.parameter(it) },
+            presetIndex = patchIndex,
+            presetCount = patches.size
         )
     }
 
