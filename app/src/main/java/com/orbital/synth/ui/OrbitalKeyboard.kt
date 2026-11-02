@@ -170,6 +170,16 @@ internal fun OrbitalKeyboard(
         ) {
             val keyWidth = size.width / whiteCount
             val corner = CornerRadius(7.dp.toPx())
+            val keyInset = 1.dp.toPx()
+            // Illuminated floating-key tray with real-time per-note response.
+            drawRoundRect(
+                brush = Brush.verticalGradient(
+                    listOf(OrbitalPalette.Blue.copy(alpha = .30f), OrbitalPalette.Void.copy(alpha = .90f)),
+                ),
+                topLeft = Offset.Zero,
+                size = size,
+                cornerRadius = CornerRadius(10.dp.toPx()),
+            )
             for (i in 0 until whiteCount) {
                 val note = (octave + 1) * 12 + whiteKeyOffset(i)
                 val active = pressedCounts.containsKey(note)
@@ -181,11 +191,25 @@ internal fun OrbitalKeyboard(
                 drawRoundRect(
                     brush = Brush.verticalGradient(
                         if (active) listOf(tint.copy(alpha = .91f), tint.copy(alpha = .56f))
-                        else listOf(Color(0xFF122C50), Color(0xFF08162B), tint.copy(alpha = .32f)),
+                        else listOf(Color(0xFF153256), Color(0xFF0A1B36), Color(0xFF090D24), tint.copy(alpha = .20f)),
                     ),
                     topLeft = Offset(i * keyWidth + 1.dp.toPx(), 0f),
                     size = Size(keyWidth - 2.dp.toPx(), size.height),
                     cornerRadius = corner,
+                )
+                // Glass sheen floats above the key body; the key surface remains
+                // darker near the bottom so the pressed colour reads at a glance.
+                drawRoundRect(
+                    brush = Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = if (active) .32f else .10f),
+                            tint.copy(alpha = if (active) .18f else .045f),
+                            Color.Transparent,
+                        ),
+                    ),
+                    topLeft = Offset(i * keyWidth + keyInset * 2f, 2.dp.toPx()),
+                    size = Size(keyWidth - keyInset * 4f, size.height * .47f),
+                    cornerRadius = CornerRadius(6.dp.toPx()),
                 )
                 drawRoundRect(
                     color = if (active) tint else OrbitalPalette.PanelEdge,
@@ -195,9 +219,15 @@ internal fun OrbitalKeyboard(
                     style = Stroke(if (active) 2.dp.toPx() else .8.dp.toPx()),
                 )
                 drawCircle(
-                    if (active) Color.White else tint.copy(alpha = .6f),
-                    radius = 1.8.dp.toPx(),
+                    if (active) Color.White else tint.copy(alpha = .75f),
+                    radius = if (active) 3.2.dp.toPx() else 1.8.dp.toPx(),
                     center = Offset((i + .5f) * keyWidth, 14.dp.toPx()),
+                )
+                drawLine(
+                    color = tint.copy(alpha = if (active) .92f else .38f),
+                    start = Offset(i * keyWidth + keyWidth * .22f, size.height - 3.dp.toPx()),
+                    end = Offset((i + 1) * keyWidth - keyWidth * .22f, size.height - 3.dp.toPx()),
+                    strokeWidth = if (active) 2.5.dp.toPx() else 1.dp.toPx(),
                 )
             }
             // Black keys overlay the whites: hit testing uses exactly these bounds.
@@ -208,6 +238,12 @@ internal fun OrbitalKeyboard(
                 val w = keyWidth * .64f
                 val left = (i + 1) * keyWidth - w / 2f
                 drawRoundRect(
+                    color = Color.Black.copy(alpha = .55f),
+                    topLeft = Offset(left + 1.dp.toPx(), 2.dp.toPx()),
+                    size = Size(w, size.height * .61f + 3.dp.toPx()),
+                    cornerRadius = CornerRadius(7.dp.toPx()),
+                )
+                drawRoundRect(
                     brush = Brush.verticalGradient(
                         if (active) listOf(OrbitalPalette.Gold, OrbitalPalette.Violet)
                         else listOf(Color(0xFF040811), Color(0xFF111D39), Color(0xFF030813)),
@@ -215,6 +251,14 @@ internal fun OrbitalKeyboard(
                     topLeft = Offset(left, 0f),
                     size = Size(w, size.height * .61f),
                     cornerRadius = CornerRadius(6.dp.toPx()),
+                )
+                drawRoundRect(
+                    brush = Brush.verticalGradient(
+                        listOf(Color.White.copy(alpha = if (active) .28f else .09f), Color.Transparent),
+                    ),
+                    topLeft = Offset(left + 2.dp.toPx(), 2.dp.toPx()),
+                    size = Size(w - 4.dp.toPx(), size.height * .22f),
+                    cornerRadius = CornerRadius(4.dp.toPx()),
                 )
                 drawRoundRect(
                     color = if (active) OrbitalPalette.Gold else OrbitalPalette.PanelEdge,
