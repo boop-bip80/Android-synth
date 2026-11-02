@@ -16,7 +16,7 @@ data class UserSequence(
 ) {
     init {
         require(validId(id)) { "Invalid sequence identifier" }
-        require(name.isNotBlank() && name.length <= 80 && name.none(Char::isISOControl)) {
+        require(name.isNotBlank() && name.length <= 80 && name.none { it.code < 32 || it.code == 127 }) {
             "Invalid sequence name"
         }
         require(bpm.isFinite() && bpm in 20.0..300.0) { "BPM must be between 20 and 300" }
