@@ -4,11 +4,17 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.test.assertDoesNotExist
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -193,6 +199,48 @@ class OrbitalScreenTest {
             assertTrue("Morph must increase moving right", morphValues.last() > morphValues.first())
             assertTrue("Movement must increase moving upward", movementValues.last() > movementValues.first())
         }
+    }
+
+    @Test fun compactSoundLayoutKeepsLabelsOutsideOrbitAndKeyboard() {
+        val density = compose.activity.resources.displayMetrics.density
+        var previousPatchRequests = 0
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density, 1.3f)) {
+                Box(Modifier.width(360.dp).height(780.dp)) {
+                    OrbitalScreen(
+                        state = OrbitalUiState(presetCount = 16),
+                        onNoteOn = {}, onNoteOff = {},
+                        onParameterChange = { _, _ -> },
+                        onModeChange = {}, onOctaveChange = {},
+                        onPreviousPatch = { previousPatchRequests++ },
+                        onNextPatch = {},
+                    )
+                }
+            }
+        }
+
+        val bank = compose.onNodeWithTag("compactBankLabel").fetchSemanticsNode().boundsInRoot
+        val engine = compose.onNodeWithTag("compactEngineLabel").fetchSemanticsNode().boundsInRoot
+        val patch = compose.onNodeWithTag("compactPatchControls").fetchSemanticsNode().boundsInRoot
+        val orbit = compose.onNodeWithTag("compactOrbitViewport").fetchSemanticsNode().boundsInRoot
+        val hint = compose.onNodeWithTag("compactOrbitHint").fetchSemanticsNode().boundsInRoot
+        val graphToggle = compose.onNodeWithTag("compactModulationToggle").fetchSemanticsNode().boundsInRoot
+        val keyboard = compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        ).fetchSemanticsNode().boundsInRoot
+
+        assertTrue("Bank and engine captions overlap", bank.right <= engine.left)
+        assertTrue("Patch controls intersect the orbit", patch.bottom <= orbit.top)
+        assertTrue("Orbital instruction overlaps artwork", orbit.bottom <= hint.top)
+        assertTrue("Modulation control overlaps instruction", hint.bottom <= graphToggle.top)
+        assertTrue("Compact modulation control is hidden behind keyboard",
+            graphToggle.bottom <= keyboard.top)
+
+        compose.onNodeWithTag("compactModulationGraph").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Previous factory preset").performClick()
+        compose.runOnIdle { assertEquals(1, previousPatchRequests) }
+        compose.onNodeWithContentDescription("Show modulation graph").performClick()
+        compose.onNodeWithTag("compactModulationGraph").assertExists()
     }
 
     @Test fun keyboardExposesChromaticAccessibleActions() {
