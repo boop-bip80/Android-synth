@@ -2,6 +2,7 @@ package com.orbital.synth.ui
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -37,6 +38,49 @@ class OrbitalScreenTest {
         compose.onNodeWithText("ENVELOPES  /  EFFECTS").assertExists()
         compose.onNodeWithContentDescription("Tab PLAY").performClick()
         compose.onNodeWithText("PERFORMANCE").assertExists()
+    }
+
+    @Test fun presetArrowsAreAccessibleAndCallNavigation() {
+        var previous = 0
+        var next = 0
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(
+                    patchName = "HORIZON",
+                    presetIndex = 1,
+                    presetCount = 6,
+                ),
+                onNoteOn = {},
+                onNoteOff = {},
+                onParameterChange = { _, _ -> },
+                onModeChange = {},
+                onOctaveChange = {},
+                onPreviousPatch = { previous++ },
+                onNextPatch = { next++ },
+            )
+        }
+        compose.onNodeWithContentDescription("Previous factory preset").performClick()
+        compose.onNodeWithContentDescription("Next factory preset").performClick()
+        compose.onNodeWithText("PATCH 2 / 6").assertExists()
+        compose.runOnIdle {
+            assertEquals(1, previous)
+            assertEquals(1, next)
+        }
+    }
+
+    @Test fun patchArrowsDoNotPretendToWorkWithoutCallbacks() {
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(),
+                onNoteOn = {},
+                onNoteOff = {},
+                onParameterChange = { _, _ -> },
+                onModeChange = {},
+                onOctaveChange = {},
+            )
+        }
+        compose.onNodeWithContentDescription("Previous factory preset").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Next factory preset").assertIsNotEnabled()
     }
 
     @Test fun keyboardHitTestingMatchesBlackAndWhiteGeometry() {

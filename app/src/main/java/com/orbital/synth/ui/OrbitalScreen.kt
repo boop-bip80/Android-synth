@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -46,6 +47,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -69,6 +71,8 @@ data class OrbitalUiState(
     val enabledSteps: Set<Int> = emptySet(),
     val sequencerStep: Int = -1,
     val sequencerTempo: Int = 112,
+    val presetIndex: Int = 0,
+    val presetCount: Int = 0,
 )
 
 private enum class Tab(val title: String) {
@@ -94,6 +98,8 @@ fun OrbitalScreen(
     onSequencerToggle: (() -> Unit)? = null,
     onStepToggle: ((Int) -> Unit)? = null,
     onSequencerTempoChange: ((Int) -> Unit)? = null,
+    onPreviousPatch: (() -> Unit)? = null,
+    onNextPatch: (() -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     val externalSequencer = onSequencerToggle != null && onStepToggle != null
@@ -187,23 +193,51 @@ fun OrbitalScreen(
 
         when (selectedTab) {
             Tab.SOUND -> {
-                Box(Modifier.fillMaxWidth().height(244.dp)) {
+                BoxWithConstraints(Modifier.fillMaxWidth().height(244.dp)) {
                     OrbitalDisplay(morph, move, Modifier.fillMaxSize())
                     Column(
                         Modifier
                             .align(Alignment.TopStart)
                             .padding(top = 18.dp, start = 9.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Label("WAVETABLE")
-                        Text(
-                            state.patchName,
-                            color = OrbitalPalette.Text,
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Light,
-                            letterSpacing = 2.4.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Label("WAVETABLE  /  FACTORY BANK")
+                        Row(
+                            Modifier.width(maxWidth * .67f),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(1.dp),
+                        ) {
+                            PresetArrow(
+                                symbol = "‹",
+                                description = "Previous factory preset",
+                                enabled = onPreviousPatch != null,
+                                onClick = { onPreviousPatch?.invoke() },
+                            )
+                            Text(
+                                state.patchName,
+                                modifier = Modifier.weight(1f),
+                                color = OrbitalPalette.Text,
+                                textAlign = TextAlign.Center,
+                                fontSize = if (maxWidth < 380.dp) 14.sp else 17.sp,
+                                fontWeight = FontWeight.Light,
+                                letterSpacing = if (maxWidth < 380.dp) 1.sp else 2.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            PresetArrow(
+                                symbol = "›",
+                                description = "Next factory preset",
+                                enabled = onNextPatch != null,
+                                onClick = { onNextPatch?.invoke() },
+                            )
+                        }
+                        if (state.presetCount > 0) {
+                            Label(
+                                "PATCH " +
+                                    (state.presetIndex.coerceIn(0, state.presetCount - 1) + 1) +
+                                    " / " + state.presetCount,
+                            )
+                        }
                     }
                     Column(
                         Modifier
@@ -308,6 +342,40 @@ fun OrbitalScreen(
             }
         }
         Spacer(Modifier.height(6.dp))
+    }
+}
+
+@Composable
+private fun PresetArrow(
+    symbol: String,
+    description: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(40.dp)
+            .border(
+                1.dp,
+                if (enabled) OrbitalPalette.Cyan.copy(alpha = .60f) else OrbitalPalette.PanelEdge,
+                RoundedCornerShape(12.dp),
+            )
+            .background(
+                if (enabled) OrbitalPalette.Blue.copy(alpha = .16f)
+                else OrbitalPalette.Panel.copy(alpha = .42f),
+                RoundedCornerShape(12.dp),
+            )
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            symbol,
+            color = if (enabled) OrbitalPalette.Cyan else OrbitalPalette.Muted.copy(alpha = .45f),
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Light,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
