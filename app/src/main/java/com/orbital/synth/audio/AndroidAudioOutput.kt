@@ -116,6 +116,10 @@ class AndroidAudioOutput(
     val arpeggiatorRate: Int get() = performanceArp.subdivisionsPerBeat
     val arpeggiatorTempo: Int get() = performanceArp.tempo
     val arpeggiatorLatch: Boolean get() = performanceArp.latch
+    val arpeggiatorOctaves: Int get() = performanceArp.octaves
+    val arpeggiatorRatchets: Int get() = performanceArp.ratchets
+    val arpeggiatorGate: Double get() = performanceArp.gate
+    val arpeggiatorProbability: Double get() = performanceArp.probability
 
     /** Worker-queued controls; safe to call from Compose or MIDI callbacks. */
     fun setArpeggiatorEnabled(enabled: Boolean) = performanceArp.setEnabled(enabled)
@@ -126,6 +130,11 @@ class AndroidAudioOutput(
     fun setArpeggiatorTempo(bpm: Int): Boolean = performanceArp.setTempo(bpm)
     fun setArpeggiatorLatch(latch: Boolean) = performanceArp.setLatch(latch)
     fun setArpeggiatorSwing(swing: Double): Boolean = performanceArp.setSwing(swing)
+    fun setArpeggiatorOctaves(octaves: Int): Boolean = performanceArp.setOctaves(octaves)
+    fun setArpeggiatorRatchets(ratchets: Int): Boolean = performanceArp.setRatchets(ratchets)
+    fun setArpeggiatorGate(gate: Double): Boolean = performanceArp.setGate(gate)
+    fun setArpeggiatorProbability(probability: Double): Boolean =
+        performanceArp.setProbability(probability)
 
     /**
      * Route touch and MIDI keys here (instead of directly to the synth) for
