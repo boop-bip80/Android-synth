@@ -81,9 +81,12 @@ class StereoDelayTest {
             delay.process(0f, 0f, out, 0)
             assertEquals(0f, out[0], 0f)
         }
-        // At sample index 64, the original post-reset impulse is exactly 64 frames old.
+        // At sample index 64 the original post-reset impulse is exactly 64 frames
+        // old. Delay-time automation is now crossfaded, so it appears at a
+        // partial gain rather than as an instantaneous full-amplitude jump.
         delay.process(0f, 0f, out, 0)
-        assertEquals(1f, out[0], 0f)
+        assertTrue("Time automation lost a valid new-generation impulse", out[0] > 0.15f)
+        assertTrue(out[0] <= 1f)
         assertEquals(0f, out[1], 0f)
     }
 
@@ -159,4 +162,71 @@ class StereoDelayTest {
         delay.process(1f, 0f, out, 0)
         assertTrue(out[0] > 0.95f)
     }
+
+    @Test fun delayTimeAutomationCrossfadesOldAndNewTapsWithoutInstantJump() {
+        val delay = StereoDelay(8_000, maxDelaySeconds = 0.05f)
+        val out = FloatArray(2)
+        delay.configure(1f / 8_000f, feedback = 0f, wet = 1f, pingPong = 0f)
+        repeat(200) { delay.process(0f, 0f, out, 0) }
+        repeat(24) { delay.process(1f, 0f, out, 0) }
+
+        // At this instant the 1-sample tap is one, while the 128-sample tap
+        // reads zero. A direct tap switch would immediately drop wet audio.
+        delay.configure(128f / 8_000f, feedback = 0f, wet = 1f, pingPong = 0f)
+        delay.process(0f, 0f, out, 0)
+        assertEquals("First sample must preserve the previous tap", 1f, out[0], 0f)
+        var previous = out[0]
+        repeat(8) {
+            delay.process(0f, 0f, out, 0)
+            assertTrue("Tap transition stepped upward", out[0] <= previous)
+            previous = out[0]
+        }
+        assertTrue("Time did not begin fading across taps", previous < 0.95f)
+        assertTrue("Transition jumped to the new tap", previous > 0.85f)
+    }
+
+    @Test fun repeatedTimeEditsDoNotRestartAnActiveFade() {
+        val delay = StereoDelay(8_000, maxDelaySeconds = 0.05f)
+        val out = FloatArray(2)
+        delay.configure(1f / 8_000f, feedback = 0f, wet = 1f, pingPong = 0f)
+        repeat(200) { delay.process(0f, 0f, out, 0) }
+        repeat(24) { delay.process(1f, 0f, out, 0) }
+        delay.configure(128f / 8_000f, feedback = 0f, wet = 1f)
+        delay.process(0f, 0f, out, 0)
+        assertEquals(1f, out[0], 0f)
+
+        // An update while fading must be queued: restarting from the newly
+        // selected (silent) tap would cause a large discontinuity on this frame.
+        delay.configure(64f / 8_000f, feedback = 0f, wet = 1f)
+        delay.process(0f, 0f, out, 0)
+        assertTrue("A second control edit interrupted the current fade", out[0] > 0.97f)
+
+        repeat(300) { frame ->
+            if (frame % 3 == 0) {
+                delay.configure(
+                    if (frame % 2 == 0) 32f / 8_000f else 160f / 8_000f,
+                    feedback = 0.6f, wet = 1f
+                )
+            }
+            delay.process(0f, 0f, out, 0)
+            assertTrue(out[0].isFinite() && out[1].isFinite())
+            assertTrue(kotlin.math.abs(out[0]) <= 32f)
+        }
+    }
+
+    @Test fun resetDuringTimeTransitionForgetsPreviousBufferGeneration() {
+        val delay = StereoDelay(8_000, maxDelaySeconds = 0.05f)
+        val out = FloatArray(2)
+        delay.configure(1f / 8_000f, feedback = 0.92f, wet = 1f)
+        repeat(500) { delay.process(1f, -1f, out, 0) }
+        delay.configure(120f / 8_000f, feedback = 0.92f, wet = 1f)
+        delay.process(0f, 0f, out, 0)
+        delay.reset()
+        repeat(600) {
+            delay.process(0f, 0f, out, 0)
+            assertEquals(0f, out[0], 0f)
+            assertEquals(0f, out[1], 0f)
+        }
+    }
+
 }
