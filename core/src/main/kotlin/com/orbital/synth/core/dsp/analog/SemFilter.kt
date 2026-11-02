@@ -10,7 +10,7 @@ import kotlin.math.tanh
  *
  * This is an Oberheim SEM-inspired topology rather than a measured hardware
  * clone. Its continuously variable mode is low-pass (shape=0), notch (0.5),
- * high-pass (1); state-variable band-pass is also available via processBandPass.
+ * high-pass (1); state-variable band-pass is also available via bandPassOutput() after process().
  *
  * Cutoff is in Hz, resonance/drive/shape are normalized 0..1. One instance is
  * required per independent channel or synth voice. All functions are intended
