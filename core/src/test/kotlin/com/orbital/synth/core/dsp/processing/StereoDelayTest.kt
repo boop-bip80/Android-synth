@@ -87,4 +87,41 @@ class StereoDelayTest {
         assertEquals(0f, out[1], 0f)
     }
 
+
+    @Test fun wetChangesUseClickResistantGlideAndReachExactEndpoints() {
+        val delay = StereoDelay(8_000, 0.01f)
+        val out = FloatArray(2)
+        delay.configure(1f / 8_000f, feedback = 0f, wet = 0f, pingPong = 0f)
+        repeat(128) { delay.process(0f, 0f, out, 0) }
+
+        delay.configure(1f / 8_000f, feedback = 0f, wet = 1f, pingPong = 0f)
+        delay.process(1f, 0f, out, 0)
+        assertTrue("Wet switch muted the initial dry attack", out[0] > 0.95f)
+        repeat(1_200) { delay.process(0f, 0f, out, 0) }
+        delay.process(1f, 0f, out, 0)
+        assertTrue("Fully wet glide did not settle", kotlin.math.abs(out[0]) < 0.05f)
+
+        delay.configure(1f / 8_000f, feedback = 0f, wet = 0f, pingPong = 0f)
+        delay.process(1f, 0f, out, 0)
+        assertTrue("Wet bypass changed discontinuously", kotlin.math.abs(out[0]) < 0.05f)
+        repeat(1_200) { delay.process(0f, 0f, out, 0) }
+        delay.process(1f, 0f, out, 0)
+        assertTrue("Fully dry glide did not settle", out[0] > 0.95f)
+    }
+
+    @Test fun feedbackAutomationPreservesExistingTailForFirstFrames() {
+        val delay = StereoDelay(8_000, 0.01f)
+        val out = FloatArray(2)
+        delay.configure(1f / 8_000f, feedback = 0.92f, wet = 1f, pingPong = 0f)
+        delay.process(1f, 0f, out, 0)
+        delay.configure(1f / 8_000f, feedback = 0f, wet = 1f, pingPong = 0f)
+        delay.process(0f, 0f, out, 0)
+        assertEquals(1f, out[0], 0f)
+        delay.process(0f, 0f, out, 0)
+        assertTrue("Feedback cut killed a live echo instantly", out[0] > 0.8f)
+        repeat(1_200) {
+            delay.process(0f, 0f, out, 0)
+            assertTrue(out[0].isFinite() && out[1].isFinite())
+        }
+    }
 }
