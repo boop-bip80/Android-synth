@@ -3,6 +3,7 @@ package com.orbital.synth.core
 import com.orbital.synth.core.dsp.oscillator.Voice
 import com.orbital.synth.core.dsp.oscillator.WavetableBank
 import com.orbital.synth.core.dsp.processing.Drive
+import com.orbital.synth.core.dsp.processing.FxBypassCrossfade
 import com.orbital.synth.core.dsp.processing.StereoChorus
 import com.orbital.synth.core.dsp.processing.StereoDelay
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -80,7 +81,12 @@ class OrbitalSynth(
     private val chorusScratch = FloatArray(2)
     private val fxDelay = StereoDelay(sampleRate, maxDelaySeconds = 1.5f).apply { resetForBypass() }
     private val fxScratch = FloatArray(2)
-    private var previousFxEnabled = false
+    private val fxCrossfade = FxBypassCrossfade(sampleRate)
+    // Hold the old drive amount across a fade-out; Fx_AMOUNT=0 must not alter
+    // the wet signal before the 10 ms master-bus crossfade reaches true dry.
+    private var driveTarget = 0f
+    private var smoothedDrive = 0f
+    private val driveSlewCoefficient = (1.0 - exp(-1.0 / (sampleRate * 0.010))).toFloat()
 
     @Volatile private var playbackMode = VoiceMode.POLY
     @Volatile var activeVoiceCount: Int = 0
@@ -219,21 +225,17 @@ class OrbitalSynth(
                 wet = fxAmount * 0.52f,
                 pingPong = 0.72f
             )
-        } else if (previousFxEnabled) {
-            // Clear old echoes on bypass so reopening the effect cannot replay stale buffers.
-            // Drop old wet gain along with the tail. Re-enabling at a small
-            // amount must not inherit a previous preset's much larger wet mix.
-            fxChorus.resetForBypass()
-            fxDelay.resetForBypass()
+            driveTarget = fxAmount * 0.68f
         }
-        previousFxEnabled = fxEnabled
-        val driveAmount = fxAmount * 0.68f
+        // This target can reverse mid-ramp without jumping. On disable, leave
+        // chorus/delay configuration and driveTarget unchanged until fade-out is done.
+        fxCrossfade.setEnabled(fxEnabled)
 
         // AudioTrack normally keeps requesting blocks even when no keys are held. Avoid
         // evaluating sixteen idle voices, the trigonometric LFO and pitch pow() for every
         // silent frame. Keep the LFO clock and gain slew advancing sample-by-sample so
         // later notes behave exactly as if the silent blocks had been fully rendered.
-        if (!fxEnabled && active == 0 && voices.none { it.hasTail }) {
+        if (!fxCrossfade.requiresWetPath && active == 0 && voices.none { it.hasTail }) {
             java.util.Arrays.fill(output, 0, frames * 2, 0f)
             for (frame in 0 until frames) {
                 smoothedMasterGain +=
@@ -243,8 +245,6 @@ class OrbitalSynth(
             }
             return
         }
-
-        var offset = 0
 
         for (frame in 0 until frames) {
             // Sample-rate-independent slew avoids a 29% instantaneous level jump when
@@ -270,26 +270,37 @@ class OrbitalSynth(
             }
             val dryLeft = softClip(left * smoothedMasterGain)
             val dryRight = softClip(right * smoothedMasterGain)
-            if (fxEnabled) {
-                // Preallocated scratch prevents Pair/array creation per frame.
+            val offset = frame * 2
+            if (fxCrossfade.requiresWetPath) {
+                // Always render the previous wet bus through a fade-out, even when
+                // FX_AMOUNT just became zero. Do not replace its saved parameters.
+                // The crossfader reaches exact dry after a finite 10 ms ramp.
+                smoothedDrive += (driveTarget - smoothedDrive) * driveSlewCoefficient
                 fxChorus.process(
-                    Drive.process(dryLeft, driveAmount),
-                    Drive.process(dryRight, driveAmount),
+                    Drive.process(dryLeft, smoothedDrive),
+                    Drive.process(dryRight, smoothedDrive),
                     chorusScratch,
                     0
                 )
-                fxDelay.process(
-                    chorusScratch[0],
-                    chorusScratch[1],
-                    fxScratch,
-                    0
+                fxDelay.process(chorusScratch[0], chorusScratch[1], fxScratch, 0)
+                fxCrossfade.process(
+                    dryLeft, dryRight,
+                    softClip(fxScratch[0]), softClip(fxScratch[1]),
+                    output, offset
                 )
-                output[offset++] = softClip(fxScratch[0])
-                output[offset++] = softClip(fxScratch[1])
+                if (fxCrossfade.isFullyDry) {
+                    // Clear tails only AFTER the final fully dry output sample.
+                    // Re-enabling starts with empty wet history and zero wet mix.
+                    fxChorus.resetForBypass()
+                    fxDelay.resetForBypass()
+                    smoothedDrive = 0f
+                    driveTarget = 0f
+                }
             } else {
-                // Bit-for-bit identical to the pre-FX dry path at FX_AMOUNT=0.
-                output[offset++] = dryLeft
-                output[offset++] = dryRight
+                // This exact, unprocessed dry path retains legacy behavior and
+                // needs neither wet DSP work nor an intermediate allocation.
+                output[offset] = dryLeft
+                output[offset + 1] = dryRight
             }
         }
 
