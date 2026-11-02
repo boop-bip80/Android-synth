@@ -139,6 +139,10 @@ class PatchTest {
             parameters = enhanced.parameters - setOf("UNISON", "DETUNE"),
         )
         assertEquals(legacy, PatchCodec.decode(PatchCodec.encode(legacy)))
+        val previousGeneration = enhanced.copy(
+            parameters = enhanced.parameters - setOf("UNISON", "DETUNE", "ENGINE", "CHARACTER"),
+        )
+        assertEquals(previousGeneration, PatchCodec.decode(PatchCodec.encode(previousGeneration)))
     }
 
 }

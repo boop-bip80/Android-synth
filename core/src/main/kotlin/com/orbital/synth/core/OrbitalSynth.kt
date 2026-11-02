@@ -30,7 +30,7 @@ import kotlin.math.sqrt
 enum class ParameterId {
     WAVE, MORPH, CUTOFF, RESONANCE, MOVEMENT, FX_AMOUNT,
     ATTACK, DECAY, SUSTAIN, RELEASE, LFO_RATE, LFO_DEPTH, GLIDE,
-    UNISON, DETUNE
+    UNISON, DETUNE, ENGINE, CHARACTER
 }
 
 enum class VoiceMode { POLY, MONO, LEGATO }
@@ -707,6 +707,8 @@ class OrbitalSynth(
             ParameterId.GLIDE -> 0.0f
             ParameterId.UNISON -> 0.0f
             ParameterId.DETUNE -> 0.0f
+            ParameterId.ENGINE -> 0.0f // original wavetable mode, backwards compatible
+            ParameterId.CHARACTER -> 0.0f
         }
     }
 }

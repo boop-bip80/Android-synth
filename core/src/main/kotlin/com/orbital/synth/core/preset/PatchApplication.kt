@@ -10,7 +10,7 @@ fun OrbitalSynth.loadPatch(patch: SynthPatch) {
         // Neutralize new controls on import so a prior patch's spread/detune
         // cannot leak into older sounds.
         val value = patch.parameters[id.name] ?: when (id.name) {
-            "UNISON", "DETUNE" -> 0f
+            "UNISON", "DETUNE", "ENGINE", "CHARACTER" -> 0f
             else -> null
         }
         value?.let { setParameter(id, it) }
