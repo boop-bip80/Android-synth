@@ -1,6 +1,7 @@
 package com.orbital.synth.audio
 
 import com.orbital.synth.core.music.FactoryPatterns
+import com.orbital.synth.core.music.FactorySequence
 import com.orbital.synth.core.music.NoteEventKind
 import com.orbital.synth.core.music.SequencerNote
 import com.orbital.synth.core.music.SequencerStep
@@ -9,6 +10,17 @@ import com.orbital.synth.core.music.StepSequencer
 import com.orbital.synth.core.music.TimedNoteEvent
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.roundToLong
+
+/**
+ * Immutable factory selection snapshot for Compose. Published atomically on
+ * the render worker after the queued change has been applied.
+ */
+data class FactoryPatternSelection(
+    val id: String,
+    val name: String,
+    val stepCount: Int,
+    val enabledSteps: Set<Int>
+)
 
 /**
  * Thread boundary between touch controls and the sample-addressed sequencer.
@@ -24,9 +36,10 @@ internal class AudioSequencerTransport(
     noteOn: (Int, Float) -> Unit,
     private val noteOff: (Int) -> Unit
 ) {
-    private val factory = FactoryPatterns.DEFAULT
-    private val basePattern = factory.pattern
-    private val enabled = BooleanArray(basePattern.steps.size) { index ->
+    // Mutated exclusively by the audio worker. Callers can only enqueue commands.
+    private var factory = FactoryPatterns.DEFAULT
+    private var basePattern = factory.pattern
+    private var enabled = BooleanArray(basePattern.steps.size) { index ->
         basePattern.steps[index].notes.isNotEmpty()
     }
     private val sequencer = StepSequencer(
@@ -43,12 +56,22 @@ internal class AudioSequencerTransport(
     @Volatile private var playingSnapshot = false
     @Volatile private var playheadSnapshot = -1
     @Volatile private var tempoSnapshot = factory.bpm.toInt()
-    @Volatile private var enabledSnapshot = enabled.indices.filter { enabled[it] }.toSet()
+    /** One atomic UI snapshot, so ID, name, step count and grid never mix across patterns. */
+    @Volatile private var patternSnapshot = FactoryPatternSelection(
+        factory.id, factory.name, basePattern.steps.size,
+        enabled.indices.filter { enabled[it] }.toSet()
+    )
+
+    val factoryPatterns: List<FactorySequence> get() = FactoryPatterns.ALL
+    val selection: FactoryPatternSelection get() = patternSnapshot
+    val selectedPatternId: String get() = patternSnapshot.id
+    val selectedPatternName: String get() = patternSnapshot.name
+    val stepCount: Int get() = patternSnapshot.stepCount
 
     val isPlaying: Boolean get() = playingSnapshot
     val playhead: Int get() = playheadSnapshot
     val tempo: Int get() = tempoSnapshot
-    val enabledSteps: Set<Int> get() = enabledSnapshot
+    val enabledSteps: Set<Int> get() = patternSnapshot.enabledSteps
 
     fun setPlaying(value: Boolean) {
         desiredPlaying = value
@@ -60,7 +83,21 @@ internal class AudioSequencerTransport(
     }
 
     fun setStepEnabled(index: Int, value: Boolean) {
-        if (index in enabled.indices) commands.offer(Command.StepEnabled(index, value))
+        // Never read the worker-owned mutable grid from a UI thread. The active
+        // snapshot is safe even when a factory swap is queued concurrently.
+        if (index in 0 until patternSnapshot.stepCount && index < 64) {
+            commands.offer(Command.StepEnabled(index, value))
+        }
+    }
+
+    /**
+     * Validates synchronously and queues the selection for the render worker.
+     * ID/name, tempo, grid and playhead snapshots update on its next render.
+     */
+    fun selectFactoryPattern(id: String): Boolean {
+        val selected = FactoryPatterns.byId(id) ?: return false
+        commands.offer(Command.SelectFactoryPattern(selected))
+        return true
     }
 
     fun onWorkerStart() {
@@ -102,7 +139,9 @@ internal class AudioSequencerTransport(
                     tempoSnapshot = command.bpm
                     anchorSample = sequencer.cursorSample
                 }
+                is Command.SelectFactoryPattern -> applyFactoryPattern(command.factory)
                 is Command.StepEnabled -> {
+                    if (command.index !in enabled.indices) continue
                     if (enabled[command.index] != command.value) {
                         enabled[command.index] = command.value
                         val updated = StepPattern(
@@ -115,11 +154,33 @@ internal class AudioSequencerTransport(
                         )
                         releaseHeldNotes(sequencer.replacePattern(updated))
                         anchorSample = sequencer.cursorSample
-                        enabledSnapshot = enabled.indices.filter { enabled[it] }.toSet()
+                        patternSnapshot = patternSnapshot.copy(
+                            enabledSteps = enabled.indices.filter { enabled[it] }.toSet()
+                        )
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Worker-only factory switch: release the old sequence's owned notes,
+     * preserve play/stop state, reset tempo/swing and restore the factory grid.
+     * Neither change touches keys from MIDI/touch directly; accurate same-pitch
+     * voice identity ultimately depends on source-tagged synth notes.
+     */
+    private fun applyFactoryPattern(selected: FactorySequence) {
+        releaseHeldNotes(sequencer.replacePattern(selected.pattern))
+        releaseHeldNotes(sequencer.configure(bpm = selected.bpm, swing = selected.swing))
+        factory = selected
+        basePattern = selected.pattern
+        enabled = BooleanArray(basePattern.steps.size) { basePattern.steps[it].notes.isNotEmpty() }
+        anchorSample = sequencer.cursorSample
+        tempoSnapshot = selected.bpm.toInt()
+        patternSnapshot = FactoryPatternSelection(
+            selected.id, selected.name, basePattern.steps.size,
+            enabled.indices.filter { enabled[it] }.toSet()
+        )
     }
 
     /**
@@ -170,6 +231,7 @@ internal class AudioSequencerTransport(
     }
 
     private sealed interface Command {
+        data class SelectFactoryPattern(val factory: FactorySequence) : Command
         data class Play(val value: Boolean) : Command
         data class Tempo(val bpm: Int) : Command
         data class StepEnabled(val index: Int, val value: Boolean) : Command
