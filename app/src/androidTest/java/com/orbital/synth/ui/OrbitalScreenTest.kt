@@ -233,6 +233,9 @@ class OrbitalScreenTest {
         assertTrue("Modulation control overlaps instruction", hint.bottom <= graphToggle.top)
         assertTrue("Compact modulation control is hidden behind keyboard",
             graphToggle.bottom <= keyboard.top)
+        assertTrue("Compact modulation control is partially clipped by the editor",
+            graphToggle.height >= 47f * density)
+        compose.onNodeWithText("MODULATION GRAPH").assertIsDisplayed()
 
         compose.onNodeWithTag("compactModulationGraph").assertDoesNotExist()
         compose.onNodeWithContentDescription("Previous factory preset").performClick()
