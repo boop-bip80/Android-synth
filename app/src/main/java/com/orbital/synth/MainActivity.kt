@@ -23,6 +23,7 @@ import com.orbital.synth.preset.UserPatchRepository
 import com.orbital.synth.ui.OrbitalScreen
 import com.orbital.synth.ui.OrbitalUiState
 import com.orbital.synth.ui.PatchChoice
+import com.orbital.synth.ui.SequenceChoice
 import com.orbital.synth.ui.PlayMode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -54,9 +55,14 @@ class MainActivity : ComponentActivity() {
         audioOutput = AndroidAudioOutput(applicationContext, synth)
         userPatches = UserPatchRepository(applicationContext, synth)
         refreshPatchChoices()
+        val initialSequence = audioOutput.sequencerPatternSelection
         screenState = screenState.copy(
             sequencerTempo = audioOutput.sequencerTempo,
-            enabledSteps = audioOutput.sequencerEnabledSteps
+            enabledSteps = initialSequence.enabledSteps,
+            sequenceChoices = audioOutput.sequencerFactoryPatterns.map {
+                SequenceChoice(it.id, it.name)
+            },
+            activeSequenceId = initialSequence.id,
         )
         midiManager = AndroidMidiManager(applicationContext, object : MidiMessageListener {
             override fun onNoteOn(channel: Int, note: Int, velocity: Int) {
@@ -98,8 +104,22 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(Unit) {
                 while (true) {
                     val step = audioOutput.sequencerPlayhead
-                    if (screenState.sequencerStep != step) {
-                        screenState = screenState.copy(sequencerStep = step)
+                    // Factory selection is queued on the audio thread. Read the
+                    // immutable snapshot only after it has actually been applied,
+                    // so the active ID and enabled grid cannot belong to different patterns.
+                    val sequence = audioOutput.sequencerPatternSelection
+                    val tempo = audioOutput.sequencerTempo
+                    if (screenState.sequencerStep != step ||
+                        screenState.activeSequenceId != sequence.id ||
+                        screenState.enabledSteps != sequence.enabledSteps ||
+                        screenState.sequencerTempo != tempo
+                    ) {
+                        screenState = screenState.copy(
+                            sequencerStep = step,
+                            activeSequenceId = sequence.id,
+                            enabledSteps = sequence.enabledSteps,
+                            sequencerTempo = tempo,
+                        )
                     }
                     delay(32L)
                 }
@@ -143,6 +163,13 @@ class MainActivity : ComponentActivity() {
                     onNextPatch = { selectFactoryPatch(patchIndex + 1) },
                     onSavePatch = ::saveCurrentPatch,
                     onSelectPatch = ::activatePatch,
+                    onSelectSequence = { id ->
+                        if (!audioOutput.selectFactoryPattern(id)) {
+                            screenState = screenState.copy(
+                                patchFeedback = "Unknown factory sequence."
+                            )
+                        }
+                    },
                 )
             }
         }
