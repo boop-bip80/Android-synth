@@ -100,6 +100,20 @@ internal class Voice(private val sampleRate: Int) {
     private var ghostMorph = 0f
     private var ghostMip = 0
     private var ghostMipFade = 0f
+    // A stolen voice must keep the *filtered* sound alive for its tail. Replaying
+    // the dry wavetable here creates a sharp transient at low cutoffs/resonance.
+    private var ghostIntegrator1 = 0.0
+    private var ghostIntegrator2 = 0.0
+    private var ghostA1 = 1.0
+    private var ghostA2 = 0.0
+    private var ghostA3 = 0.0
+    // Snapshot the actual oscillator increments/controls from the last sample:
+    // frequency alone ignores bend, vibrato and the voice's Nyquist clamp.
+    private var lastIncrement = 0.0
+    private var lastLowerIncrement = 0.0
+    private var lastUpperIncrement = 0.0
+    private var lastWave = 0f
+    private var lastMorph = 0f
 
     fun configure(
         attackSeconds: Double,
@@ -173,15 +187,20 @@ internal class Voice(private val sampleRate: Int) {
             ghostPhase = phase
             ghostLowerPhase = lowerPhase
             ghostUpperPhase = upperPhase
-            ghostIncrement = frequency / sampleRate
-            ghostLowerIncrement = min(0.45, ghostIncrement * detuneDown)
-            ghostUpperIncrement = min(0.45, ghostIncrement * detuneUp)
+            ghostIncrement = lastIncrement
+            ghostLowerIncrement = lastLowerIncrement
+            ghostUpperIncrement = lastUpperIncrement
             ghostUnisonMix = unisonMix
             ghostLevel = envelopeLevel * velocity
-            ghostWave = wave
-            ghostMorph = morph
+            ghostWave = lastWave
+            ghostMorph = lastMorph
             ghostMip = mipLevel
             ghostMipFade = mipFade
+            ghostIntegrator1 = integrator1
+            ghostIntegrator2 = integrator2
+            ghostA1 = a1
+            ghostA2 = a2
+            ghostA3 = a3
         }
 
         note = midiNote
@@ -266,9 +285,16 @@ internal class Voice(private val sampleRate: Int) {
                     centerSample + (trio - centerSample) * unisonMix
                 }
                 val increment = min(sampleRate * 0.45, frequency * pitchMultiplier) / sampleRate
+                val lowerIncrement = min(0.45, increment * detuneDown)
+                val upperIncrement = min(0.45, increment * detuneUp)
+                lastIncrement = increment
+                lastLowerIncrement = lowerIncrement
+                lastUpperIncrement = upperIncrement
+                lastWave = wave
+                lastMorph = morph
                 phase += increment
-                lowerPhase += min(0.45, increment * detuneDown)
-                upperPhase += min(0.45, increment * detuneUp)
+                lowerPhase += lowerIncrement
+                upperPhase += upperIncrement
                 if (phase >= 1.0) phase -= floor(phase)
                 if (lowerPhase >= 1.0) lowerPhase -= floor(lowerPhase)
                 if (upperPhase >= 1.0) upperPhase -= floor(upperPhase)
@@ -301,7 +327,21 @@ internal class Voice(private val sampleRate: Int) {
                 )
                 center + ((center + low + high) / 3f - center) * ghostUnisonMix
             }
-            result += fadingWave * ghostLevel * fade
+            // Continue the old filter state, rather than mixing an unfiltered
+            // wavetable tail into an otherwise dark or resonant note.
+            val ghostInput = (fadingWave * ghostLevel).toDouble()
+            val ghostV3 = ghostInput - ghostIntegrator2
+            val ghostV1 = ghostA1 * ghostIntegrator1 + ghostA2 * ghostV3
+            val ghostV2 = ghostIntegrator2 + ghostA2 * ghostIntegrator1 + ghostA3 * ghostV3
+            ghostIntegrator1 = 2.0 * ghostV1 - ghostIntegrator1
+            ghostIntegrator2 = 2.0 * ghostV2 - ghostIntegrator2
+            if (ghostV2.isFinite() &&
+                ghostIntegrator1.isFinite() && ghostIntegrator2.isFinite()
+            ) {
+                result += ghostV2.coerceIn(-8.0, 8.0).toFloat() * fade
+            } else {
+                ghostSamples = 1 // the decrement below retires a pathological tail
+            }
             ghostPhase += ghostIncrement
             ghostLowerPhase += ghostLowerIncrement
             ghostUpperPhase += ghostUpperIncrement
