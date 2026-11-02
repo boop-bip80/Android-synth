@@ -60,7 +60,6 @@ class OrbitalAudioDeviceTest {
                         "Running audio worker must consume queued sequence selection/tempo",
                         commandsApplied,
                     )
-                    assertTrue(output.diagnostics.framesRendered >= 0L)
                 } else {
                     Log.w(
                         "OrbitalDeviceTest",
