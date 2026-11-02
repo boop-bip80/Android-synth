@@ -6,7 +6,14 @@ import com.orbital.synth.core.ParameterId
 /** Convenience adapter for the DSP parameter contract; no Android dependency. */
 fun OrbitalSynth.loadPatch(patch: SynthPatch) {
     for (id in ParameterId.entries) {
-        patch.parameters[id.name]?.let { setParameter(id, it) }
+        // ORBITAL-PATCH/1 files predating stereo unison lack these keys.
+        // Neutralize new controls on import so a prior patch's spread/detune
+        // cannot leak into older sounds.
+        val value = patch.parameters[id.name] ?: when (id.name) {
+            "UNISON", "DETUNE" -> 0f
+            else -> null
+        }
+        value?.let { setParameter(id, it) }
     }
 }
 
