@@ -46,7 +46,7 @@ class AdvancedPatternComposerTest {
                 StepPattern(List(3) { SequencerStep() }, subdivisionsPerBeat = 3),
             )
         }
-        val sixteen = StepPattern(listOf(SequencerStep((0..15).map(::note))))
+        val sixteen = StepPattern(listOf(SequencerStep((0..15).map { note(it) })))
         val seventeenth = StepPattern(listOf(SequencerStep(listOf(note(16)))))
         assertThrowsArgument {
             AdvancedPatternComposer.polymeter(sixteen, seventeenth)
