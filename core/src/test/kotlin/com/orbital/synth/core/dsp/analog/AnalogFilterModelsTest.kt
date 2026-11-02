@@ -122,6 +122,35 @@ class AnalogFilterModelsTest {
         assertFalse(first.bandPassOutput().isNaN())
     }
 
+    @Test
+    fun voiceStealSnapshotCopiesFiltersWithoutSharingTheirFutureState() {
+        val ladder = LadderFilter(48_000)
+        val ladderTail = LadderFilter(48_000)
+        val sem = SemFilter(48_000)
+        val semTail = SemFilter(48_000)
+        ladder.configure(1_100f, 0.72f, 0.6f)
+        sem.configure(1_100f, 0.72f, 0.6f, 0.3f)
+        repeat(2_000) { i ->
+            val input = sin(i * 2.0 * PI * 375.0 / 48_000.0).toFloat()
+            ladder.process(input)
+            sem.process(input)
+        }
+        ladder.copyStateTo(ladderTail)
+        sem.copyStateTo(semTail)
+        repeat(512) { i ->
+            val input = sin(i * 2.0 * PI * 830.0 / 48_000.0).toFloat()
+            assertEquals(ladder.process(input), ladderTail.process(input), 0f)
+            assertEquals(sem.process(input), semTail.process(input), 0f)
+        }
+        ladder.reset()
+        sem.reset()
+        assertEquals(0f, ladder.process(0f), 0f)
+        assertEquals(0f, sem.process(0f), 0f)
+        // The archived tail retained its own charge when the new voice reset.
+        assertTrue(ladderTail.process(0f).isFinite())
+        assertTrue(semTail.process(0f).isFinite())
+    }
+
     private fun sineRmsLadder(hertz: Double): Double {
         val filter = LadderFilter(48_000)
         filter.configure(1_200f, 0f, 0f)
