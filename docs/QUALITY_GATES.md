@@ -34,7 +34,7 @@ This is a release gate, not a claim that a gate has passed.
 ## G4 — Emulator CI
 - GitHub-hosted Android emulator (API 35 x86_64) boots, installs APK, launches MainActivity and runs instrumentation tests.
 - Host tests and emulator job split, with deterministic failure diagnostics.
-- Screenshot, logcat excerpt and debug APK retained as CI artifacts (do not commit generated build output).
+- Screenshot must be captured only after the app owns the focused window, with PNG format checked; window state, script status, logcat excerpt, debug APK and instrumentation APK retained as CI artifacts (do not commit generated build output).
 - If emulator workflow fails/does not finish, report unverified; do not mark G4 complete.
 
 ## G5 — Real-device validation (not satisfied by an emulator)
