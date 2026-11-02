@@ -100,7 +100,7 @@ internal fun OrbitalDisplay(
                 val phase = motion.toDouble() * PI * 2 + layer * .43
                 val twist = sin(a * (3.0 + m.toDouble() * 2.0) + phase) * .13 +
                     sin(a * 7.0 - phase * .65) * .055
-                val rr = radius * (.55 + layer * .049 + twist)
+                val rr = radius.toDouble() * (.55 + layer * .049 + twist)
                 val x = c.x + cos(a).toFloat() * rr.toFloat()
                 val y = c.y + sin(a).toFloat() * rr.toFloat() * (.88f + m * .12f)
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
@@ -134,7 +134,7 @@ internal fun OrbitalDisplay(
         // Deterministic constellation; no random values or recomposition jitter.
         for (i in 0 until 52) {
             val a = i * 2.39996323
-            val d = (.15 + (i * 47 % 89) / 100.0) * radius
+            val d = (.15 + (i * 47 % 89) / 100.0) * radius.toDouble()
             val p = Offset(c.x + (cos(a) * d).toFloat(), c.y + (sin(a) * d).toFloat())
             val gold = i % 6 == 0
             drawCircle(
@@ -146,8 +146,8 @@ internal fun OrbitalDisplay(
         listOf(32.0, 158.0, 270.0).forEachIndexed { index, deg ->
             val a = Math.toRadians(deg)
             val p = Offset(
-                c.x + (cos(a) * radius * 1.10).toFloat(),
-                c.y + (sin(a) * radius * .56).toFloat(),
+                c.x + (cos(a) * radius.toDouble() * 1.10).toFloat(),
+                c.y + (sin(a) * radius.toDouble() * .56).toFloat(),
             )
             val tint = if (index == 1) OrbitalPalette.Gold else OrbitalPalette.Cyan
             drawCircle(tint.copy(alpha = .16f), 12.dp.toPx(), p)
