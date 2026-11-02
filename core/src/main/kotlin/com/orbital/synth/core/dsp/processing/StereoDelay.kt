@@ -22,6 +22,14 @@ class StereoDelay(sampleRate: Int = 48_000, maxDelaySeconds: Float = 3f) {
     // This invalidates both channels in O(1), even for multi-second history buffers.
     private var validFramesSinceReset = 0
     private var length = (sampleRate * 0.375f).toInt().coerceIn(1, historySize - 2)
+    // A delay-time edit crossfades two taps over 10 ms. Simply changing the read
+    // offset discontinuously produces a click even with wet/feedback smoothing.
+    // Keep the latest requested target while a prior fade finishes, then begin
+    // the next fade without restarting or jumping between intermediate taps.
+    private val timeTransitionFrames = (sampleRate * 0.010f).toInt().coerceAtLeast(1)
+    private var previousLength = length
+    private var targetLength = length
+    private var timeTransitionRemaining = 0
     // Sample-rate-correct 10 ms slew prevents sharp feedback/wet/pan jumps when
     // changing patches or tweaking the FX control while echoes are sounding.
     private val controlSlew = (1.0 - exp(-1.0 / (sampleRate * 0.010))).toFloat()
@@ -37,13 +45,25 @@ class StereoDelay(sampleRate: Int = 48_000, maxDelaySeconds: Float = 3f) {
     fun configure(timeSeconds: Float, feedback: Float, wet: Float, pingPong: Float = 0.5f) {
         val seconds = (if (timeSeconds.isFinite()) timeSeconds else 0.375f)
             .coerceIn(1f / effectiveSampleRate, maxSeconds)
-        // Delay time is limited to the allocated buffer, in samples.
-        length = (seconds * effectiveSampleRate).toInt().coerceIn(1, historySize - 2)
+        // Delay time is limited to the allocated buffer, in samples. Unlike
+        // amplitude controls, time is rendered using two taps so large edits do
+        // not sweep through the intervening history at an audible pitch jump.
+        val requestedLength = (seconds * effectiveSampleRate).toInt().coerceIn(1, historySize - 2)
+        targetLength = requestedLength
+        // Immediately after a reset there is no audible echo to preserve.
+        // Start on the requested time instead of fading in stale/empty taps.
+        if (validFramesSinceReset == 0) {
+            length = requestedLength
+            previousLength = requestedLength
+            timeTransitionRemaining = 0
+        }
         targetFeedback = (if (feedback.isFinite()) feedback else 0f).coerceIn(0f, 0.92f)
         targetMix = (if (wet.isFinite()) wet else 0f).coerceIn(0f, 1f)
         targetPingPong = (if (pingPong.isFinite()) pingPong else 0f).coerceIn(0f, 1f)
         // The first preset should take effect immediately; only live edits glide.
         if (!hasConfiguration) {
+            length = requestedLength
+            previousLength = requestedLength
             snapControlsToTargets()
             hasConfiguration = true
         }
@@ -57,13 +77,31 @@ class StereoDelay(sampleRate: Int = 48_000, maxDelaySeconds: Float = 3f) {
         feedback += (targetFeedback - feedback) * controlSlew
         mix += (targetMix - mix) * controlSlew
         pingPong += (targetPingPong - pingPong) * controlSlew
+        // Coalesce multiple controller updates while the current time crossfade
+        // finishes. The next transition starts from the exact preceding target,
+        // even if configure() is called repeatedly inside one 10 ms interval.
+        if (timeTransitionRemaining == 0 && targetLength != length) {
+            previousLength = length
+            length = targetLength
+            timeTransitionRemaining = timeTransitionFrames
+        }
         val read = (index + historySize - length) % historySize
-        // A delay-time change is safe: a longer tap reads silence until enough
-        // post-reset samples exist, while a shorter tap reads only recent new data.
-        // No old pre-reset frame can cross this generation boundary.
+        // Each tap has its own post-reset validity check. A long new delay must
+        // never access old buffer generations during a transition.
         val historyValid = validFramesSinceReset >= length
-        val delayedL = if (historyValid) leftHistory[read] else 0f
-        val delayedR = if (historyValid) rightHistory[read] else 0f
+        var delayedL = if (historyValid) leftHistory[read] else 0f
+        var delayedR = if (historyValid) rightHistory[read] else 0f
+        if (timeTransitionRemaining > 0) {
+            val previousRead = (index + historySize - previousLength) % historySize
+            val previousValid = validFramesSinceReset >= previousLength
+            val oldL = if (previousValid) leftHistory[previousRead] else 0f
+            val oldR = if (previousValid) rightHistory[previousRead] else 0f
+            val oldGain = timeTransitionRemaining.toFloat() / timeTransitionFrames
+            val newGain = 1f - oldGain
+            delayedL = oldL * oldGain + delayedL * newGain
+            delayedR = oldR * oldGain + delayedR * newGain
+            timeTransitionRemaining--
+        }
         val dryL = if (left.isFinite()) left.coerceIn(-8f, 8f) else 0f
         val dryR = if (right.isFinite()) right.coerceIn(-8f, 8f) else 0f
         val cross = pingPong
@@ -86,6 +124,9 @@ class StereoDelay(sampleRate: Int = 48_000, maxDelaySeconds: Float = 3f) {
     fun reset() {
         index = 0
         validFramesSinceReset = 0
+        length = targetLength
+        previousLength = length
+        timeTransitionRemaining = 0
         snapControlsToTargets()
     }
 
