@@ -324,6 +324,52 @@ class AudioSequencerTransportTest {
     }
 
     @Test
+    fun loadedEnabledFlagsPreserveMutedSourceNotesAndSoundOnlyActiveGrid() {
+        val fake = Fake()
+        val step = com.orbital.synth.core.music.SequencerStep()
+        val source = com.orbital.synth.core.music.StepPattern(listOf(
+            com.orbital.synth.core.music.SequencerStep(listOf(
+                com.orbital.synth.core.music.SequencerNote(60)
+            )),
+            com.orbital.synth.core.music.SequencerStep(listOf(
+                com.orbital.synth.core.music.SequencerNote(64)
+            )),
+            step,
+            step,
+        ))
+        assertTrue(fake.transport.loadPattern(
+            "v2-muted", "Muted Source", source, enabledSteps = setOf(1, 2)
+        ))
+        fake.transport.setPlaying(true)
+        fake.transport.onWorkerStart()
+        fake.renderFrames(1)
+        assertEquals(0, fake.noteOnCalls) // muted source step 0 remains silent
+        assertEquals(setOf(1, 2), fake.transport.enabledSteps)
+        assertEquals(60, fake.transport.selection.sourcePattern.steps[0].notes.single().midiNote)
+        fake.renderFrames(12_001)
+        assertTrue(fake.noteOnCalls >= 2) // step 1 and generated step 2
+        assertTrue(fake.transport.setStepNotes(0, listOf(
+            com.orbital.synth.core.music.SequencerNote(62)
+        )))
+        fake.render()
+        assertEquals(62, fake.transport.selection.sourcePattern.steps[0].notes.single().midiNote)
+        assertTrue(0 in fake.transport.enabledSteps)
+    }
+
+    @Test
+    fun liveGridEditsDoNotResetThePlayingBarToStepZero() {
+        val fake = Fake()
+        fake.transport.setPlaying(true)
+        fake.transport.onWorkerStart()
+        fake.renderFrames(8_000)
+        assertEquals(1, fake.transport.playhead)
+        fake.transport.setStepEnabled(0, false)
+        fake.render()
+        assertEquals(1, fake.transport.playhead)
+        assertFalse(0 in fake.transport.enabledSteps)
+    }
+
+    @Test
     fun outdatedGridCommandsCannotMutateNewSelection() {
         val fake = Fake()
         assertTrue(fake.transport.selectFactoryPattern("comet"))
