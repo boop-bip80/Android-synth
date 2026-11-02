@@ -4,7 +4,7 @@ package com.orbital.synth.core.preset
 object PatchParameters {
     val ALL: List<String> = listOf(
         "WAVE", "MORPH", "CUTOFF", "RESONANCE", "MOVEMENT", "FX_AMOUNT",
-        "ATTACK", "DECAY", "SUSTAIN", "RELEASE", "LFO_RATE", "LFO_DEPTH", "GLIDE",
+        "ATTACK", "DECAY", "SUSTAIN", "RELEASE", "LFO_RATE", "LFO_DEPTH", "GLIDE", "UNISON", "DETUNE",
     )
     val NAMES: Set<String> = ALL.toSet()
 }
