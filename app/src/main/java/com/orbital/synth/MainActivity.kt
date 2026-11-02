@@ -174,6 +174,11 @@ class MainActivity : ComponentActivity() {
                         audioOutput.setSequencerTempo(next)
                         screenState = screenState.copy(sequencerTempo = next)
                     },
+                    onSequencerLengthChange = { requested ->
+                        // Render-worker snapshot remains authoritative. The UI poll
+                        // publishes the new length and any truncated step state.
+                        audioOutput.setSequencerStepCount(requested)
+                    },
                     onPreviousPatch = { selectFactoryPatch(patchIndex - 1) },
                     onNextPatch = { selectFactoryPatch(patchIndex + 1) },
                     onSavePatch = ::saveCurrentPatch,
