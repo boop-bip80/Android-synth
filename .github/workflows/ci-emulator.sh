@@ -37,6 +37,7 @@ collect_diagnostics() {
   timeout 15s adb shell dumpsys media.audio_flinger > artifacts/audio-flinger.txt 2>&1
   timeout 15s adb shell dumpsys midi > artifacts/midi-state.txt 2>&1
   timeout 15s adb shell dumpsys meminfo com.orbital.synth > artifacts/app-memory.txt 2>&1
+  timeout 15s adb shell pm path com.orbital.synth > artifacts/installed-package.txt 2>&1
   {
     timeout 10s adb shell wm size
     timeout 10s adb shell wm density
@@ -66,6 +67,22 @@ fi
 # Fail immediately if any JUnit instrumentation test fails.
 printf '%s\n' 'instrumentation' > artifacts/emulator-phase.txt
 timeout 30m gradle :app:connectedDebugAndroidTest --stacktrace --no-daemon --console=plain
+
+# Android Gradle Plugin's connected test runner may remove the target APK
+# during cleanup. A green instrumentation result does not guarantee the app
+# is still installed, so explicitly restore the built APK for the UI capture.
+printf '%s\n' 'reinstalling-debug-apk' > artifacts/emulator-phase.txt
+debug_apk='app/build/outputs/apk/debug/app-debug.apk'
+if [[ ! -s "$debug_apk" ]]; then
+  echo "Debug APK missing or empty after instrumentation: $debug_apk" >&2
+  exit 1
+fi
+timeout 120s adb install -r "$debug_apk"
+installed_package="$(timeout 15s adb shell pm path com.orbital.synth | tr -d '\r')"
+if [[ "$installed_package" != *'package:'* ]]; then
+  echo "com.orbital.synth is not installed after adb install: $installed_package" >&2
+  exit 1
+fi
 
 printf '%s\n' 'launching-portrait' > artifacts/emulator-phase.txt
 # The test runner may close its Activity. Launch the real app for the screenshot.
