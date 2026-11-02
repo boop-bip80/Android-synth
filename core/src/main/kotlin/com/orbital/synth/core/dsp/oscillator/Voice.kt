@@ -33,6 +33,14 @@ internal class Voice(private val sampleRate: Int) {
 
     val hasTail: Boolean get() = ghostSamples > 0
 
+    // Smooth note-dependent stereo placement while an old tone is still audible.
+    // Otherwise legato retunes jump equal-power pan gains at a nonzero sample.
+    private var targetPanLeft = panLeft
+    private var targetPanRight = panRight
+    private var panStepLeft = 0f
+    private var panStepRight = 0f
+    private var panSlewRemaining = 0
+
     private var stage = Stage.OFF
     private var velocity = 0f
     private var phase = 0.0
@@ -130,6 +138,7 @@ internal class Voice(private val sampleRate: Int) {
             return
         }
 
+        val previousToneAudible = active || ghostSamples > 0
         if (active && envelopeLevel > 0.0001f) {
             ghostSamples = 64
             ghostPhase = phase
@@ -157,7 +166,7 @@ internal class Voice(private val sampleRate: Int) {
             previousFrequency > 0.0 && glideSeconds > 0.0
         ) previousFrequency else targetFrequency
         startGlide(glideSeconds)
-        setPan(midiNote)
+        setPan(midiNote, smooth = previousToneAudible)
     }
 
     fun retune(midiNote: Int, noteVelocity: Float, glideSeconds: Double) {
@@ -165,7 +174,7 @@ internal class Voice(private val sampleRate: Int) {
         velocity = noteVelocity.coerceIn(0f, 1f)
         targetFrequency = midiFrequency(midiNote)
         startGlide(glideSeconds)
-        setPan(midiNote)
+        setPan(midiNote, smooth = true)
     }
 
     fun noteOff() {
@@ -185,6 +194,7 @@ internal class Voice(private val sampleRate: Int) {
         integrator1 = 0.0
         integrator2 = 0.0
         ghostSamples = 0
+        panSlewRemaining = 0
     }
 
     fun preparePitch(maxPitchMultiplier: Double) {
@@ -196,6 +206,7 @@ internal class Voice(private val sampleRate: Int) {
     }
 
     fun nextSample(wave: Float, morph: Float, pitchMultiplier: Double): Float {
+        advancePan()
         var result = 0f
         if (active) {
             val amplitude = advanceEnvelope()
@@ -293,11 +304,32 @@ internal class Voice(private val sampleRate: Int) {
         if (glideFrames == 0) frequency = targetFrequency
     }
 
-    private fun setPan(midiNote: Int) {
+    private fun setPan(midiNote: Int, smooth: Boolean) {
         val pan = (((midiNote % 12) - 5.5) / 5.5 * 0.18).coerceIn(-1.0, 1.0)
         val angle = (pan + 1.0) * (PI / 4.0)
-        panLeft = cos(angle).toFloat()
-        panRight = sin(angle).toFloat()
+        targetPanLeft = cos(angle).toFloat()
+        targetPanRight = sin(angle).toFloat()
+        if (!smooth) {
+            panLeft = targetPanLeft
+            panRight = targetPanRight
+            panSlewRemaining = 0
+        } else {
+            panSlewRemaining = max(1, (sampleRate * 0.005).toInt())
+            panStepLeft = (targetPanLeft - panLeft) / panSlewRemaining
+            panStepRight = (targetPanRight - panRight) / panSlewRemaining
+        }
+    }
+
+    private fun advancePan() {
+        if (panSlewRemaining <= 0) return
+        panLeft += panStepLeft
+        panRight += panStepRight
+        panSlewRemaining--
+        if (panSlewRemaining == 0) {
+            // Exact final gains preserve equal-power panning after the short ramp.
+            panLeft = targetPanLeft
+            panRight = targetPanRight
+        }
     }
 
     companion object {
