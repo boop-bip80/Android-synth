@@ -5,7 +5,7 @@ import org.junit.Test
 
 class FactoryPatternsTest {
     @Test fun eachFactoryPatternIsDistinctSixteenStepAndNonSilent() {
-        assertEquals(8, FactoryPatterns.ALL.size)
+        assertEquals(10, FactoryPatterns.ALL.size)
         assertEquals(FactoryPatterns.ALL.size, FactoryPatterns.ALL.map { it.id }.toSet().size)
         assertSame(FactoryPatterns.DEFAULT, FactoryPatterns.byId("aurora"))
         for (factory in FactoryPatterns.ALL) {
