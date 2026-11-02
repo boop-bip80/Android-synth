@@ -1,6 +1,6 @@
 # ORBITAL — Android wavetable synthesizer
 
-**Status (2026-11-02): ORBITAL's six-agent hardening work is merged through PR #59 on `main`.** The Kotlin/Jetpack Compose synth now has 16-voice wavetable synthesis, effects, MIDI sustain/sostenuto, resilient audio-focus recovery, phase-stable and losslessly saved sequences, and responsive orbital controls. A [fully green PR #55 emulator run](https://github.com/boop-bip80/Android-synth/actions/runs/41512839802) passed host tests, lint, both APK builds, **34/34 Android instrumentation tests** and normal/compact screenshot capture. The [CI recovery run](https://github.com/boop-bip80/Android-synth/actions/runs/41512794970) was also green. These verify those specific commits; a new combined `main` run is required after integration. Physical-device MIDI/audio latency, thermal profiling, release signing and licensing remain open.
+**Status (2026-11-02): ORBITAL's six-agent hardening work through PR #59 is merged into `main`.** The Kotlin/Jetpack Compose synth includes 16-voice wavetable synthesis, effects, MIDI sustain/sostenuto, transient audio-focus recovery, lossless sequence storage, worker-acknowledged rapid edits and responsive orbital controls. **[Combined `main` workflow #41516281261](https://github.com/boop-bip80/Android-synth/actions/runs/41516281261) is fully green** at [source commit `231aef8`](https://github.com/boop-bip80/Android-synth/commit/231aef8e8ba06fee461a5f2819521f6f3a9029fc): host JVM tests, Android lint, both APK builds, **34/34 API 35 instrumentation tests**, and real normal/360dp 1.3× screenshot capture all passed. Device-side MIDI/audio latency, thermal profiling, release signing and licensing remain open.
 
 ![Original ORBITAL generated concept artwork — UI reference, not a running-app screenshot](design/orbital-ui-reference.png)
 
@@ -16,7 +16,7 @@ ORBITAL is a touch-first, sound-design-oriented Android synthesizer. The interfa
 | Interface | Native Compose sound/play/sequence/FX views based on committed artwork, interactive orbital surface, **25 accessible chromatic notes**, octave buttons, XY pad, presets, unison/detune and per-note 1–64 step editor. Compact/large-font layout moves patch controls outside the orbit, reduces orbit size and provides an expandable modulation chart. | Physical touch, accessibility/TalkBack, landscape and tablet playtests |
 | Musical tools | Sample-addressed sequencer with worker-safe pattern loading, resizing, per-step note editing and muting; 12 factory patterns (including 32-step *Eclipse Shift* and 64-step *Deep Orbit*); swing, 20 scales, Euclidean patterns, polymetric layers and seeded melodic walks. | Verify timing under load, rapid edits and simultaneous MIDI/touch |
 | Sounds and storage | **16 factory sound patches**, **12 factory patterns**, versioned patch import/export, app-private sequence storage and library. **V2 sequence saves preserve muted source notes and their enable-state**, read V1 data, and keep phase when editing. Delayed worker mute toggles are reconciled with acknowledgement tickets so rapid taps and saves retain the latest user intent. | On-device migration, storage corruption, rapid edit and restart playtests |
-| Quality automation | Pinned JDK17/SDK35 Gradle builds, JVM tests, Android lint, app and instrumented APKs, API35 emulator tests and real normal/360dp 1.3× screenshots. [PR #55's green run](https://github.com/boop-bip80/Android-synth/actions/runs/41512839802) completed **34/34 instrumentation tests**. Main builds retain active validation, require build artifacts, and recover narrowly from external Pixel Launcher ANR overlays. | Verify latest merged `main` SHA; emulator data cannot replace real-device measurements |
+| Quality automation | Pinned JDK17/SDK35 Gradle builds, JVM tests, Android lint, app and instrumented APKs, API35 emulator tests and real normal/360dp 1.3× screenshots. [combined `main` run #41516281261](https://github.com/boop-bip80/Android-synth/actions/runs/41516281261) completed **34/34 instrumentation tests**. Main builds retain active validation, require build artifacts, and recover narrowly from external Pixel Launcher ANR overlays. | Keep verifying future app-code changes; emulator data cannot replace real-device measurements |
 
 These are descriptions of implementation and tested CI results, **not claims of a finished commercial instrument**. In particular, per-note MPE and guaranteed low-latency playback are not verified.
 
@@ -86,7 +86,7 @@ MainActivity integration connects the new UI editor to the audio worker, loads s
 
 ## Get the debug APK and actual UI screenshot
 
-Use the [Android CI workflow](.github/workflows/android.yml) from the repository's [Actions tab](https://github.com/boop-bip80/Android-synth/actions). For example, [PR #55's fully green run](https://github.com/boop-bip80/Android-synth/actions/runs/41512839802) has real UI screenshots, APKs and instrumentation results. Select a green run at the latest `main` SHA for the latest code. Downloadable artifacts include:
+Use the [Android CI workflow](.github/workflows/android.yml) from the repository's [Actions tab](https://github.com/boop-bip80/Android-synth/actions). The [fully green combined `main` run #41516281261](https://github.com/boop-bip80/Android-synth/actions/runs/41516281261) contains the latest verified APK, real UI screenshots and instrumentation results for source commit `231aef8`. Select a green run at the newest application-code SHA after future changes. Downloadable artifacts include:
 
 - `orbital-debug-apk` — unsigned-for-Play debug install package, signed with the Android debug key.
 - `orbital-debug-android-test-apk` — compiled instrumentation test APK.
@@ -108,7 +108,7 @@ The repository uses AGP 8.9.2 and Kotlin/Compose Compiler 2.1.20. See the [build
 
 ## Next validation milestones
 
-1. Confirm API 35 emulator instrumentation and both screenshots on the **latest merged main** and visually inspect compact/large-font screens.
+1. Preserve the green CI baseline on every future application-code change; visually inspect compact/large-font screens and landscape/touch accessibility.
 2. Profile real Android phones for reverb/unison CPU, audio underruns, latency, battery, thermals and MIDI controller compatibility.
 3. Add undo/redo and deeper sound-design controls without compromising touch ergonomics; profile render-thread performance and held waveform-morph automation.
 4. Complete accessibility/interaction playtests and reproducible release signing before claiming production readiness.

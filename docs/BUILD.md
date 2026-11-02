@@ -22,7 +22,7 @@ gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:
 
 After a successful build, the debug APK is `app/build/outputs/apk/debug/app-debug.apk` (Android 26+). It is a developer APK, not a Play Store release.
 
-On 2026-11-02, [PR #55's green Android CI run](https://github.com/boop-bip80/Android-synth/actions/runs/41512839802) passed host JVM tests, lint, app and instrumentation APK assembly, **34/34 API35 instrumentation tests**, and normal/360dp 1.3× screenshots. [PR #56's green CI run](https://github.com/boop-bip80/Android-synth/actions/runs/41512794970) verified the updated emulator harness, which contains a strict bounded recovery path for a specific external Pixel Launcher ANR overlay (the failure path is not claimed as exercised in that green run). Those runs verify their respective commits; check a passing run at the latest `main` SHA after subsequent merges. Physical-device validation remains separate.
+On 2026-11-02, the [combined `main` Actions run #41516281261](https://github.com/boop-bip80/Android-synth/actions/runs/41516281261) completed fully green for source commit [`231aef8`](https://github.com/boop-bip80/Android-synth/commit/231aef8e8ba06fee461a5f2819521f6f3a9029fc): JVM tests, lint, debug app and instrumentation APKs, **34/34 API 35 instrumentation tests**, and both real emulator screenshots. A subsequent documentation-only update does not change that tested application code. The bounded Pixel Launcher ANR recovery path is present in the harness, but the historical issue is not a substitute for physical-device testing.
 
 ## CI emulator (no local emulator needed)
 
