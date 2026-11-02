@@ -25,7 +25,7 @@ internal class PerformanceArpTransport(
     private val renderFrames: (FloatArray, Int) -> Unit,
     private val noteOn: (Long, Int, Int, Float) -> Unit,
     private val noteOff: (Long, Int, Int) -> Unit,
-    // Optional deterministic test seam; null in production and never runs per sample.
+    // Optional deterministic test seam after epoch check, before offer; never per sample.
     private val beforeInputEnqueue: (() -> Unit)? = null,
 ) {
     private sealed interface Command {
@@ -141,25 +141,27 @@ internal class PerformanceArpTransport(
         if (channel !in 0..15 || note !in 0..127 || velocity !in 0..127) return false
         if (velocity == 0) return inputNoteOff(source, channel, note)
         val epoch = activeInputEpoch() ?: return false
-        beforeInputEnqueue?.invoke()
         if (inputEpoch.get() != epoch) return false
+        beforeInputEnqueue?.invoke()
+        // Even if stop/restart races this offer, the consumer rejects old epochs.
         commands.offer(Command.InputOn(source, channel, note, velocity, epoch))
-        return true
+        return inputEpoch.get() == epoch
     }
 
     fun inputNoteOff(source: Long, channel: Int, note: Int): Boolean {
         if (channel !in 0..15 || note !in 0..127) return false
         val epoch = activeInputEpoch() ?: return false
-        beforeInputEnqueue?.invoke()
         if (inputEpoch.get() != epoch) return false
+        beforeInputEnqueue?.invoke()
         commands.offer(Command.InputOff(source, channel, note, epoch))
-        return true
+        return inputEpoch.get() == epoch
     }
 
     fun inputSourceAllNotesOff(source: Long) {
         val epoch = activeInputEpoch() ?: return
+        if (inputEpoch.get() != epoch) return
         beforeInputEnqueue?.invoke()
-        if (inputEpoch.get() == epoch) commands.offer(Command.SourceOff(source, epoch))
+        commands.offer(Command.SourceOff(source, epoch))
     }
 
     fun panic() {
