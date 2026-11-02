@@ -384,8 +384,8 @@ class OrbitalScreenTest {
         }
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
         compose.onNodeWithText("Aurora Orbit").assertExists()
-        compose.onNodeWithContentDescription("Choose factory sequence").performClick()
-        compose.onNodeWithContentDescription("Select factory sequence Comet Cascade").performClick()
+        compose.onNodeWithContentDescription("Choose sequence").performClick()
+        compose.onNodeWithContentDescription("Select sequence Comet Cascade").performClick()
         compose.runOnIdle { assertEquals("comet", selectedId) }
     }
 
@@ -416,7 +416,7 @@ class OrbitalScreenTest {
             )
         }
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
-        compose.onNodeWithContentDescription("Choose factory sequence").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Choose sequence").assertIsNotEnabled()
         compose.onNodeWithText("CHOOSE SEQUENCE").assertDoesNotExist()
     }
 
@@ -430,7 +430,7 @@ class OrbitalScreenTest {
             )
         }
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
-        compose.onNodeWithContentDescription("Factory sequences unavailable").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Sequence library unavailable").assertIsNotEnabled()
     }
 
     @Test fun expressionCoordinatesClampOutOfBoundsAndGuardZeroSize() {
