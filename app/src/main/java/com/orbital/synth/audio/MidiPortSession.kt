@@ -72,7 +72,8 @@ internal class MidiPortGate {
  * MIDI sustain is handled here because the synth's note API is pitch-based and
  * does not expose CC64. Released keys are latched while the pedal is down, then
  * their matching note-offs are delivered when the pedal rises. Channel mode
- * panic (CC120/123), disconnect and close always release both kinds of notes.
+ * CC120 panic, disconnect and close release both kinds of notes immediately; CC123
+ * follows MIDI All Notes Off semantics and respects sustain.
  *
  * All input and closure are serialized. A callback racing with close() either
  * completes first and gets its notes released, or is ignored after closure.
@@ -112,7 +113,8 @@ internal class MidiPortSession(private val target: MidiMessageListener) : Closea
                     if (!next && sustainDown[channel]) releaseLatched(channel)
                     sustainDown[channel] = next
                 }
-                120, 123 -> releaseChannel(channel)
+                120 -> releaseChannel(channel) // All Sound Off: immediate, even under sustain
+                123 -> releaseHeldKeys(channel) // All Notes Off: respect the hold pedal
                 121 -> {
                     // Reset All Controllers: physically held keys remain on.
                     sustainDown[channel] = false
@@ -149,6 +151,24 @@ internal class MidiPortSession(private val target: MidiMessageListener) : Closea
             val held = pedalLatched[slot]
             pedalLatched[slot] = 0
             repeat(held) { target.onNoteOff(channel, note, 0) }
+        }
+    }
+
+    /**
+     * MIDI CC123 releases physically held keys, but unlike CC120 must allow
+     * sustain-latched sound to continue until the pedal is lifted. A repeated
+     * hardware Note Off after this channel-mode command is safely ignored.
+     */
+    private fun releaseHeldKeys(channel: Int) {
+        for (note in 0 until NOTE_COUNT) {
+            val slot = slot(channel, note)
+            val held = keysDown[slot]
+            keysDown[slot] = 0
+            if (sustainDown[channel]) {
+                pedalLatched[slot] += held
+            } else {
+                repeat(held) { target.onNoteOff(channel, note, 0) }
+            }
         }
     }
 
