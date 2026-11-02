@@ -79,6 +79,9 @@ import kotlin.math.roundToInt
 
 enum class PlayMode { POLY, MONO, LEGATO }
 
+/** UI-level direction; the Android host maps this to the portable arp engine. */
+enum class ArpDirection { UP, DOWN, UP_DOWN, AS_PLAYED, RANDOM, CHORD }
+
 /** The persistence layer owns IDs and patch data; UI needs only selectable metadata. */
 data class PatchChoice(val id: String, val name: String, val isFactory: Boolean)
 
@@ -104,6 +107,13 @@ data class OrbitalUiState(
     val sequenceChoices: List<SequenceChoice> = emptyList(),
     val activeSequenceId: String? = null,
     val patchFeedback: String? = null,
+    val arpEnabled: Boolean = false,
+    val arpDirection: ArpDirection = ArpDirection.UP,
+    /** Rate in steps per quarter-note beat. Supported detents are 1, 2, 4, and 8. */
+    val arpRate: Int = 4,
+    val arpLatch: Boolean = false,
+    /** A normalized 0..1 swing amount, interpreted by the host transport. */
+    val arpSwing: Float = 0f,
 )
 
 private enum class Tab(val title: String) {
@@ -142,6 +152,11 @@ fun OrbitalScreen(
     onSequencerLengthChange: ((Int) -> Unit)? = null,
     onSequencerStepNotesChange: ((Int, List<SequencerNote>) -> Unit)? = null,
     onSaveSequence: ((String) -> Unit)? = null,
+    onArpEnabledChange: ((Boolean) -> Unit)? = null,
+    onArpDirectionChange: ((ArpDirection) -> Unit)? = null,
+    onArpRateChange: ((Int) -> Unit)? = null,
+    onArpLatchChange: ((Boolean) -> Unit)? = null,
+    onArpSwingChange: ((Float) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var compactGraphExpanded by remember { mutableStateOf(false) }
@@ -511,6 +526,12 @@ fun OrbitalScreen(
                 parameter(ParameterId.GLIDE),
                 onModeChange,
                 onParameterChange,
+                state,
+                onArpEnabledChange,
+                onArpDirectionChange,
+                onArpRateChange,
+                onArpLatchChange,
+                onArpSwingChange,
             )
             Tab.SEQ -> SequencerPanel(
                 if (externalSequencer) List(visibleStepCount) { it in state.enabledSteps }
@@ -1098,6 +1119,12 @@ private fun PlayPanel(
     glide: Float,
     onModeChange: (PlayMode) -> Unit,
     onParameterChange: (ParameterId, Float) -> Unit,
+    state: OrbitalUiState,
+    onArpEnabledChange: ((Boolean) -> Unit)?,
+    onArpDirectionChange: ((ArpDirection) -> Unit)?,
+    onArpRateChange: ((Int) -> Unit)?,
+    onArpLatchChange: ((Boolean) -> Unit)?,
+    onArpSwingChange: ((Float) -> Unit)?,
 ) {
     val updateParameter by rememberUpdatedState(onParameterChange)
     Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
@@ -1186,6 +1213,232 @@ private fun PlayPanel(
             }
         }
         ParameterSlider("GLIDE", glide, ParameterId.GLIDE, onParameterChange, "Slow pitch transition")
+        ArpeggiatorPanel(
+            state = state,
+            onEnabledChange = onArpEnabledChange,
+            onDirectionChange = onArpDirectionChange,
+            onRateChange = onArpRateChange,
+            onLatchChange = onArpLatchChange,
+            onSwingChange = onArpSwingChange,
+        )
+    }
+}
+
+
+private val ArpRateDetents = listOf(1, 2, 4, 8)
+private val ArpDirectionLabels = listOf(
+    ArpDirection.UP to "UP",
+    ArpDirection.DOWN to "DOWN",
+    ArpDirection.UP_DOWN to "UP–DOWN",
+    ArpDirection.AS_PLAYED to "AS PLAYED",
+    ArpDirection.RANDOM to "RANDOM",
+    ArpDirection.CHORD to "CHORD",
+)
+
+/**
+ * Fully host-controlled arpeggiator. Buttons without a corresponding host
+ * callback are disabled instead of simulating a running sound engine.
+ */
+@Composable
+internal fun ArpeggiatorPanel(
+    state: OrbitalUiState,
+    onEnabledChange: ((Boolean) -> Unit)?,
+    onDirectionChange: ((ArpDirection) -> Unit)?,
+    onRateChange: ((Int) -> Unit)?,
+    onLatchChange: ((Boolean) -> Unit)?,
+    onSwingChange: ((Float) -> Unit)?,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .testTag("arpeggiatorPanel")
+            .border(1.dp, OrbitalPalette.Violet.copy(alpha = .55f), RoundedCornerShape(18.dp))
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color(0xFF151538), OrbitalPalette.Panel.copy(alpha = .97f), Color(0xFF06122A)),
+                ),
+                RoundedCornerShape(18.dp),
+            )
+            .padding(11.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "ARPEGGIATOR",
+                    color = OrbitalPalette.Text,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.4.sp,
+                )
+                Label("PERFORMANCE / KEYED MOTION")
+            }
+            Box(
+                Modifier
+                    .border(
+                        1.dp,
+                        if (state.arpEnabled) OrbitalPalette.Teal else OrbitalPalette.PanelEdge,
+                        RoundedCornerShape(12.dp),
+                    )
+                    .background(
+                        if (state.arpEnabled) OrbitalPalette.Teal.copy(alpha = .20f)
+                        else OrbitalPalette.Void.copy(alpha = .60f),
+                        RoundedCornerShape(12.dp),
+                    )
+                    .clickable(enabled = onEnabledChange != null, role = Role.Switch) {
+                        onEnabledChange?.invoke(!state.arpEnabled)
+                    }
+                    .semantics {
+                        selected = state.arpEnabled
+                        contentDescription = if (state.arpEnabled) "Turn arpeggiator off"
+                            else "Turn arpeggiator on"
+                    }
+                    .heightIn(min = 48.dp)
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    if (state.arpEnabled) "ARP ON" else "ARP OFF",
+                    color = if (state.arpEnabled) OrbitalPalette.Teal else OrbitalPalette.Muted,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 10.sp,
+                )
+            }
+        }
+
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Label("DIRECTION")
+            Spacer(Modifier.weight(1f))
+            Label("06 MOTION MODES")
+        }
+        ArpDirectionLabels.chunked(3).forEach { rowChoices ->
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                rowChoices.forEach { (direction, label) ->
+                    ArpChoice(
+                        label = label,
+                        active = state.arpDirection == direction,
+                        description = "Arpeggiator direction " + direction.name,
+                        onClick = onDirectionChange?.let { callback ->
+                            { callback(direction) }
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Label("STEPS / BEAT")
+            Spacer(Modifier.weight(1f))
+            Label(state.arpRate.coerceIn(1, 8).toString() + "× SPEED")
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            ArpRateDetents.forEach { rate ->
+                ArpChoice(
+                    label = rate.toString() + "×",
+                    active = state.arpRate == rate,
+                    description = "Arpeggiator rate " + rate + " steps per beat",
+                    onClick = onRateChange?.let { callback -> { callback(rate) } },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("LATCH", color = OrbitalPalette.Text, fontSize = 11.sp, letterSpacing = 1.sp)
+                Label("KEEP THE HELD NOTE POOL AFTER KEY RELEASE")
+            }
+            ArpChoice(
+                label = if (state.arpLatch) "HOLD ON" else "HOLD OFF",
+                active = state.arpLatch,
+                description = if (state.arpLatch) "Disable arpeggiator latch"
+                    else "Enable arpeggiator latch",
+                onClick = onLatchChange?.let { callback ->
+                    { callback(!state.arpLatch) }
+                },
+                modifier = Modifier.width(105.dp),
+            )
+        }
+
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("SWING", color = OrbitalPalette.Text, fontSize = 10.sp, letterSpacing = 1.sp)
+            Spacer(Modifier.weight(1f))
+            Text(
+                percent(state.arpSwing),
+                color = if (onSwingChange == null) OrbitalPalette.Muted else OrbitalPalette.Gold,
+                fontSize = 10.sp,
+            )
+        }
+        Slider(
+            value = state.arpSwing.coerceIn(0f, 1f),
+            onValueChange = { onSwingChange?.invoke(it) },
+            enabled = onSwingChange != null,
+            valueRange = 0f..1f,
+            colors = SliderDefaults.colors(
+                thumbColor = OrbitalPalette.Gold,
+                activeTrackColor = OrbitalPalette.Violet,
+                inactiveTrackColor = OrbitalPalette.PanelEdge,
+            ),
+            modifier = Modifier.semantics { contentDescription = "Arpeggiator swing" },
+        )
+        Label("PLAY THE KEYBOARD TO FEED LIVE NOTES  /  NO PATTERN RECORDING")
+    }
+}
+
+@Composable
+private fun ArpChoice(
+    label: String,
+    active: Boolean,
+    description: String,
+    onClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier
+            .heightIn(min = 48.dp)
+            .border(
+                1.dp,
+                if (active) OrbitalPalette.Cyan else OrbitalPalette.PanelEdge.copy(alpha = .70f),
+                RoundedCornerShape(11.dp),
+            )
+            .background(
+                if (active) OrbitalPalette.Cyan.copy(alpha = .20f)
+                else OrbitalPalette.Void.copy(alpha = .68f),
+                RoundedCornerShape(11.dp),
+            )
+            .clickable(enabled = onClick != null, role = Role.RadioButton) { onClick?.invoke() }
+            .semantics {
+                selected = active
+                contentDescription = description
+            }
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (active) OrbitalPalette.Text
+                else if (onClick != null) OrbitalPalette.Muted
+                else OrbitalPalette.PanelEdge,
+            fontSize = 9.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+            letterSpacing = .35.sp,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+        )
     }
 }
 
