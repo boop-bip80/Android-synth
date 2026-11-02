@@ -46,8 +46,10 @@ object AdvancedPatternComposer {
     }
 
     /**
-     * Create a repeatable, scale-constrained melodic walk. Each step moves by at
-     * most maxDegreeLeap scale tones from the previous step, including rests.
+     * Create a repeatable, scale-constrained melodic walk. Step zero is the
+     * nearest scale tone to startMidiNote (unless it becomes a rest). From step
+     * one onward each step moves by at most maxDegreeLeap scale tones from the
+     * previous step, including rests.
      * A seed controls both pitch movement and which steps are silent; no random
      * values depend on the size of the host audio buffer.
      *
@@ -89,9 +91,11 @@ object AdvancedPatternComposer {
         var pitchIndex = allowed.indices.minByOrNull { kotlin.math.abs(allowed[it] - startMidiNote) }!!
         val random = StableGenerator(seed)
         val result = List(steps) { ordinal ->
-            val leapSpan = maxDegreeLeap * 2 + 1
-            val degreeChange = random.nextBounded(leapSpan) - maxDegreeLeap
-            pitchIndex = (pitchIndex + degreeChange).coerceIn(0, allowed.lastIndex)
+            if (ordinal > 0) {
+                val leapSpan = maxDegreeLeap * 2 + 1
+                val degreeChange = random.nextBounded(leapSpan) - maxDegreeLeap
+                pitchIndex = (pitchIndex + degreeChange).coerceIn(0, allowed.lastIndex)
+            }
             val rest = random.nextUnit() < restProbability
             if (rest) {
                 SequencerStep()
