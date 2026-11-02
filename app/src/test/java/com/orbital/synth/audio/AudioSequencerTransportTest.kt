@@ -382,6 +382,30 @@ class AudioSequencerTransportTest {
     }
 
     @Test
+    fun workerAcknowledgesEveryQueuedToggleIncludingRapidOppositeTaps() {
+        val fake = Fake()
+        val first = checkNotNull(fake.transport.setStepEnabled(0, false))
+        val second = checkNotNull(fake.transport.setStepEnabled(0, true))
+        assertTrue(second > first)
+        assertEquals(0L, fake.transport.selection.appliedStepToggleId)
+        assertTrue(0 in fake.transport.enabledSteps) // old snapshot while queued
+        fake.render()
+        assertEquals(second, fake.transport.selection.appliedStepToggleId)
+        assertTrue(0 in fake.transport.enabledSteps)
+    }
+
+    @Test
+    fun staleSelectionToggleIsAcknowledgedButNeverAppliedToNewPattern() {
+        val fake = Fake()
+        assertTrue(fake.transport.selectFactoryPattern("comet"))
+        val ticket = checkNotNull(fake.transport.setStepEnabled(0, false))
+        fake.render()
+        assertEquals("comet", fake.transport.selectedPatternId)
+        assertEquals(ticket, fake.transport.selection.appliedStepToggleId)
+        assertTrue(0 in fake.transport.enabledSteps)
+    }
+
+    @Test
     fun outdatedGridCommandsCannotMutateNewSelection() {
         val fake = Fake()
         assertTrue(fake.transport.selectFactoryPattern("comet"))

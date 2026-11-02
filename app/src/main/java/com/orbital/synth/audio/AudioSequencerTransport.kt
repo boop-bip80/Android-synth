@@ -9,6 +9,7 @@ import com.orbital.synth.core.music.StepPattern
 import com.orbital.synth.core.music.StepSequencer
 import com.orbital.synth.core.music.TimedNoteEvent
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToLong
 
 /**
@@ -26,6 +27,8 @@ data class FactoryPatternSelection(
     val revision: Long,
     /** The groove of the selected pattern, retained when saving a user copy. */
     val swing: Double,
+    /** Highest UI step-toggle request actually consumed by the render worker. */
+    val appliedStepToggleId: Long = 0L,
 )
 
 /**
@@ -59,6 +62,10 @@ internal class AudioSequencerTransport(
     )
     private val renderer = SampleAccurateSequencerRenderer(renderFrames, noteOn, noteOff)
     private val commands = ConcurrentLinkedQueue<Command>()
+    // Only UI/producer threads take this lock. The audio worker never locks.
+    private val toggleSubmissionLock = Any()
+    private val nextStepToggleId = AtomicLong(0L)
+    private var appliedStepToggleId = 0L
     private var anchorSample = 0L
 
     @Volatile private var desiredPlaying = false
@@ -91,12 +98,16 @@ internal class AudioSequencerTransport(
         if (bpm in 20..300) commands.offer(Command.Tempo(bpm))
     }
 
-    fun setStepEnabled(index: Int, value: Boolean) {
-        // Keep the original Unit API. Attach a selection revision so a queued
-        // switch cannot apply this old-grid edit to a different pattern.
+    /** Returns an acknowledgement ticket for optimistic UI reconciliation. */
+    fun setStepEnabled(index: Int, value: Boolean): Long? {
         val snapshot = patternSnapshot
-        if (index in 0 until snapshot.stepCount) {
-            commands.offer(Command.StepEnabled(index, value, snapshot.revision))
+        if (index !in 0 until snapshot.stepCount) return null
+        return synchronized(toggleSubmissionLock) {
+            // Ticket allocation and queue insertion must have the same order,
+            // even if independent UI producers submit edits concurrently.
+            val ticket = nextStepToggleId.incrementAndGet()
+            commands.offer(Command.StepEnabled(index, value, snapshot.revision, ticket))
+            ticket
         }
     }
 
@@ -225,10 +236,18 @@ internal class AudioSequencerTransport(
                     rebuildAndRelease()
                 }
                 is Command.StepEnabled -> {
-                    if (command.revision != selectionRevision || command.index !in enabled.indices) continue
+                    // Publish an acknowledgement even for a no-op or rejected
+                    // stale command. Otherwise optimistic UI state can stick.
+                    appliedStepToggleId = command.ticket
+                    if (command.revision != selectionRevision || command.index !in enabled.indices) {
+                        publishPatternSnapshot()
+                        continue
+                    }
                     if (enabled[command.index] != command.value) {
                         enabled[command.index] = command.value
                         rebuildAndRelease()
+                    } else {
+                        publishPatternSnapshot()
                     }
                 }
             }
@@ -287,6 +306,7 @@ internal class AudioSequencerTransport(
             selectedId, selectedName, basePattern.steps.size,
             enabled.indices.filter { enabled[it] }.toSet(), basePattern, selectionRevision,
             sequencer.swing,
+            appliedStepToggleId,
         )
     }
 
@@ -347,6 +367,8 @@ internal class AudioSequencerTransport(
         data class StepNotes(val index: Int, val step: SequencerStep, val revision: Long) : Command
         data class Play(val value: Boolean) : Command
         data class Tempo(val bpm: Int) : Command
-        data class StepEnabled(val index: Int, val value: Boolean, val revision: Long) : Command
+        data class StepEnabled(
+            val index: Int, val value: Boolean, val revision: Long, val ticket: Long
+        ) : Command
     }
 }
