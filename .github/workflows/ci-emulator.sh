@@ -37,6 +37,7 @@ collect_diagnostics() {
   timeout 15s adb shell dumpsys media.audio_flinger > artifacts/audio-flinger.txt 2>&1
   timeout 15s adb shell dumpsys midi > artifacts/midi-state.txt 2>&1
   timeout 15s adb shell dumpsys meminfo com.orbital.synth > artifacts/app-memory.txt 2>&1
+  timeout 15s adb shell pm path com.orbital.synth > artifacts/installed-package.txt 2>&1
   {
     timeout 10s adb shell wm size
     timeout 10s adb shell wm density
@@ -45,6 +46,34 @@ collect_diagnostics() {
   exit "$status"
 }
 trap collect_diagnostics EXIT
+
+# A slow cold start can make "am start -W" report Status: timeout even
+# when the Activity is still alive. Launch without the framework's short wait,
+# then require the actual application surface (not the splash window) to draw.
+launch_orbital() {
+  local launch_log="$1"
+  timeout 30s adb shell am start -n com.orbital.synth/.MainActivity | tee "$launch_log"
+  if grep -Eq 'Error type [0-9]+|Error:|Exception|Permission Denial' "$launch_log"; then
+    echo "Android rejected the ORBITAL Activity launch:" >&2
+    cat "$launch_log" >&2
+    return 1
+  fi
+}
+
+orbital_window_drawn() {
+  local snapshot="$1"
+  grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth/com[.]orbital[.]synth[.]MainActivity' "$snapshot" || return 1
+  # A splash window may coexist with a focused Activity that has not drawn.
+  if grep -Eq 'mTopFullscreenOpaqueWindowState=.*Splash Screen com[.]orbital[.]synth' "$snapshot"; then
+    return 1
+  fi
+  awk '
+    /^[[:space:]]*Window #[0-9]+ Window\{.*com[.]orbital[.]synth\/com[.]orbital[.]synth[.]MainActivity/ { in_main=1; next }
+    in_main && /^[[:space:]]*Window #[0-9]+ Window\{/ { in_main=0 }
+    in_main && /Surface: shown=true/ { drawn=1 }
+    END { exit !drawn }
+  ' "$snapshot"
+}
 
 # The emulator runner waits for boot, but package manager initialization may
 # still lag. A bounded readiness gate avoids misdiagnosing that race as a test failure.
@@ -67,26 +96,41 @@ fi
 printf '%s\n' 'instrumentation' > artifacts/emulator-phase.txt
 timeout 30m gradle :app:connectedDebugAndroidTest --stacktrace --no-daemon --console=plain
 
+# Android Gradle Plugin's connected test runner may remove the target APK
+# during cleanup. A green instrumentation result does not guarantee the app
+# is still installed, so explicitly restore the built APK for the UI capture.
+printf '%s\n' 'reinstalling-debug-apk' > artifacts/emulator-phase.txt
+debug_apk='app/build/outputs/apk/debug/app-debug.apk'
+if [[ ! -s "$debug_apk" ]]; then
+  echo "Debug APK missing or empty after instrumentation: $debug_apk" >&2
+  exit 1
+fi
+timeout 120s adb install -r "$debug_apk"
+installed_package="$(timeout 15s adb shell pm path com.orbital.synth | tr -d '\r')"
+if [[ "$installed_package" != *'package:'* ]]; then
+  echo "com.orbital.synth is not installed after adb install: $installed_package" >&2
+  exit 1
+fi
+
 printf '%s\n' 'launching-portrait' > artifacts/emulator-phase.txt
 # The test runner may close its Activity. Launch the real app for the screenshot.
 adb shell am force-stop com.orbital.synth || true
-adb shell am start -W -n com.orbital.synth/.MainActivity | tee artifacts/activity-launch.txt
-grep -q '^Status: ok' artifacts/activity-launch.txt
+launch_orbital artifacts/activity-launch.txt
 
-# "am start" returning OK only means the intent was accepted. Verify that the
-# app's window is actually focused before saving a screenshot as UI evidence.
+# Require a real drawn MainActivity surface after the splash disappears.
+# A live process or focused splash is insufficient evidence for a screenshot.
 app_ready=0
-for attempt in {1..45}; do
+for attempt in {1..90}; do
   adb shell dumpsys window > artifacts/window-state.txt 2>&1 || true
   if adb shell pidof com.orbital.synth >/dev/null 2>&1 &&
-     grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth' artifacts/window-state.txt; then
+     orbital_window_drawn artifacts/window-state.txt; then
     app_ready=1
     break
   fi
   sleep 1
 done
 if [[ "$app_ready" != 1 ]]; then
-  echo "ORBITAL did not become the focused foreground window within 45 seconds." >&2
+  echo "ORBITAL MainActivity did not draw its surface within 90 readiness polls." >&2
   exit 1
 fi
 
@@ -96,8 +140,8 @@ sleep 2
 adb exec-out screencap -p > artifacts/orbital-emulator.png
 test -s artifacts/orbital-emulator.png
 test "$(file -b --mime-type artifacts/orbital-emulator.png)" = "image/png"
-printf 'foreground_window=verified\nscreenshot_sha256=%s\n' \
-  "$(sha256sum artifacts/orbital-emulator.png | cut -d' ' -f1)" \
+printf 'foreground_window=verified\nportrait_ready_poll=%s\nscreenshot_sha256=%s\n' \
+  "$attempt" "$(sha256sum artifacts/orbital-emulator.png | cut -d' ' -f1)" \
   > artifacts/emulator-summary.txt
 
 # Exercise the same real Compose activity at 360 dp wide with 1.3x system fonts.
@@ -117,29 +161,28 @@ display_overridden=1
 adb shell wm size "${compact_width_px}x${compact_height_px}"
 adb shell settings put system font_scale 1.3
 adb shell am force-stop com.orbital.synth
-adb shell am start -W -n com.orbital.synth/.MainActivity > artifacts/compact-activity-launch.txt
-grep -q '^Status: ok' artifacts/compact-activity-launch.txt
+launch_orbital artifacts/compact-activity-launch.txt
 
 printf '%s\n' 'compact-screenshot' > artifacts/emulator-phase.txt
 compact_ready=0
-for attempt in {1..45}; do
+for attempt in {1..90}; do
   adb shell dumpsys window > artifacts/compact-window-state.txt 2>&1 || true
   if adb shell pidof com.orbital.synth >/dev/null 2>&1 &&
-     grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth' artifacts/compact-window-state.txt; then
+     orbital_window_drawn artifacts/compact-window-state.txt; then
     compact_ready=1
     break
   fi
   sleep 1
 done
 if [[ "$compact_ready" != 1 ]]; then
-  echo 'ORBITAL did not focus at 360 dp / 1.3x font scale.' >&2
+  echo 'ORBITAL MainActivity did not draw at 360 dp / 1.3x font scale.' >&2
   exit 1
 fi
 sleep 2
 adb exec-out screencap -p > artifacts/orbital-compact-emulator.png
 test -s artifacts/orbital-compact-emulator.png
 test "$(file -b --mime-type artifacts/orbital-compact-emulator.png)" = "image/png"
-printf 'compact_width_dp=360\ncompact_font_scale=1.3\ncompact_screenshot_sha256=%s\n' \
-  "$(sha256sum artifacts/orbital-compact-emulator.png | cut -d' ' -f1)" \
+printf 'compact_width_dp=360\ncompact_font_scale=1.3\ncompact_ready_poll=%s\ncompact_screenshot_sha256=%s\n' \
+  "$attempt" "$(sha256sum artifacts/orbital-compact-emulator.png | cut -d' ' -f1)" \
   >> artifacts/emulator-summary.txt
 printf '%s\n' 'complete' > artifacts/emulator-phase.txt
