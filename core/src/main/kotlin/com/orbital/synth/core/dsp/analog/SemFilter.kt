@@ -75,6 +75,28 @@ class SemFilter(sampleRate: Int = 48_000) {
         saturationNorm = 1.0 / tanh(saturationGain)
     }
 
+    /**
+     * Copy all running analog state into a separately preallocated SEM instance.
+     * A stolen voice can therefore keep its old filter tail while a new note
+     * reuses the primary voice without sharing the two state-variable poles.
+     */
+    fun copyStateTo(destination: SemFilter) {
+        require(destination.rate == rate) { "Filter sample rates must match" }
+        destination.previousCutoff = previousCutoff
+        destination.previousResonance = previousResonance
+        destination.previousDrive = previousDrive
+        destination.mode = mode
+        destination.a1 = a1
+        destination.a2 = a2
+        destination.a3 = a3
+        destination.damping = damping
+        destination.saturationGain = saturationGain
+        destination.saturationNorm = saturationNorm
+        destination.state1 = state1
+        destination.state2 = state2
+        destination.lastBandPass = lastBandPass
+    }
+
     fun reset() {
         state1 = 0.0
         state2 = 0.0
