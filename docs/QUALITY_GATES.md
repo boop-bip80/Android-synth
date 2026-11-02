@@ -33,8 +33,8 @@ This is a release gate, not a claim that a gate has passed.
 
 ## G4 — Emulator CI
 - GitHub-hosted Android emulator (API 35 x86_64) boots, installs APK, launches MainActivity and runs instrumentation tests.
-- Host tests and emulator job split, with deterministic failure diagnostics.
-- Screenshot must be captured only after the app owns the focused window, with PNG format checked; window state, script status, logcat excerpt, debug APK and instrumentation APK retained as CI artifacts (do not commit generated build output).
+- Host tests and emulator job split, with deterministic failure diagnostics; device-facing instrumentation probes Android audio service route enumeration, output lifecycle/closure and sequencer command delivery when a virtual sink is available.
+- Screenshot must be captured only after the app owns the focused window, with PNG format checked; bounded ADB diagnostics include window state, script status, logcat excerpt, AudioFlinger/policy, MIDI state, memory and display facts, plus debug and instrumentation APKs (do not commit generated build output).
 - If emulator workflow fails/does not finish, report unverified; do not mark G4 complete.
 
 ## G5 — Real-device validation (not satisfied by an emulator)
