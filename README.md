@@ -1,6 +1,6 @@
 # ORBITAL — Android wavetable synthesizer
 
-**Status (2026-11-02): six additional development PRs (#15–#20) are merged to `main`, but the updated build and GitHub-hosted emulator are not yet verified.** The earlier baseline (`e64632f`) was locally reported to pass 89 core JVM tests, 31 Android JVM tests, Android lint and both debug APK assemblies with JDK 17, Android SDK 35 and Gradle 8.11.1. **Those results predate the six new changesets; do not count them as new CI results.** Device installability, live interaction, latency and audio performance remain unverified.
+**Status (2026-11-02): fourteen development and hardening PRs (#15–#28) are merged to `main`, but the updated build and GitHub-hosted emulator are not yet verified.** The earlier baseline (`e64632f`) was locally reported to pass 89 core JVM tests, 31 Android JVM tests, Android lint and both debug APK assemblies with JDK 17, Android SDK 35 and Gradle 8.11.1. **Those results predate the new changesets; do not count them as current CI results.** Device installability, live interaction, latency and audio performance remain unverified.
 
 ![Original ORBITAL generated concept artwork — UI reference, not a running-app screenshot](design/orbital-ui-reference.png)
 
@@ -10,12 +10,12 @@ ORBITAL is a touch-first, sound-design-oriented Android synthesizer. The interfa
 
 | Area | Code currently present | Verification still required |
 | --- | --- | --- |
-| Synthesis | Polyphonic portable Kotlin engine with **16 voices**, **five band-limited wavetable families**, oscillator morphing, alias-conscious wavetable mip crossfades, two-millisecond live filter coefficient slewing, improved polyphony transitions and idle rendering, note stealing, mono/poly/legato, portamento and pitch bend | Core JVM tests passed locally; measure pitch, aliasing and CPU on actual devices |
-| Tone and movement | ADSR with smoother live edits, resonant filter, LFO/modulation matrix, drive, stereo chorus and delay with ten-millisecond live wet/depth/feedback smoothing; touch-controllable wave, cutoff, resonance, movement and FX | Listening tests, stress/sample-rate and actual-device checks |
+| Synthesis | Polyphonic portable Kotlin engine with **16 voices**, **five band-limited wavetable families**, oscillator morphing, alias-conscious wavetable mip crossfades, two-millisecond live filter coefficient slewing, five-millisecond pan slewing on legato/voice stealing, improved polyphony transitions and idle rendering, note stealing, mono/poly/legato, portamento and pitch bend | Core JVM tests passed locally; measure pitch, aliasing and CPU on actual devices |
+| Tone and movement | ADSR with smoother live edits, resonant filter, LFO/modulation matrix, drive, stereo chorus and delay with ten-millisecond live wet/depth/feedback smoothing and dry-safe wet-gain reset after bypass; touch-controllable wave, cutoff, resonance, movement and FX | Listening tests, stress/sample-rate and actual-device checks |
 | Android audio and MIDI | AudioTrack render worker with lifecycle handling; MIDI parsing with per-port note ownership, per-channel sustain pedal (CC64), controller reset/panic and disconnect cleanup | Check real output routes, USB controllers, Bluetooth behavior and round-trip latency |
-| Interface | Native Compose sound, play, sequence and FX views; interactive touch/drag orbital morph/movement surface, chromatic keyboard TalkBack actions, expressive XY pad, patch library and save-as dialog | Emulator UI capture plus actual multi-touch, font-scale and orientation playtests |
-| Musical tools | On-screen sixteen-step sequencer with velocity/gate/swing/ties/probability; **20 scales**, Euclidean rhythms, core polymetric layering up to 64 steps and seeded scale-constrained melodic walks | Verify timing under load, app lifecycle and MIDI interactions |
-| Sounds and storage | **16 factory patches**, **10 factory patterns**, versioned patch model/import/export, local persistence and selectable user patch bank | Exercise migrations and real-device storage flows |
+| Interface | Native Compose sound, play, sequence and FX views; interactive touch/drag orbital morph/movement surface, chromatic keyboard TalkBack actions, expressive XY pad, accessible factory-sequence picker, patch library and save-as dialog | Emulator UI capture plus actual multi-touch, font-scale and orientation playtests |
+| Musical tools | On-screen sixteen-step sequencer with velocity/gate/swing/ties/probability and selectable factory sequences; **20 scales**, Euclidean rhythms, core polymetric layering up to 64 steps and seeded scale-constrained melodic walks | Verify timing under load, app lifecycle and MIDI interactions |
+| Sounds and storage | **16 factory patches**, **10 selectable factory patterns**, versioned patch model/import/export, local persistence and selectable user patch bank | Exercise migrations and real-device storage flows |
 | Quality automation | Baseline: **120 local JVM tests previously passed**; additional JVM/instrumentation regression cases merged but not yet run on CI; **API 35 x86_64 emulator** flow now validates a focused app window and PNG, captures diagnostics/checksums and uploads instrumentation APK | A completed green build plus GitHub Actions emulator run on the updated `main`, with linked artifacts |
 
 These are descriptions of code in this repository, **not claims of passing tests on the latest commit or a finished commercial instrument**. In particular, per-note MPE and guaranteed low-latency playback are not verified.
@@ -28,6 +28,16 @@ These are descriptions of code in this repository, **not claims of passing tests
 - [#15](https://github.com/boop-bip80/Android-synth/pull/15) — per-channel MIDI sustain, controller reset and port cleanup.
 - [#20](https://github.com/boop-bip80/Android-synth/pull/20) — interactive orbital expression and accessible chromatic keyboard.
 - [#18](https://github.com/boop-bip80/Android-synth/pull/18) — emulator foreground/screenshot checks, evidence artifacts and concurrent patch tests.
+
+## Hardening and app integration
+
+- [#21](https://github.com/boop-bip80/Android-synth/pull/21) — honor the starting pitch of generated melodies.
+- [#22](https://github.com/boop-bip80/Android-synth/pull/22) — unify orbital touch and drag gestures.
+- [#23](https://github.com/boop-bip80/Android-synth/pull/23) and [#27](https://github.com/boop-bip80/Android-synth/pull/27) — reset stale FX wet gains and wire safe re-enable behavior into the synth engine.
+- [#24](https://github.com/boop-bip80/Android-synth/pull/24) — avoid stereo discontinuities during legato and voice stealing.
+- [#25](https://github.com/boop-bip80/Android-synth/pull/25), [#26](https://github.com/boop-bip80/Android-synth/pull/26) and [#28](https://github.com/boop-bip80/Android-synth/pull/28) — worker-safe selection of all ten factory sequences, native UI picker and activity integration.
+
+Known limitations: abrupt transition to `FX_AMOUNT=0` still lacks a master-bus crossfade; voice identity is pitch-based rather than fully per-source/channel, so simultaneous same-pitch input from touch, sequencer and multiple MIDI devices needs deeper routing work. The UI currently edits sixteen steps even though the core supports composing longer patterns.
 
 ## Project layout
 
