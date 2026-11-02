@@ -2,6 +2,8 @@ package com.orbital.synth.core
 
 import com.orbital.synth.core.dsp.oscillator.Voice
 import com.orbital.synth.core.dsp.oscillator.WavetableBank
+import com.orbital.synth.core.dsp.processing.Drive
+import com.orbital.synth.core.dsp.processing.StereoDelay
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicIntegerArray
@@ -54,6 +56,11 @@ class OrbitalSynth(
     private var eventOrder = 0L
     private var previousFrequency: Double? = null
     private var lfoPhase = 0.0
+
+    // Master FX are strictly audio-thread-owned and allocated once at initialization.
+    private val fxDelay = StereoDelay(sampleRate, maxDelaySeconds = 1.5f)
+    private val fxScratch = FloatArray(2)
+    private var previousFxEnabled = false
 
     @Volatile private var playbackMode = VoiceMode.POLY
     @Volatile var activeVoiceCount: Int = 0
@@ -149,7 +156,22 @@ class OrbitalSynth(
         for (voice in voices) if (voice.active) active++
         activeVoiceCount = active
         val masterGain = (0.62 / sqrt(max(1, active).toDouble())).toFloat()
-        val drive = 1f + fxAmount * 2.25f
+        val fxEnabled = fxAmount > 0f
+        // Constant delay time prevents knob movements from abruptly changing tap positions.
+        // Configuration only occurs once per render block, never in the sample loop.
+        if (fxEnabled) {
+            fxDelay.configure(
+                timeSeconds = 0.29f,
+                feedback = 0.36f + fxAmount * 0.40f,
+                wet = fxAmount * 0.52f,
+                pingPong = 0.72f
+            )
+        } else if (previousFxEnabled) {
+            // Clear old echoes on bypass so reopening the effect cannot replay stale buffers.
+            fxDelay.reset()
+        }
+        previousFxEnabled = fxEnabled
+        val driveAmount = fxAmount * 0.68f
         var offset = 0
 
         for (frame in 0 until frames) {
@@ -170,8 +192,23 @@ class OrbitalSynth(
                     right += sample * voice.panRight
                 }
             }
-            output[offset++] = softClip(left * masterGain * drive)
-            output[offset++] = softClip(right * masterGain * drive)
+            val dryLeft = softClip(left * masterGain)
+            val dryRight = softClip(right * masterGain)
+            if (fxEnabled) {
+                // Preallocated scratch prevents Pair/array creation per frame.
+                fxDelay.process(
+                    Drive.process(dryLeft, driveAmount),
+                    Drive.process(dryRight, driveAmount),
+                    fxScratch,
+                    0
+                )
+                output[offset++] = softClip(fxScratch[0])
+                output[offset++] = softClip(fxScratch[1])
+            } else {
+                // Bit-for-bit identical to the pre-FX dry path at FX_AMOUNT=0.
+                output[offset++] = dryLeft
+                output[offset++] = dryRight
+            }
         }
 
         // Keep the UI-facing diagnostic in sync with voices that ended within this block.
