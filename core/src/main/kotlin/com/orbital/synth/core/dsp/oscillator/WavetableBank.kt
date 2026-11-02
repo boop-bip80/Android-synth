@@ -18,22 +18,54 @@ internal object WavetableBank {
     private const val WAVE_FAMILIES = 5
     private val harmonicCaps = intArrayOf(1, 2, 4, 8, 16, 32, 64, 128)
 
-    private val tables: Array<Array<FloatArray>> = Array(WAVE_FAMILIES) { family ->
-        Array(harmonicCaps.size) { level ->
-            val cap = harmonicCaps[level]
-            val result = FloatArray(TABLE_SIZE)
-            for (i in result.indices) {
-                val phase = 2.0 * PI * i / TABLE_SIZE
-                var value = 0.0
-                for (harmonic in 1..cap) {
-                    val amplitude = harmonicAmplitude(family, harmonic)
-                    if (amplitude != 0.0) value += amplitude * sin(phase * harmonic)
-                }
-                result[i] = value.toFloat()
-            }
-            normalize(result)
-            result
+    private val tables: Array<Array<FloatArray>> = buildTables()
+
+    /**
+     * All mip tables share each lower harmonic, and every waveform samples the
+     * same phase grid. Build them together so each harmonic sine is evaluated
+     * once per phase instead of once per family *and* once per mip.
+     *
+     * Accumulating harmonics in ascending order preserves the original Double
+     * summation, Float conversion and independent per-table normalization.
+     * This is initialization-only work; [sample] still performs no allocation.
+     */
+    private fun buildTables(): Array<Array<FloatArray>> {
+        val result = Array(WAVE_FAMILIES) {
+            Array(harmonicCaps.size) { FloatArray(TABLE_SIZE) }
         }
+        val maxHarmonic = harmonicCaps.last()
+        val amplitudes = Array(WAVE_FAMILIES) { family ->
+            DoubleArray(maxHarmonic) { harmonicIndex ->
+                harmonicAmplitude(family, harmonicIndex + 1)
+            }
+        }
+        val partialSums = DoubleArray(WAVE_FAMILIES)
+        for (i in 0 until TABLE_SIZE) {
+            partialSums.fill(0.0)
+            val phase = 2.0 * PI * i / TABLE_SIZE
+            var nextLevel = 0
+            for (harmonic in 1..maxHarmonic) {
+                val harmonicSine = sin(phase * harmonic)
+                for (family in 0 until WAVE_FAMILIES) {
+                    val amplitude = amplitudes[family][harmonic - 1]
+                    if (amplitude != 0.0) {
+                        partialSums[family] += amplitude * harmonicSine
+                    }
+                }
+                if (harmonic == harmonicCaps[nextLevel]) {
+                    for (family in 0 until WAVE_FAMILIES) {
+                        result[family][nextLevel][i] = partialSums[family].toFloat()
+                    }
+                    nextLevel++
+                }
+            }
+        }
+        for (family in 0 until WAVE_FAMILIES) {
+            for (level in harmonicCaps.indices) {
+                normalize(result[family][level])
+            }
+        }
+        return result
     }
 
     /** Largest safe table index for the fundamental frequency, reserving a Nyquist margin. */
