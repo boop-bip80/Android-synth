@@ -12,7 +12,6 @@ import com.orbital.synth.core.music.FactorySequence
 import com.orbital.synth.core.music.SequencerNote
 import com.orbital.synth.core.music.StepPattern
 import java.io.Closeable
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /** Runtime observations, not a claim of verified end-to-end device latency. */
@@ -44,6 +43,10 @@ class AndroidAudioOutput(
     }
 
     private val lifecycleLock = Any()
+    // All state transitions and AudioManager focus operations run under this lock.
+    // Keeping request and abandon serialized prevents a stale stop abandoning
+    // a newer start's focus claim.
+    private val focusState = AudioFocusSessionState()
     private val audioManager =
         context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val attributes = AudioAttributes.Builder()
@@ -52,12 +55,12 @@ class AndroidAudioOutput(
         .build()
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
         when (change) {
-            AudioManager.AUDIOFOCUS_LOSS,
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> requestStopForFocusLoss()
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK ->
-                runCatching { playback?.setVolume(0.3f) }
-            AudioManager.AUDIOFOCUS_GAIN ->
-                runCatching { playback?.setVolume(1f) }
+            AudioManager.AUDIOFOCUS_LOSS -> requestStopForFocusLoss(transient = false)
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> requestStopForFocusLoss(transient = true)
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> synchronized(lifecycleLock) {
+                if (focusState.hasClaim) runCatching { playback?.setVolume(0.3f) }
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> onFocusGained()
         }
     }
     private val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -65,7 +68,6 @@ class AndroidAudioOutput(
         .setWillPauseWhenDucked(false)
         .setOnAudioFocusChangeListener(focusListener)
         .build()
-    private val hasFocus = AtomicBoolean(false)
     private val renderedFrameCounter = AtomicLong(0)
     private val audioSequencer = AudioSequencerTransport(
         sampleRate = sampleRate,
@@ -131,6 +133,10 @@ class AndroidAudioOutput(
      */
     fun start(): Boolean = synchronized(lifecycleLock) {
         if (disposed) return@synchronized false
+        focusState.requestPlayback()
+        // A temporary focus loss keeps its registered claim to receive GAIN.
+        // Do not restart the output until Android actually returns that focus.
+        if (focusState.awaitingGain) return@synchronized true
         if (running) return@synchronized true
         if (workerThread?.isAlive == true) {
             // A rapid background -> foreground cycle must not leave the app silent.
@@ -140,14 +146,22 @@ class AndroidAudioOutput(
         pendingRestartToken = null
         lifecycleGeneration++
 
-        val focusResult = runCatching { audioManager.requestAudioFocus(focusRequest) }
-            .getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
-        if (focusResult != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return@synchronized false
-        hasFocus.set(true)
+        val granted = focusState.acquireClaim {
+            runCatching {
+                audioManager.requestAudioFocus(focusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            }.getOrDefault(false)
+        }
+        if (!granted) {
+            focusState.cancelPlayback()
+            return@synchronized false
+        }
 
-        val config = openTrack()
+        val config = runCatching { openTrack() }.onFailure {
+            Log.w("OrbitalAudio", "AudioTrack initialization failed", it)
+        }.getOrNull()
         if (config == null) {
-            abandonFocus()
+            focusState.cancelPlayback()
+            abandonFocusLocked()
             return@synchronized false
         }
         lastEncoding = config.encoding
@@ -166,20 +180,19 @@ class AndroidAudioOutput(
      * This method does not block the main/UI thread. A subsequent rapid start() is queued.
      */
     fun stop() {
-        val track: AudioTrack?
-        val thread: Thread?
         synchronized(lifecycleLock) {
             lifecycleGeneration++
             pendingRestartToken = null
+            focusState.cancelPlayback()
             running = false
-            track = playback
-            thread = workerThread
+            synth.allNotesOff()
+            runCatching { playback?.pause() }
+            workerThread?.interrupt()
+            // Must execute under the same lock as start() requests focus: a
+            // concurrent restart cannot have its newer claim abandoned here.
+            abandonFocusLocked()
         }
-        synth.allNotesOff()
-        runCatching { track?.pause() }
-        thread?.interrupt()
-        // No join on the UI thread: worker owns release and will exit after the pause.
-        abandonFocus()
+        // No join on the UI thread: the worker owns AudioTrack.release().
     }
 
     override fun close() {
@@ -278,41 +291,61 @@ class AndroidAudioOutput(
             runCatching { config.track.pause() }
             runCatching { config.track.flush() }
             runCatching { config.track.release() }
-            // Abandon the previous focus claim before advertising an idle worker.
-            // Otherwise a concurrent start() could acquire focus just before we
-            // accidentally abandon that newer session.
-            abandonFocus()
-            val restartToken: Long?
             synchronized(lifecycleLock) {
                 if (playback === config.track) playback = null
                 if (workerThread === Thread.currentThread()) workerThread = null
-                restartToken = pendingRestartToken
+                val restartToken = pendingRestartToken
                 pendingRestartToken = null
-            }
-            if (restartToken != null) {
-                synchronized(lifecycleLock) {
-                    if (!disposed && lifecycleGeneration == restartToken) start()
+                val restartAllowed = restartToken != null && !disposed &&
+                    lifecycleGeneration == restartToken &&
+                    focusState.playbackRequested && !focusState.awaitingGain
+                // Keep our focus request registered while temporarily suspended,
+                // otherwise Android cannot deliver the focus-gain callback.
+                // A queued rapid restart also retains the claim without churn.
+                if (!focusState.retainClaimAfterWorkerExit(restartAllowed)) {
+                    abandonFocusLocked()
                 }
+                if (restartAllowed) start()
             }
         }
     }
 
-    private fun requestStopForFocusLoss() {
+    private fun requestStopForFocusLoss(transient: Boolean) {
         synchronized(lifecycleLock) {
+            if (!focusState.hasClaim) return
+            if (transient) {
+                if (!focusState.transientLoss()) return
+            } else {
+                focusState.permanentLoss()
+            }
             lifecycleGeneration++
             pendingRestartToken = null
             running = false
+            synth.allNotesOff()
+            runCatching { playback?.pause() }
+            workerThread?.interrupt()
+            if (!transient) abandonFocusLocked()
         }
-        synth.allNotesOff()
-        runCatching { playback?.pause() }
-        workerThread?.interrupt()
     }
 
-    private fun abandonFocus() {
-        if (hasFocus.compareAndSet(true, false)) {
-            runCatching { audioManager.abandonAudioFocusRequest(focusRequest) }
+    private fun onFocusGained() {
+        synchronized(lifecycleLock) {
+            if (!focusState.hasClaim) return
+            runCatching { playback?.setVolume(1f) }
+            // If the old worker is still unwinding, start() queues its restart
+            // token; otherwise it starts a fresh AudioTrack immediately.
+            if (focusState.gain() && !disposed) start()
         }
     }
+
+    /** Must be called with lifecycleLock held, as in every focus acquisition. */
+    private fun abandonFocusLocked() {
+        focusState.abandonClaim {
+            runCatching { audioManager.abandonAudioFocusRequest(focusRequest) }
+            Unit
+        }
+    }
+
     private companion object {
         // MIDI port IDs are positive, keyboard uses -1L. Keep the sequence independent.
         const val SEQUENCER_SOURCE_ID = -2L
