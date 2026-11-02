@@ -226,9 +226,11 @@ fun OrbitalScreen(
             .background(MainGradient)
             .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
-        // These atmospheric gradients are intentionally decorative. The live orbit below
-        // is still the signal-controlled, interactive visualization.
-        Canvas(Modifier.fillMaxSize()) {
+        val compactHeight = maxHeight < 500.dp
+        // The short-landscape performance layout has a strict vertical budget.
+        // Its waveform panel remains scrollable; the keyboard must retain space.
+        // Skip decorative full-screen gradients in that mode to reduce GPU work.
+        if (!compactHeight) Canvas(Modifier.fillMaxSize()) {
             val cyanCenter = Offset(size.width * .06f, size.height * .22f)
             val violetCenter = Offset(size.width * .96f, size.height * .46f)
             val lightRadius = maxOf(size.width, size.height) * .72f
@@ -254,11 +256,15 @@ fun OrbitalScreen(
                 x += spacing
             }
         }
-        val compactHeight = maxHeight < 500.dp
         val compactOrbitLayout = maxWidth < 380.dp || LocalDensity.current.fontScale >= 1.2f
         Column(
-            Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalArrangement = Arrangement.spacedBy(if (compactHeight) 6.dp else if (compactOrbitLayout) 8.dp else 12.dp),
+            Modifier.fillMaxSize().padding(
+                horizontal = if (compactHeight) 8.dp else 12.dp,
+                vertical = if (compactHeight) 3.dp else 9.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(
+                if (compactHeight) 3.dp else if (compactOrbitLayout) 8.dp else 12.dp,
+            ),
         ) {
         Header(
             patch = state.patchName,
@@ -270,8 +276,8 @@ fun OrbitalScreen(
                 .fillMaxWidth()
                 .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .55f), RoundedCornerShape(16.dp))
                 .background(OrbitalPalette.Void.copy(alpha = .74f), RoundedCornerShape(16.dp))
-                .padding(3.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(if (compactHeight) 0.dp else 3.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compactHeight) 2.dp else 4.dp),
         ) {
             Tab.entries.forEachIndexed { index, tab ->
                 val active = selectedTab == tab
@@ -300,8 +306,8 @@ fun OrbitalScreen(
                             contentDescription = "Tab " + tab.title
                         }
                         .clickable(role = Role.Tab) { selectedTab = tab }
-                        .heightIn(min = 48.dp)
-                        .padding(vertical = 5.dp),
+                        .heightIn(min = if (compactHeight) 44.dp else 48.dp)
+                        .padding(vertical = if (compactHeight) 3.dp else 5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
@@ -570,7 +576,7 @@ fun OrbitalScreen(
             onNoteOn = onNoteOn,
             onNoteOff = onNoteOff,
             modifier = Modifier.fillMaxWidth(),
-            preferredHeight = if (compactHeight) 94.dp else if (compactOrbitLayout) 110.dp else null,
+            preferredHeight = if (compactHeight) 82.dp else if (compactOrbitLayout) 110.dp else null,
         )
         Row(
             Modifier.fillMaxWidth(),
