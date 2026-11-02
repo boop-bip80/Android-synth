@@ -3,6 +3,7 @@ package com.orbital.synth.core.dsp.processing
 import kotlin.math.PI
 import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -33,15 +34,23 @@ class StereoChorus(sampleRate: Int = 48_000) {
     private var stepSin = sin(2.0 * PI * 0.38 / rate)
     private var stepCos = cos(2.0 * PI * 0.38 / rate)
     private var framesUntilNormalization = 4_096
+    // A 10 ms one-pole glide avoids hard wet/depth/width edges when a touch knob moves.
+    // No work is allocated on the audio thread; the rate-dependent coefficient is fixed.
+    private val controlSlew = 1.0 - exp(-1.0 / (rate * 0.010))
     private var sweepSamples = rate * 0.004
+    private var targetSweepSamples = sweepSamples
     private var mix = 0.0
+    private var targetMix = mix
     private var offsetSin = 1.0
+    private var targetOffsetSin = offsetSin
     private var offsetCos = 0.0
+    private var targetOffsetCos = offsetCos
+    private var hasConfiguration = false
 
     /**
      * [rateHz] in 0.02..8 Hz, [depth]/[wet]/[stereoWidth] in 0..1.
-     * Non-finite inputs fall back to safe defaults. wet=0 is an exact dry path.
-     * Controls are not smoothed; the delay taps themselves are interpolated.
+     * Non-finite inputs fall back to safe defaults. Initial wet=0 is an exact dry path.
+     * Subsequent depth/wet/width changes are slewed over roughly 10 ms, avoiding zipper noise.
      */
     fun configure(rateHz: Float, depth: Float, wet: Float, stereoWidth: Float = 1f) {
         val hertz = (if (rateHz.isFinite()) rateHz else 0.38f).coerceIn(0.02f, 8f)
@@ -51,16 +60,26 @@ class StereoChorus(sampleRate: Int = 48_000) {
         val angle = 2.0 * PI * hertz.toDouble() / rate
         stepSin = sin(angle)
         stepCos = cos(angle)
-        sweepSamples = rate * 0.009 * safeDepth
-        mix = safeWet.toDouble()
+        targetSweepSamples = rate * 0.009 * safeDepth
+        targetMix = safeWet.toDouble()
         val offset = PI * 0.5 * width
-        offsetSin = sin(offset)
-        offsetCos = cos(offset)
+        targetOffsetSin = sin(offset)
+        targetOffsetCos = cos(offset)
+        // Initial configuration must be exact: fully wet/dry presets cannot fade from
+        // constructor defaults when the first note starts. Only live edits are slewed.
+        if (!hasConfiguration) {
+            snapControlsToTargets()
+            hasConfiguration = true
+        }
     }
 
     /** Process one interleaved stereo frame into [output] at [offset]. */
     fun process(left: Float, right: Float, output: FloatArray, offset: Int) {
         require(offset >= 0 && offset + 1 < output.size)
+        mix += (targetMix - mix) * controlSlew
+        sweepSamples += (targetSweepSamples - sweepSamples) * controlSlew
+        offsetSin += (targetOffsetSin - offsetSin) * controlSlew
+        offsetCos += (targetOffsetCos - offsetCos) * controlSlew
         val dryL = sanitize(left)
         val dryR = sanitize(right)
         leftHistory[writeIndex] = dryL
@@ -102,6 +121,14 @@ class StereoChorus(sampleRate: Int = 48_000) {
         lfoSin = 0.0
         lfoCos = 1.0
         framesUntilNormalization = 4_096
+        snapControlsToTargets()
+    }
+
+    private fun snapControlsToTargets() {
+        mix = targetMix
+        sweepSamples = targetSweepSamples
+        offsetSin = targetOffsetSin
+        offsetCos = targetOffsetCos
     }
 
     private fun readTap(history: FloatArray, delaySamples: Double): Double {
