@@ -11,6 +11,7 @@ import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.music.FactorySequence
 import com.orbital.synth.core.music.SequencerNote
 import com.orbital.synth.core.music.StepPattern
+import com.orbital.synth.core.performance.ArpeggiatorDirection
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicLong
 
@@ -69,9 +70,22 @@ class AndroidAudioOutput(
         .setOnAudioFocusChangeListener(focusListener)
         .build()
     private val renderedFrameCounter = AtomicLong(0)
-    private val audioSequencer = AudioSequencerTransport(
+    // Two preallocated scratch buffers support nested sample-accurate arp and
+    // step-sequencer event boundaries without allocating arrays per callback.
+    private val performanceScratch = FloatArray(framesPerWrite * 2)
+    private val performanceArp = PerformanceArpTransport(
         sampleRate = sampleRate,
         renderFrames = { output, frames -> synth.renderStereo(output, frames) },
+        noteOn = { source, channel, note, velocity ->
+            synth.noteOn(source, channel, note, velocity)
+        },
+        noteOff = { source, channel, note -> synth.noteOff(source, channel, note) }
+    )
+    private val audioSequencer = AudioSequencerTransport(
+        sampleRate = sampleRate,
+        renderFrames = { output, frames ->
+            performanceArp.renderBlock(output, performanceScratch, frames)
+        },
         noteOn = { note, velocity -> synth.noteOn(SEQUENCER_SOURCE_ID, 0, note, velocity) },
         noteOff = { note -> synth.noteOff(SEQUENCER_SOURCE_ID, 0, note) }
     )
@@ -96,6 +110,37 @@ class AndroidAudioOutput(
     val sequencerPatternId: String get() = audioSequencer.selectedPatternId
     val sequencerPatternName: String get() = audioSequencer.selectedPatternName
     val sequencerStepCount: Int get() = audioSequencer.stepCount
+
+    val isArpeggiatorEnabled: Boolean get() = performanceArp.enabled
+    val arpeggiatorDirection: ArpeggiatorDirection get() = performanceArp.direction
+    val arpeggiatorRate: Int get() = performanceArp.subdivisionsPerBeat
+    val arpeggiatorTempo: Int get() = performanceArp.tempo
+    val arpeggiatorLatch: Boolean get() = performanceArp.latch
+
+    /** Worker-queued controls; safe to call from Compose or MIDI callbacks. */
+    fun setArpeggiatorEnabled(enabled: Boolean) = performanceArp.setEnabled(enabled)
+    fun setArpeggiatorDirection(direction: ArpeggiatorDirection) =
+        performanceArp.setDirection(direction)
+    fun setArpeggiatorRate(subdivisionsPerBeat: Int): Boolean =
+        performanceArp.setRate(subdivisionsPerBeat)
+    fun setArpeggiatorTempo(bpm: Int): Boolean = performanceArp.setTempo(bpm)
+    fun setArpeggiatorLatch(latch: Boolean) = performanceArp.setLatch(latch)
+    fun setArpeggiatorSwing(swing: Double): Boolean = performanceArp.setSwing(swing)
+
+    /**
+     * Route touch and MIDI keys here (instead of directly to the synth) for
+     * automatic source-aware bypass/arp selection. Inputs arriving during audio
+     * focus loss are ignored, avoiding stale keys on the next focus-gain restart.
+     */
+    fun noteOn(sourceId: Long, channel: Int, note: Int, velocity: Int = 127): Boolean =
+        running && performanceArp.inputNoteOn(sourceId, channel, note, velocity)
+
+    fun noteOff(sourceId: Long, channel: Int, note: Int): Boolean =
+        running && performanceArp.inputNoteOff(sourceId, channel, note)
+
+    fun allNotesOff(sourceId: Long) = performanceArp.inputSourceAllNotesOff(sourceId)
+
+    fun arpeggiatorPanic() = performanceArp.panic()
 
     /** All sequencer mutations are queued for the audio render worker. */
     fun setSequencerPlaying(playing: Boolean) = audioSequencer.setPlaying(playing)
@@ -250,6 +295,7 @@ class AndroidAudioOutput(
                 ShortArray(sampleCount) else null
 
             config.track.play()
+            performanceArp.onWorkerStart()
             audioSequencer.onWorkerStart()
             while (running && !Thread.currentThread().isInterrupted) {
                 // Sample-addressed notes are applied at exact offsets within the
@@ -287,6 +333,7 @@ class AndroidAudioOutput(
         } finally {
             running = false
             audioSequencer.onWorkerStop()
+            performanceArp.onWorkerStop()
             lastUnderruns = runCatching { config.track.underrunCount }.getOrDefault(lastUnderruns)
             runCatching { config.track.pause() }
             runCatching { config.track.flush() }
