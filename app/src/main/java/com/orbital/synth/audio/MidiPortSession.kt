@@ -1,6 +1,68 @@
 package com.orbital.synth.audio
 
 import java.io.Closeable
+import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * Opt-in source identity for MIDI listeners. Legacy listeners still receive
+ * their existing callbacks; source-aware listeners receive exactly one
+ * source-tagged callback per note event instead. Both onSource methods default
+ * to the legacy methods for compatibility during app migrations.
+ *
+ * sourceId identifies one physical/virtual MIDI OUTPUT PORT connection, not a
+ * MIDI channel, and changes whenever that port reconnects. Pair it with
+ * channel and pitch for stable voice ownership across ports and retriggers.
+ */
+interface SourceAwareMidiMessageListener : MidiMessageListener {
+    fun onSourceNoteOn(sourceId: Long, channel: Int, note: Int, velocity: Int) {
+        onNoteOn(channel, note, velocity)
+    }
+
+    fun onSourceNoteOff(sourceId: Long, channel: Int, note: Int, velocity: Int) {
+        onNoteOff(channel, note, velocity)
+    }
+}
+
+/** Pure Kotlin adapter used by both normal event delivery and port cleanup. */
+internal class MidiSourceRouter(
+    private val sourceId: Long,
+    private val target: MidiMessageListener
+) : MidiMessageListener {
+    init { require(sourceId > 0L) }
+
+    override fun onNoteOn(channel: Int, note: Int, velocity: Int) {
+        if (target is SourceAwareMidiMessageListener) {
+            target.onSourceNoteOn(sourceId, channel, note, velocity)
+        } else target.onNoteOn(channel, note, velocity)
+    }
+
+    override fun onNoteOff(channel: Int, note: Int, velocity: Int) {
+        if (target is SourceAwareMidiMessageListener) {
+            target.onSourceNoteOff(sourceId, channel, note, velocity)
+        } else target.onNoteOff(channel, note, velocity)
+    }
+
+    override fun onControlChange(channel: Int, controller: Int, value: Int) {
+        target.onControlChange(channel, controller, value)
+    }
+
+    override fun onPitchBend(channel: Int, value: Int) {
+        target.onPitchBend(channel, value)
+    }
+}
+
+/**
+ * A port begins closed to input until its parent device connection is accepted.
+ * Closing is irreversible, so a late activation or callback cannot revive a
+ * detached source or send phantom notes from a rejected connection.
+ */
+internal class MidiPortGate {
+    private val state = AtomicInteger(0) // 0=pending, 1=active, 2=detached
+
+    val acceptsInput: Boolean get() = state.get() == 1
+    fun activate(): Boolean = state.compareAndSet(0, 1)
+    fun close() { state.set(2) }
+}
 
 /**
  * One MIDI cable/port's note ownership. A removed USB controller must release
