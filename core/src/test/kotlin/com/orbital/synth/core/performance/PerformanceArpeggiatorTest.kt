@@ -98,7 +98,8 @@ class PerformanceArpeggiatorTest {
         assertTrue(onEvents(changed).any { it.midiNote == 64 })
         assertFalse(onEvents(changed).any { it.midiNote == 60 })
         assertTrue(arp.noteOff(1, 0, 64).isEmpty())
-        assertTrue(arp.clearLatch().isEmpty())
+        assertEquals(1, arp.clearLatch().size)
+        assertTrue(arp.advance(12_000).isEmpty())
     }
 
     @Test
