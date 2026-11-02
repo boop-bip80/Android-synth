@@ -207,6 +207,93 @@ class OrbitalSynthTest {
         assertEquals(0, synth.activeVoiceCount)
     }
 
+    @Test fun overlappingSamePitchNotesReleaseOneVoiceAtATime() {
+        val synth = OrbitalSynth(maxVoices = 4)
+        synth.setParameter(ParameterId.RELEASE, 0f)
+        val audio = FloatArray(4096 * 2)
+        synth.noteOn(60)
+        synth.renderStereo(audio, 512)
+        synth.noteOn(60)
+        synth.renderStereo(audio, 512)
+        assertEquals(2, synth.activeVoiceCount)
+
+        // A sequencer note-off must not kill a touch voice sustaining the same pitch.
+        synth.noteOff(60)
+        synth.renderStereo(audio, 4096)
+        assertEquals(1, synth.activeVoiceCount)
+        assertTrue(rms(audio) > 0.001)
+
+        synth.noteOff(60)
+        synth.renderStereo(audio, 4096)
+        assertEquals(0, synth.activeVoiceCount)
+    }
+
+    @Test fun repeatedSamePitchIsHeldUntilFinalReleaseWithOneVoiceCapacity() {
+        val synth = OrbitalSynth(maxVoices = 1)
+        synth.setVoiceMode(VoiceMode.LEGATO)
+        synth.setParameter(ParameterId.RELEASE, 0f)
+        val audio = FloatArray(4096 * 2)
+        synth.noteOn(69)
+        synth.noteOn(69)
+        synth.renderStereo(audio, 512)
+        assertEquals(1, synth.activeVoiceCount)
+
+        synth.noteOff(69)
+        synth.renderStereo(audio, 4096)
+        assertEquals(1, synth.activeVoiceCount)
+        assertTrue(rms(audio) > 0.001)
+
+        synth.noteOff(69)
+        synth.renderStereo(audio, 4096)
+        assertEquals(0, synth.activeVoiceCount)
+    }
+
+    @Test fun allNotesOffResetsOverlappingHeldCounts() {
+        val synth = OrbitalSynth(maxVoices = 2)
+        synth.setParameter(ParameterId.RELEASE, 0f)
+        val audio = FloatArray(4096 * 2)
+        synth.noteOn(60)
+        synth.noteOn(60)
+        synth.renderStereo(audio, 512)
+        synth.allNotesOff()
+        synth.renderStereo(audio, 4096)
+        assertEquals(0, synth.activeVoiceCount)
+
+        synth.noteOn(60)
+        synth.renderStereo(audio, 512)
+        synth.noteOff(60)
+        synth.renderStereo(audio, 4096)
+        assertEquals(0, synth.activeVoiceCount)
+    }
+
+    @Test fun voiceCountChangeDoesNotJumpTheLevelOfAnExistingVoice() {
+        val solo = pureSine()
+        val layered = pureSine()
+        for (synth in listOf(solo, layered)) {
+            synth.setParameter(ParameterId.SUSTAIN, 1f)
+            synth.noteOn(69)
+        }
+        val first = FloatArray(4000 * 2)
+        val second = FloatArray(4000 * 2)
+        solo.renderStereo(first, 4000)
+        layered.renderStereo(second, 4000)
+        assertArrayEquals(first, second, 0f)
+
+        // The newly triggered sine starts at zero, so its first sample should not
+        // cause a large change to the old A4 voice. Without gain slewing, the
+        // polyphony gain jumps from .62 to .62/sqrt(2) at this exact boundary.
+        layered.noteOn(84)
+        val soloAfter = FloatArray(256)
+        val layeredAfter = FloatArray(256)
+        solo.renderStereo(soloAfter, 128)
+        layered.renderStereo(layeredAfter, 128)
+        assertTrue(
+            "Polyphony transition cut existing note level abruptly",
+            abs(layeredAfter[0] - soloAfter[0]) < 0.02f
+        )
+        assertBounded(layeredAfter)
+    }
+
     private fun pureSine(sampleRate: Int = 48_000): OrbitalSynth = OrbitalSynth(sampleRate).apply {
         setParameter(ParameterId.WAVE, 0f)
         setParameter(ParameterId.MORPH, 0f)
