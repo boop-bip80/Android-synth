@@ -4,7 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,29 +88,31 @@ internal fun OrbitalDisplay(
             }
             .pointerInput(onExpressionChange != null) {
                 if (onExpressionChange != null) {
-                    detectTapGestures { point ->
-                        val (nextMorph, nextMovement) = expressionCoordinates(
-                            point.x, point.y, size.width.toFloat(), size.height.toFloat(),
-                        )
-                        expressionCallback?.invoke(nextMorph, nextMovement)
-                    }
-                }
-            }
-            .pointerInput(onExpressionChange != null) {
-                if (onExpressionChange != null) {
-                    fun update(point: Offset) {
-                        val (nextMorph, nextMovement) = expressionCoordinates(
-                            point.x, point.y, size.width.toFloat(), size.height.toFloat(),
-                        )
-                        expressionCallback?.invoke(nextMorph, nextMovement)
-                    }
-                    detectDragGestures(
-                        onDragStart = { update(it) },
-                        onDrag = { change, _ ->
-                            update(change.position)
+                    // One detector owns both taps and continuous drags. Consuming the
+                    // down event keeps the scrollable editor from stealing a performance gesture.
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        fun moveTo(point: Offset) {
+                            val (nextMorph, nextMovement) = expressionCoordinates(
+                                point.x, point.y, size.width.toFloat(), size.height.toFloat(),
+                            )
+                            expressionCallback?.invoke(nextMorph, nextMovement)
+                        }
+                        moveTo(down.position)
+                        down.consume()
+                        var lastPosition = down.position
+                        while (true) {
+                            val change = awaitPointerEvent().changes.firstOrNull {
+                                it.id == down.id
+                            } ?: break
+                            if (!change.pressed) break
+                            if (change.position != lastPosition) {
+                                moveTo(change.position)
+                                lastPosition = change.position
+                            }
                             change.consume()
-                        },
-                    )
+                        }
+                    }
                 }
             },
     ) {
