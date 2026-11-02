@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import java.io.Closeable
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Optional Android MIDI discovery and input. Android's device *output* ports are
@@ -30,6 +31,12 @@ class AndroidMidiManager(
     // A device can disappear while openDevice() is still in flight. Do not
     // attach its late callback to an already detached physical controller.
     private val detached = mutableSetOf<Int>()
+
+    // No two port connections share an ID, even across detach/reconnect or
+    // distinct AndroidMidiManager instances in the same process.
+    private companion object {
+        val nextPortSourceId = AtomicLong(1L)
+    }
 
     @Volatile private var started = false
     @Volatile private var disposed = false
@@ -151,9 +158,14 @@ class AndroidMidiManager(
                 null
             } ?: continue
 
-            val portSession = MidiPortSession(listener)
+            val gate = MidiPortGate()
+            val sourceId = nextPortSourceId.getAndIncrement()
+            val portSession = MidiPortSession(MidiSourceRouter(sourceId, listener))
             val receiver = object : MidiReceiver() {
                 override fun onSend(message: ByteArray, offset: Int, count: Int, timestamp: Long) {
+                    // A rejected device, pending attach or detached port must
+                    // never synthesize notes through a stale callback.
+                    if (!gate.acceptsInput) return
                     try {
                         portSession.feed(message, offset, count)
                     } catch (failure: Exception) {
@@ -163,7 +175,7 @@ class AndroidMidiManager(
             }
             try {
                 port.connect(receiver)
-                ports.add(PortConnection(port, receiver, portSession))
+                ports.add(PortConnection(port, receiver, portSession, gate))
             } catch (failure: Exception) {
                 Log.w("OrbitalMidi", "Could not attach MIDI receiver", failure)
                 portSession.close()
@@ -179,15 +191,19 @@ class AndroidMidiManager(
                 true
             } else false
         }
-        if (!accepted) connection.close()
+        if (accepted) ports.forEach { it.activate() } else connection.close()
     }
 
     private class PortConnection(
         val port: MidiOutputPort,
         val receiver: MidiReceiver,
-        val session: MidiPortSession
+        val session: MidiPortSession,
+        val gate: MidiPortGate
     ) {
+        fun activate() { gate.activate() }
+
         fun close() {
+            gate.close() // reject racing and future callbacks before disconnect
             runCatching { port.disconnect(receiver) }
             // Release only pitches held by this port, including unplug while
             // a key remains down, before the device is finally released.
