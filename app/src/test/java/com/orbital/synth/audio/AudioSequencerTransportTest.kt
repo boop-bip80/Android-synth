@@ -31,6 +31,9 @@ class AudioSequencerTransportTest {
         val output = FloatArray(192 * 2)
         val scratch = FloatArray(output.size)
         fun render() = transport.renderBlock(output, scratch, 192)
+        fun renderFrames(frames: Int) = transport.renderBlock(
+            FloatArray(frames * 2), FloatArray(frames * 2), frames
+        )
     }
 
     @Test
@@ -114,7 +117,7 @@ class AudioSequencerTransportTest {
     @Test
     fun factorySelectionValidatesImmediatelyAndPublishesAtomicWorkerSnapshot() {
         val fake = Fake()
-        assertEquals(10, fake.transport.factoryPatterns.size)
+        assertEquals(12, fake.transport.factoryPatterns.size)
         assertEquals("aurora", fake.transport.selectedPatternId)
         assertEquals("Aurora Orbit", fake.transport.selectedPatternName)
         assertEquals(16, fake.transport.stepCount)
@@ -149,6 +152,182 @@ class AudioSequencerTransportTest {
         assertFalse(fake.held.contains(67))
         assertTrue(fake.held.contains(48))
         assertTrue(fake.transport.playhead in 0..15)
+    }
+
+    @Test
+    fun selectableLongFactorySequencesExposeFullGridAndResetEdits() {
+        val fake = Fake()
+        assertTrue(fake.transport.selectFactoryPattern("eclipse-32"))
+        fake.render()
+        assertEquals(32, fake.transport.stepCount)
+        assertEquals("eclipse-32", fake.transport.selectedPatternId)
+        assertEquals(32, fake.transport.selection.sourcePattern.steps.size)
+        assertTrue(fake.transport.enabledSteps.all { it in 0..31 })
+
+        fake.transport.setStepEnabled(0, false)
+        fake.render()
+        assertFalse(0 in fake.transport.enabledSteps)
+        assertTrue(fake.transport.selectFactoryPattern("deep-orbit-64"))
+        fake.render()
+        assertEquals("deep-orbit-64", fake.transport.selectedPatternId)
+        assertEquals(64, fake.transport.stepCount)
+        assertEquals(64, fake.transport.selection.sourcePattern.steps.size)
+        assertTrue(fake.transport.enabledSteps.all { it in 0..63 })
+        assertTrue(fake.transport.selection.revision >= 2L)
+
+        assertTrue(fake.transport.selectFactoryPattern("eclipse-32"))
+        fake.render()
+        assertTrue(0 in fake.transport.enabledSteps)
+        assertEquals(32, fake.transport.stepCount)
+    }
+
+    @Test
+    fun editingAndResizingLongGridsPreservesSourceNotesAndStaysBounded() {
+        val fake = Fake()
+        assertTrue(fake.transport.loadPattern(
+            "user-long", "User Long", com.orbital.synth.core.music.StepPattern(
+                List(32) { com.orbital.synth.core.music.SequencerStep() }
+            )
+        ))
+        fake.render()
+        assertEquals(32, fake.transport.stepCount)
+        assertTrue(fake.transport.enabledSteps.isEmpty())
+        assertTrue(fake.transport.setStepNotes(31, listOf(
+            com.orbital.synth.core.music.SequencerNote(71, velocity = 97, gate = .6)
+        )))
+        fake.render()
+        assertTrue(31 in fake.transport.enabledSteps)
+        assertEquals(71, fake.transport.selection.sourcePattern.steps[31].notes.single().midiNote)
+
+        assertTrue(fake.transport.setStepCount(64))
+        // Queued resize cannot partially publish the edited source or length.
+        assertEquals(32, fake.transport.stepCount)
+        fake.render()
+        assertEquals(64, fake.transport.stepCount)
+        assertTrue(31 in fake.transport.enabledSteps)
+        assertFalse(63 in fake.transport.enabledSteps)
+        assertTrue(fake.transport.setStepNotes(63, listOf(
+            com.orbital.synth.core.music.SequencerNote(84)
+        )))
+        fake.render()
+        assertTrue(63 in fake.transport.enabledSteps)
+        assertEquals(84, fake.transport.selection.sourcePattern.steps[63].notes.single().midiNote)
+
+        fake.transport.setStepEnabled(31, false)
+        fake.render()
+        assertFalse(31 in fake.transport.enabledSteps)
+        fake.transport.setStepEnabled(31, true)
+        fake.render()
+        assertEquals(71, fake.transport.selection.sourcePattern.steps[31].notes.single().midiNote)
+        assertTrue(31 in fake.transport.enabledSteps)
+
+        assertTrue(fake.transport.setStepCount(32))
+        fake.render()
+        assertEquals(32, fake.transport.stepCount)
+        assertEquals(32, fake.transport.selection.sourcePattern.steps.size)
+        assertTrue(fake.transport.enabledSteps.all { it in 0..31 })
+    }
+
+    @Test
+    fun sixtyFourStepCustomPatternRespectsSampleBoundaryAndCycleWrap() {
+        val fake = Fake()
+        val silent = com.orbital.synth.core.music.SequencerStep()
+        val hit = com.orbital.synth.core.music.SequencerStep(listOf(
+            com.orbital.synth.core.music.SequencerNote(84, gate = .5)
+        ))
+        assertTrue(fake.transport.loadPattern(
+            "user-boundary", "Boundary 64",
+            com.orbital.synth.core.music.StepPattern(List(64) { if (it == 63) hit else silent }),
+            bpm = 120.0, swing = 0.0
+        ))
+        fake.transport.setPlaying(true)
+        fake.transport.onWorkerStart()
+        fake.render()
+        assertEquals(64, fake.transport.stepCount)
+        assertEquals(0, fake.noteOnCalls)
+        // 63 sixteenth notes at 120 BPM, 48 kHz = 378000 samples.
+        fake.renderFrames(378_000 - 192)
+        assertEquals(0, fake.noteOnCalls)
+        assertEquals(63, fake.transport.playhead)
+        fake.renderFrames(1)
+        assertEquals(1, fake.noteOnCalls)
+        assertTrue(84 in fake.held)
+        assertEquals(63, fake.transport.playhead)
+        fake.renderFrames(6_000)
+        assertEquals(0, fake.transport.playhead)
+        assertFalse(84 in fake.held)
+        fake.transport.setPlaying(false)
+        fake.render()
+        assertTrue(fake.held.isEmpty())
+        assertEquals(-1, fake.transport.playhead)
+    }
+
+    @Test
+    fun loadingNewPatternReleasesHeldFactoryNotesAndRestartsAtZero() {
+        val fake = Fake()
+        fake.transport.setPlaying(true)
+        fake.transport.onWorkerStart()
+        fake.render()
+        assertTrue(60 in fake.held)
+        assertTrue(67 in fake.held)
+        val oldOffs = fake.noteOffCalls
+        assertTrue(fake.transport.loadPattern(
+            "user-replacement", "Replacement",
+            com.orbital.synth.core.music.StepPattern(List(32) { position ->
+                if (position == 0) com.orbital.synth.core.music.SequencerStep(listOf(
+                    com.orbital.synth.core.music.SequencerNote(72, gate = 1.0)
+                )) else com.orbital.synth.core.music.SequencerStep()
+            }), bpm = 100.0, swing = 0.05
+        ))
+        fake.render()
+        assertTrue(fake.transport.isPlaying)
+        assertEquals(32, fake.transport.stepCount)
+        assertEquals("user-replacement", fake.transport.selectedPatternId)
+        assertEquals(0, fake.transport.playhead)
+        assertTrue(fake.noteOffCalls >= oldOffs + 2)
+        assertFalse(60 in fake.held)
+        assertFalse(67 in fake.held)
+        assertTrue(72 in fake.held)
+    }
+
+    @Test
+    fun outdatedGridCommandsCannotMutateNewSelection() {
+        val fake = Fake()
+        assertTrue(fake.transport.selectFactoryPattern("comet"))
+        // This toggle was issued against Aurora's published revision.
+        fake.transport.setStepEnabled(0, false)
+        fake.render()
+        assertEquals("comet", fake.transport.selectedPatternId)
+        assertTrue(0 in fake.transport.enabledSteps)
+        assertEquals(16, fake.transport.stepCount)
+        assertFalse(fake.transport.setStepCount(0))
+        assertFalse(fake.transport.setStepCount(65))
+        assertFalse(fake.transport.setStepNotes(16, emptyList()))
+        assertFalse(fake.transport.setStepNotes(0, listOf(
+            com.orbital.synth.core.music.SequencerNote(60),
+            com.orbital.synth.core.music.SequencerNote(60)
+        )))
+        assertFalse(fake.transport.loadPattern(
+            "comet", "Conflict", com.orbital.synth.core.music.StepPattern()
+        ))
+        assertFalse(fake.transport.loadPattern(
+            "user-invalid", "Invalid", com.orbital.synth.core.music.StepPattern(), bpm = 0.0
+        ))
+    }
+
+    @Test
+    fun queuedPatternLoadFreezesMutableCallerData() {
+        val fake = Fake()
+        val sourceSteps = MutableList(32) { com.orbital.synth.core.music.SequencerStep() }
+        sourceSteps[31] = com.orbital.synth.core.music.SequencerStep(listOf(
+            com.orbital.synth.core.music.SequencerNote(76)
+        ))
+        val input = com.orbital.synth.core.music.StepPattern(sourceSteps)
+        assertTrue(fake.transport.loadPattern("user-frozen", "Frozen", input))
+        sourceSteps.clear()
+        fake.render()
+        assertEquals(32, fake.transport.stepCount)
+        assertEquals(76, fake.transport.selection.sourcePattern.steps[31].notes.single().midiNote)
     }
 
     @Test
