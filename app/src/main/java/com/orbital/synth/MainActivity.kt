@@ -14,6 +14,8 @@ import com.orbital.synth.audio.MidiMessageListener
 import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.VoiceMode
+import com.orbital.synth.core.preset.FactoryPresets
+import com.orbital.synth.core.preset.loadPatch
 import com.orbital.synth.ui.OrbitalScreen
 import com.orbital.synth.ui.OrbitalUiState
 import com.orbital.synth.ui.PlayMode
@@ -29,25 +31,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var audioOutput: AndroidAudioOutput
     private lateinit var midiManager: AndroidMidiManager
 
-    private var screenState by mutableStateOf(
-        OrbitalUiState(
-            parameters = mapOf(
-                ParameterId.WAVE to 0.42f,
-                ParameterId.MORPH to 0.42f,
-                ParameterId.CUTOFF to 0.65f,
-                ParameterId.RESONANCE to 0.35f,
-                ParameterId.MOVEMENT to 0.62f,
-                ParameterId.FX_AMOUNT to 0.28f,
-                ParameterId.ATTACK to 0.05f,
-                ParameterId.DECAY to 0.35f,
-                ParameterId.SUSTAIN to 0.70f,
-                ParameterId.RELEASE to 0.28f,
-                ParameterId.LFO_RATE to 0.30f,
-                ParameterId.LFO_DEPTH to 0.20f,
-                ParameterId.GLIDE to 0.05f
-            )
-        )
-    )
+    private var patchIndex = 0
+    private var screenState by mutableStateOf(OrbitalUiState())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,9 +41,7 @@ class MainActivity : ComponentActivity() {
         window.navigationBarColor = android.graphics.Color.BLACK
 
         synth = OrbitalSynth(sampleRate = 48_000, maxVoices = 16)
-        for ((parameter, value) in screenState.parameters) {
-            synth.setParameter(parameter, value)
-        }
+        selectFactoryPatch(0)
 
         audioOutput = AndroidAudioOutput(applicationContext, synth)
         midiManager = AndroidMidiManager(applicationContext, object : MidiMessageListener {
@@ -114,6 +97,19 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private fun selectFactoryPatch(index: Int) {
+        val patches = FactoryPresets.ALL
+        if (patches.isEmpty()) return
+        patchIndex = ((index % patches.size) + patches.size) % patches.size
+        val patch = patches[patchIndex]
+        synth.allNotesOff()
+        synth.loadPatch(patch)
+        screenState = screenState.copy(
+            patchName = patch.name,
+            parameters = ParameterId.entries.associateWith { synth.parameter(it) }
+        )
     }
 
     private fun updateParameter(parameter: ParameterId, value: Float) {
