@@ -12,7 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.material3.MaterialTheme
 import com.orbital.synth.audio.AndroidAudioOutput
 import com.orbital.synth.audio.AndroidMidiManager
-import com.orbital.synth.audio.MidiMessageListener
+import com.orbital.synth.audio.SourceAwareMidiMessageListener
 import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.VoiceMode
@@ -35,6 +35,13 @@ import kotlinx.coroutines.launch
  * and parameter mutations until the audio thread consumes them.
  */
 class MainActivity : ComponentActivity() {
+    private companion object {
+        // MIDI-port source IDs are positive, assigned by AndroidMidiManager.
+        // Negative IDs reserve independent app-owned touch and fallback MIDI keys.
+        const val TOUCH_SOURCE_ID = -1L
+        const val LEGACY_MIDI_SOURCE_ID = -3L
+    }
+
     private lateinit var synth: OrbitalSynth
     private lateinit var audioOutput: AndroidAudioOutput
     private lateinit var midiManager: AndroidMidiManager
@@ -59,22 +66,28 @@ class MainActivity : ComponentActivity() {
         screenState = screenState.copy(
             sequencerTempo = audioOutput.sequencerTempo,
             enabledSteps = initialSequence.enabledSteps,
+            sequencerStepCount = initialSequence.stepCount,
             sequenceChoices = audioOutput.sequencerFactoryPatterns.map {
                 SequenceChoice(it.id, it.name)
             },
             activeSequenceId = initialSequence.id,
         )
-        midiManager = AndroidMidiManager(applicationContext, object : MidiMessageListener {
+        midiManager = AndroidMidiManager(applicationContext, object : SourceAwareMidiMessageListener {
+            override fun onSourceNoteOn(sourceId: Long, channel: Int, note: Int, velocity: Int) {
+                synth.noteOn(sourceId, channel, note, velocity.coerceIn(0, 127) / 127f)
+            }
+
+            override fun onSourceNoteOff(sourceId: Long, channel: Int, note: Int, velocity: Int) {
+                synth.noteOff(sourceId, channel, note)
+            }
+
+            // Preserve direct/legacy listener behavior without sharing touch or port keys.
             override fun onNoteOn(channel: Int, note: Int, velocity: Int) {
-                if (velocity == 0) {
-                    synth.noteOff(note)
-                } else {
-                    synth.noteOn(note, velocity.coerceIn(0, 127) / 127f)
-                }
+                synth.noteOn(LEGACY_MIDI_SOURCE_ID, channel, note, velocity.coerceIn(0, 127) / 127f)
             }
 
             override fun onNoteOff(channel: Int, note: Int, velocity: Int) {
-                synth.noteOff(note)
+                synth.noteOff(LEGACY_MIDI_SOURCE_ID, channel, note)
             }
 
             override fun onControlChange(channel: Int, controller: Int, value: Int) {
@@ -112,12 +125,14 @@ class MainActivity : ComponentActivity() {
                     if (screenState.sequencerStep != step ||
                         screenState.activeSequenceId != sequence.id ||
                         screenState.enabledSteps != sequence.enabledSteps ||
+                        screenState.sequencerStepCount != sequence.stepCount ||
                         screenState.sequencerTempo != tempo
                     ) {
                         screenState = screenState.copy(
                             sequencerStep = step,
                             activeSequenceId = sequence.id,
                             enabledSteps = sequence.enabledSteps,
+                            sequencerStepCount = sequence.stepCount,
                             sequencerTempo = tempo,
                         )
                     }
@@ -128,15 +143,15 @@ class MainActivity : ComponentActivity() {
                 OrbitalScreen(
                     state = screenState,
                     onNoteOn = { note ->
-                        if (note in 0..127) synth.noteOn(note)
+                        if (note in 0..127) synth.noteOn(TOUCH_SOURCE_ID, 0, note)
                     },
                     onNoteOff = { note ->
-                        if (note in 0..127) synth.noteOff(note)
+                        if (note in 0..127) synth.noteOff(TOUCH_SOURCE_ID, 0, note)
                     },
                     onParameterChange = ::updateParameter,
                     onModeChange = ::updatePlayMode,
                     onOctaveChange = { octave ->
-                        synth.allNotesOff()
+                        synth.allNotesOff(TOUCH_SOURCE_ID)
                         screenState = screenState.copy(octave = octave.coerceIn(0, 8))
                     },
                     onSequencerToggle = {
@@ -145,7 +160,7 @@ class MainActivity : ComponentActivity() {
                         screenState = screenState.copy(sequencerRunning = next)
                     },
                     onStepToggle = { step ->
-                        if (step in 0..15) {
+                        if (step in 0 until screenState.sequencerStepCount) {
                             val newEnabled = step !in screenState.enabledSteps
                             audioOutput.setSequencerStepEnabled(step, newEnabled)
                             val updated = screenState.enabledSteps.toMutableSet().apply {
@@ -158,6 +173,11 @@ class MainActivity : ComponentActivity() {
                         val next = bpm.coerceIn(20, 300)
                         audioOutput.setSequencerTempo(next)
                         screenState = screenState.copy(sequencerTempo = next)
+                    },
+                    onSequencerLengthChange = { requested ->
+                        // Render-worker snapshot remains authoritative. The UI poll
+                        // publishes the new length and any truncated step state.
+                        audioOutput.setSequencerStepCount(requested)
                     },
                     onPreviousPatch = { selectFactoryPatch(patchIndex - 1) },
                     onNextPatch = { selectFactoryPatch(patchIndex + 1) },
