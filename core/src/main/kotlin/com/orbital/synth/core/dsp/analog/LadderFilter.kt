@@ -10,7 +10,7 @@ import kotlin.math.tanh
  *
  * This is a deliberately new, topology-inspired instrument filter, not a calibrated
  * replica of a particular Minimoog or any other physical unit. A bilinear/TPT
- * four-integrator ladder is closed through a saturating feedback equation. Two
+ * four-integrator ladder is closed through a saturating feedback equation. Three
  * bounded Newton refinements solve the implicit nonlinearity per sample, avoiding
  * the one-sample feedback delay and the explosive Q of a naive four-pole cascade.
  *
@@ -19,8 +19,10 @@ import kotlin.math.tanh
  * Parameters should be updated at an audio block boundary (not from another thread).
  * A separate instance is required for each voice/channel: state is not shared.
  *
- * No dynamic allocation or coefficient recalculation occurs inside process();
- * the saturating implicit solve does evaluate tanh three times per sample. This model does not oversample; high drive at high pitch may alias.
+ * No dynamic allocation or tan()/tanh() coefficient setup occurs inside process();
+ * its 3 ms audio-rate coefficient slew uses inexpensive multiplications, while
+ * the saturating solve does evaluate tanh three times per sample. This model
+ * does not oversample; high drive at high pitch may alias.
  */
 class LadderFilter(sampleRate: Int = 48_000) {
     init {
@@ -40,6 +42,20 @@ class LadderFilter(sampleRate: Int = 48_000) {
     private var feedback = 0.0
     private var saturationGain = 0.05
     private var saturationNorm = 1.0 / tanh(0.05)
+
+    // Retargetable 3 ms linear slews smooth cutoff, resonance and drive changes.
+    // All expensive tan/tanh coefficient setup stays on the block-level configure path.
+    private val slewLength = (rate * 0.003).toInt().coerceAtLeast(1)
+    private var controlsReady = false
+    private var slewRemaining = 0
+    private var targetAlpha = 0.0
+    private var targetFeedback = 0.0
+    private var targetGain = 0.05
+    private var targetNorm = 1.0 / tanh(0.05)
+    private var alphaStep = 0.0
+    private var feedbackStep = 0.0
+    private var gainStep = 0.0
+    private var normStep = 0.0
 
     private var state1 = 0.0
     private var state2 = 0.0
@@ -62,15 +78,33 @@ class LadderFilter(sampleRate: Int = 48_000) {
         previousDrive = d
 
         val prewarped = tan(PI * cutoff / rate)
-        alpha = prewarped / (1.0 + prewarped)
-        beta = 1.0 - alpha
-        alphaSquared = alpha * alpha
-        alphaCubed = alphaSquared * alpha
-        alphaFourth = alphaSquared * alphaSquared
-        feedback = 3.92 * q
+        val nextAlpha = prewarped / (1.0 + prewarped)
+        val nextFeedback = 3.92 * q
         // Near-zero distortion at d=0; increasingly compressed at d=1.
-        saturationGain = 0.05 + 4.95 * d
-        saturationNorm = 1.0 / tanh(saturationGain)
+        val nextGain = 0.05 + 4.95 * d
+        val nextNorm = 1.0 / tanh(nextGain)
+        targetAlpha = nextAlpha
+        targetFeedback = nextFeedback
+        targetGain = nextGain
+        targetNorm = nextNorm
+
+        if (!controlsReady) {
+            // Constructor setup starts at the exact requested coefficient.
+            controlsReady = true
+            alpha = nextAlpha
+            feedback = nextFeedback
+            saturationGain = nextGain
+            saturationNorm = nextNorm
+            refreshPowers()
+            return
+        }
+        // New automation can retarget a running ramp from its actual current
+        // coefficient, including before the previous 3 ms transition finishes.
+        slewRemaining = slewLength
+        alphaStep = (targetAlpha - alpha) / slewLength
+        feedbackStep = (targetFeedback - feedback) / slewLength
+        gainStep = (targetGain - saturationGain) / slewLength
+        normStep = (targetNorm - saturationNorm) / slewLength
     }
 
     /**
@@ -92,6 +126,16 @@ class LadderFilter(sampleRate: Int = 48_000) {
         destination.feedback = feedback
         destination.saturationGain = saturationGain
         destination.saturationNorm = saturationNorm
+        destination.controlsReady = controlsReady
+        destination.slewRemaining = slewRemaining
+        destination.targetAlpha = targetAlpha
+        destination.targetFeedback = targetFeedback
+        destination.targetGain = targetGain
+        destination.targetNorm = targetNorm
+        destination.alphaStep = alphaStep
+        destination.feedbackStep = feedbackStep
+        destination.gainStep = gainStep
+        destination.normStep = normStep
         destination.state1 = state1
         destination.state2 = state2
         destination.state3 = state3
@@ -106,8 +150,32 @@ class LadderFilter(sampleRate: Int = 48_000) {
         state4 = 0.0
     }
 
+    private fun refreshPowers() {
+        beta = 1.0 - alpha
+        alphaSquared = alpha * alpha
+        alphaCubed = alphaSquared * alpha
+        alphaFourth = alphaSquared * alphaSquared
+    }
+
+    private fun advanceControls() {
+        if (slewRemaining <= 0) return
+        alpha += alphaStep
+        feedback += feedbackStep
+        saturationGain += gainStep
+        saturationNorm += normStep
+        slewRemaining--
+        if (slewRemaining == 0) {
+            alpha = targetAlpha
+            feedback = targetFeedback
+            saturationGain = targetGain
+            saturationNorm = targetNorm
+        }
+        refreshPowers()
+    }
+
     /** Allocation-free single-sample low-pass processing. */
     fun process(input: Float): Float {
+        advanceControls()
         val x = (if (input.isFinite()) input else 0f).coerceIn(-8f, 8f).toDouble()
         // Four-stage TPT cascade has y4 = alpha^4 * u + history.
         val history = beta * (
