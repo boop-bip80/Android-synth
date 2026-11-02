@@ -147,15 +147,20 @@ fun OrbitalScreen(
         }
     }
 
-    Column(
+    val editorScroll = rememberScrollState()
+    LaunchedEffect(selectedTab) { editorScroll.scrollTo(0) }
+
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(MainGradient)
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 9.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
+        val compactHeight = maxHeight < 500.dp
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compactHeight) 6.dp else 12.dp),
+        ) {
         Header(state.patchName)
         Row(
             Modifier.fillMaxWidth(),
@@ -191,6 +196,15 @@ fun OrbitalScreen(
             }
         }
 
+        // Editor area is the only vertical scroller. Performance controls remain anchored below it.
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(editorScroll)
+                .padding(bottom = 5.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
         when (selectedTab) {
             Tab.SOUND -> {
                 BoxWithConstraints(Modifier.fillMaxWidth().height(244.dp)) {
@@ -314,13 +328,15 @@ fun OrbitalScreen(
             )
             Tab.FX -> FxPanel(parameter, onParameterChange)
         }
+        }
 
-        // The keyboard is always available while editing SOUND, PLAY, SEQ or FX.
+        // The keyboard stays reachable in portrait and compact landscape layouts.
         OrbitalKeyboard(
             octave = state.octave.coerceIn(0, 8),
             onNoteOn = onNoteOn,
             onNoteOff = onNoteOff,
             modifier = Modifier.fillMaxWidth(),
+            preferredHeight = if (compactHeight) 94.dp else null,
         )
         Row(
             Modifier.fillMaxWidth(),
@@ -341,7 +357,8 @@ fun OrbitalScreen(
                 Pill(mode.name, state.playMode == mode, { onModeChange(mode) })
             }
         }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(if (compactHeight) 0.dp else 6.dp))
+        }
     }
 }
 

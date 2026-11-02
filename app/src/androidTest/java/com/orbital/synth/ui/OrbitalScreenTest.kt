@@ -2,6 +2,7 @@ package com.orbital.synth.ui
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -38,6 +39,28 @@ class OrbitalScreenTest {
         compose.onNodeWithText("ENVELOPES  /  EFFECTS").assertExists()
         compose.onNodeWithContentDescription("Tab PLAY").performClick()
         compose.onNodeWithText("PERFORMANCE").assertExists()
+    }
+
+    @Test fun performanceKeyboardStaysVisibleAcrossTabs() {
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(),
+                onNoteOn = {},
+                onNoteOff = {},
+                onParameterChange = { _, _ -> },
+                onModeChange = {},
+                onOctaveChange = {},
+            )
+        }
+        val keyboard = compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard",
+            substring = true,
+        )
+        keyboard.assertIsDisplayed()
+        listOf("Tab FX", "Tab SEQ", "Tab PLAY", "Tab SOUND").forEach { tab ->
+            compose.onNodeWithContentDescription(tab).performClick()
+            keyboard.assertIsDisplayed()
+        }
     }
 
     @Test fun presetArrowsAreAccessibleAndCallNavigation() {
