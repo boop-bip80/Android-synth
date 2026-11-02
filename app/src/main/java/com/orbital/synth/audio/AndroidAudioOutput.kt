@@ -110,7 +110,8 @@ class AndroidAudioOutput(
         pattern: StepPattern,
         bpm: Double = 120.0,
         swing: Double = 0.0,
-    ): Boolean = audioSequencer.loadPattern(id, name, pattern, bpm, swing)
+        enabledSteps: Set<Int>? = null,
+    ): Boolean = audioSequencer.loadPattern(id, name, pattern, bpm, swing, enabledSteps)
     /** Queues a factory sequence; returns false immediately for an unknown ID. */
     fun selectFactoryPattern(id: String): Boolean = audioSequencer.selectFactoryPattern(id)
 
