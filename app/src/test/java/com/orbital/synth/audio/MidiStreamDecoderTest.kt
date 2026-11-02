@@ -99,6 +99,17 @@ class MidiStreamDecoderTest {
     }
 
     @Test
+    fun realtimeInsideSysexIsIgnoredWithoutEndingSysex() {
+        val spy = Spy()
+        val decoder = MidiStreamDecoder(spy)
+        decoder.feed(byteArrayOf(
+            0xF0.toByte(), 0x7D, 0xF8.toByte(), 0x01,
+            0xFE.toByte(), 0xF7.toByte(), 0x92.toByte(), 64, 96
+        ))
+        assertEquals(listOf("on:2:64:96"), spy.events)
+    }
+
+    @Test
     fun interleavedRealTimeByteWithinNoteDoesNotChangeRunningStatus() {
         val spy = Spy()
         val decoder = MidiStreamDecoder(spy)

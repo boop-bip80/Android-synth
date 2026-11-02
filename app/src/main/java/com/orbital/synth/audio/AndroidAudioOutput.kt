@@ -64,6 +64,9 @@ class AndroidAudioOutput(
     private val hasFocus = AtomicBoolean(false)
     private val renderedFrameCounter = AtomicLong(0)
 
+    private var lifecycleGeneration = 0L
+    private var pendingRestartToken: Long? = null
+
     @Volatile private var running = false
     @Volatile private var disposed = false
     @Volatile private var playback: AudioTrack? = null
@@ -90,7 +93,13 @@ class AndroidAudioOutput(
     fun start(): Boolean = synchronized(lifecycleLock) {
         if (disposed) return@synchronized false
         if (running) return@synchronized true
-        if (workerThread?.isAlive == true) return@synchronized false
+        if (workerThread?.isAlive == true) {
+            // A rapid background -> foreground cycle must not leave the app silent.
+            pendingRestartToken = ++lifecycleGeneration
+            return@synchronized true
+        }
+        pendingRestartToken = null
+        lifecycleGeneration++
 
         val focusResult = runCatching { audioManager.requestAudioFocus(focusRequest) }
             .getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
@@ -115,11 +124,14 @@ class AndroidAudioOutput(
     /**
      * Safe to call from onStop/onDestroy. This never releases a track while its
      * worker might still be using it; the worker owns release in its finally block.
+     * This method does not block the main/UI thread. A subsequent rapid start() is queued.
      */
     fun stop() {
         val track: AudioTrack?
         val thread: Thread?
         synchronized(lifecycleLock) {
+            lifecycleGeneration++
+            pendingRestartToken = null
             running = false
             track = playback
             thread = workerThread
@@ -127,13 +139,7 @@ class AndroidAudioOutput(
         synth.allNotesOff()
         runCatching { track?.pause() }
         thread?.interrupt()
-        if (thread != null && thread !== Thread.currentThread()) {
-            try {
-                thread.join(750)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
-        }
+        // No join on the UI thread: worker owns release and will exit after the pause.
         abandonFocus()
     }
 
@@ -229,16 +235,28 @@ class AndroidAudioOutput(
             runCatching { config.track.pause() }
             runCatching { config.track.flush() }
             runCatching { config.track.release() }
+            val restartToken: Long?
             synchronized(lifecycleLock) {
                 if (playback === config.track) playback = null
                 if (workerThread === Thread.currentThread()) workerThread = null
+                restartToken = pendingRestartToken
+                pendingRestartToken = null
             }
             abandonFocus()
+            if (restartToken != null) {
+                synchronized(lifecycleLock) {
+                    if (!disposed && lifecycleGeneration == restartToken) start()
+                }
+            }
         }
     }
 
     private fun requestStopForFocusLoss() {
-        running = false
+        synchronized(lifecycleLock) {
+            lifecycleGeneration++
+            pendingRestartToken = null
+            running = false
+        }
         synth.allNotesOff()
         runCatching { playback?.pause() }
         workerThread?.interrupt()

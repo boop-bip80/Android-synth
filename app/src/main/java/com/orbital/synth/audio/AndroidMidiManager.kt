@@ -34,28 +34,42 @@ class AndroidMidiManager(
     val isRunning: Boolean get() = started
     val isAvailable: Boolean get() = manager != null
 
-    private val callback = object : MidiManager.DeviceCallback() {
-        override fun onDeviceAdded(device: MidiDeviceInfo) {
-            openIfNeeded(device)
-        }
-
-        override fun onDeviceRemoved(device: MidiDeviceInfo) {
-            disconnect(device.id)
-        }
-    }
+    private var generation = 0L
+    private var registeredCallback: MidiManager.DeviceCallback? = null
 
     /** Registers for hot-plug events and connects available MIDI device output ports. */
     fun start(): Boolean {
         val midi = manager ?: return false
+        val session: Long
+        val callbackForSession: MidiManager.DeviceCallback
         synchronized(lock) {
             if (disposed) return false
             if (started) return true
+            session = ++generation
             started = true
+            callbackForSession = object : MidiManager.DeviceCallback() {
+                override fun onDeviceAdded(device: MidiDeviceInfo) {
+                    openIfNeeded(device, session)
+                }
+
+                override fun onDeviceRemoved(device: MidiDeviceInfo) {
+                    if (isCurrent(session)) disconnect(device.id)
+                }
+            }
+            registeredCallback = callbackForSession
+            try {
+                midi.registerDeviceCallback(callbackForSession, handler)
+            } catch (failure: Exception) {
+                started = false
+                registeredCallback = null
+                generation++
+                Log.w("OrbitalMidi", "MIDI callback registration unavailable", failure)
+                return false
+            }
         }
         try {
-            midi.registerDeviceCallback(callback, handler)
-            midi.devices.forEach { openIfNeeded(it) }
-        } catch (failure: RuntimeException) {
+            midi.devices.forEach { openIfNeeded(it, session) }
+        } catch (failure: Exception) {
             Log.w("OrbitalMidi", "MIDI enumeration unavailable", failure)
             stop()
             return false
@@ -67,40 +81,49 @@ class AndroidMidiManager(
     fun stop() {
         val midi = manager
         val oldConnections: List<DeviceConnection>
+        val oldCallback: MidiManager.DeviceCallback?
         synchronized(lock) {
             started = false
+            generation++ // invalidate in-flight openDevice callbacks from this session
             opening.clear()
             oldConnections = connections.values.toList()
             connections.clear()
+            oldCallback = registeredCallback
+            registeredCallback = null
         }
-        if (midi != null) runCatching { midi.unregisterDeviceCallback(callback) }
+        if (midi != null && oldCallback != null) {
+            runCatching { midi.unregisterDeviceCallback(oldCallback) }
+        }
         oldConnections.forEach { it.close() }
     }
+
+    private fun isCurrent(session: Long): Boolean =
+        synchronized(lock) { started && generation == session }
 
     override fun close() {
         synchronized(lock) { disposed = true }
         stop()
     }
 
-    private fun openIfNeeded(info: MidiDeviceInfo) {
+    private fun openIfNeeded(info: MidiDeviceInfo, session: Long) {
         val midi = manager ?: return
         if (info.outputPortCount <= 0) return
         synchronized(lock) {
-            if (!started || info.id in opening || info.id in connections) return
+            if (!started || generation != session || info.id in opening || info.id in connections) return
             opening.add(info.id)
         }
         try {
-            midi.openDevice(info, { device -> onDeviceOpened(info, device) }, handler)
-        } catch (failure: RuntimeException) {
+            midi.openDevice(info, { device -> onDeviceOpened(info, device, session) }, handler)
+        } catch (failure: Exception) {
             synchronized(lock) { opening.remove(info.id) }
             Log.w("OrbitalMidi", "Could not open MIDI device", failure)
         }
     }
 
-    private fun onDeviceOpened(info: MidiDeviceInfo, device: MidiDevice?) {
+    private fun onDeviceOpened(info: MidiDeviceInfo, device: MidiDevice?, session: Long) {
         val shouldConnect = synchronized(lock) {
-            opening.remove(info.id)
-            started && info.id !in connections
+            if (generation == session) opening.remove(info.id)
+            started && generation == session && info.id !in connections
         }
         if (!shouldConnect || device == null) {
             runCatching { device?.close() }
@@ -111,7 +134,7 @@ class AndroidMidiManager(
         for (portNumber in 0 until info.outputPortCount) {
             val port = try {
                 device.openOutputPort(portNumber)
-            } catch (failure: RuntimeException) {
+            } catch (failure: Exception) {
                 Log.w("OrbitalMidi", "Cannot open MIDI output port", failure)
                 null
             } ?: continue
@@ -121,7 +144,7 @@ class AndroidMidiManager(
                 override fun onSend(message: ByteArray, offset: Int, count: Int, timestamp: Long) {
                     try {
                         decoder.feed(message, offset, count)
-                    } catch (failure: RuntimeException) {
+                    } catch (failure: Exception) {
                         Log.w("OrbitalMidi", "Rejected invalid MIDI callback data", failure)
                     }
                 }
@@ -129,7 +152,7 @@ class AndroidMidiManager(
             try {
                 port.connect(receiver)
                 ports.add(PortConnection(port, receiver))
-            } catch (failure: RuntimeException) {
+            } catch (failure: Exception) {
                 Log.w("OrbitalMidi", "Could not attach MIDI receiver", failure)
                 runCatching { port.close() }
             }
@@ -137,7 +160,7 @@ class AndroidMidiManager(
 
         val connection = DeviceConnection(device, ports)
         val accepted = synchronized(lock) {
-            if (started && info.id !in connections && ports.isNotEmpty()) {
+            if (started && generation == session && info.id !in connections && ports.isNotEmpty()) {
                 connections[info.id] = connection
                 true
             } else false
