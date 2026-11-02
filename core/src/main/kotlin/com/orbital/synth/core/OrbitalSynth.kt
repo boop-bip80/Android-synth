@@ -189,6 +189,11 @@ class OrbitalSynth(
         val glide = parameter(ParameterId.GLIDE)
         val unison = parameter(ParameterId.UNISON)
         val detune = parameter(ParameterId.DETUNE)
+        // Five architecture families share the same normalized live-control contract.
+        // Quantize at block boundaries to keep a stable voice graph within a block.
+        val engineModel = (parameter(ParameterId.ENGINE) * 4f + 0.5f)
+            .toInt().coerceIn(0, 4)
+        val character = parameter(ParameterId.CHARACTER)
         val pitchBend = java.lang.Float.intBitsToFloat(bendBits.get()).toDouble()
 
         // Logarithmic time/frequency controls provide fine motion near useful short values.
@@ -204,6 +209,8 @@ class OrbitalSynth(
         for (voice in voices) {
             voice.configure(attackSec, decaySec, sustain, releaseSec, cutoffHz, resonance)
             voice.configureUnison(unison, detune)
+            voice.configureEngine(engineModel, character, cutoffHz.toFloat(),
+                resonance, wave, morph)
         }
         drainEvents(glideSec, wave, morph)
 
