@@ -19,7 +19,11 @@ data class FactoryPatternSelection(
     val id: String,
     val name: String,
     val stepCount: Int,
-    val enabledSteps: Set<Int>
+    val enabledSteps: Set<Int>,
+    /** Source notes survive mute/unmute; render-time generated rests remain separate. */
+    val sourcePattern: StepPattern,
+    /** Changes on selection/load, allowing stale UI grid edits to be discarded. */
+    val revision: Long
 )
 
 /**
@@ -39,6 +43,9 @@ internal class AudioSequencerTransport(
     // Mutated exclusively by the audio worker. Callers can only enqueue commands.
     private var factory = FactoryPatterns.DEFAULT
     private var basePattern = factory.pattern
+    private var selectedId = factory.id
+    private var selectedName = factory.name
+    private var selectionRevision = 0L
     private var enabled = BooleanArray(basePattern.steps.size) { index ->
         basePattern.steps[index].notes.isNotEmpty()
     }
@@ -59,7 +66,7 @@ internal class AudioSequencerTransport(
     /** One atomic UI snapshot, so ID, name, step count and grid never mix across patterns. */
     @Volatile private var patternSnapshot = FactoryPatternSelection(
         factory.id, factory.name, basePattern.steps.size,
-        enabled.indices.filter { enabled[it] }.toSet()
+        enabled.indices.filter { enabled[it] }.toSet(), basePattern, selectionRevision
     )
 
     val factoryPatterns: List<FactorySequence> get() = FactoryPatterns.ALL
@@ -83,11 +90,61 @@ internal class AudioSequencerTransport(
     }
 
     fun setStepEnabled(index: Int, value: Boolean) {
-        // Never read the worker-owned mutable grid from a UI thread. The active
-        // snapshot is safe even when a factory swap is queued concurrently.
-        if (index in 0 until patternSnapshot.stepCount && index < 64) {
-            commands.offer(Command.StepEnabled(index, value))
+        // Keep the original Unit API. Attach a selection revision so a queued
+        // switch cannot apply this old-grid edit to a different pattern.
+        val snapshot = patternSnapshot
+        if (index in 0 until snapshot.stepCount) {
+            commands.offer(Command.StepEnabled(index, value, snapshot.revision))
         }
+    }
+
+    /** Resize an editable grid from 1 to 64 steps, retaining in-range notes. */
+    fun setStepCount(steps: Int): Boolean {
+        if (steps !in 1..64) return false
+        commands.offer(Command.Resize(steps, patternSnapshot.revision))
+        return true
+    }
+
+    /**
+     * Replace all notes at one zero-based step, supporting chords and per-note
+     * gate/probability/ties. A nonempty edited step is automatically enabled.
+     */
+    fun setStepNotes(index: Int, notes: List<SequencerNote>): Boolean {
+        val snapshot = patternSnapshot
+        if (index !in 0 until snapshot.stepCount) return false
+        val step = try {
+            SequencerStep(notes.toList())
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
+        commands.offer(Command.StepNotes(index, step, snapshot.revision))
+        return true
+    }
+
+    /**
+     * Load a validated independent pattern, including a 32/64-step polymeter.
+     * Freeze caller-owned lists before enqueueing; the render thread alone
+     * performs note release, transport replacement and snapshot publication.
+     */
+    fun loadPattern(
+        id: String,
+        name: String,
+        pattern: StepPattern,
+        bpm: Double = 120.0,
+        swing: Double = 0.0
+    ): Boolean {
+        if (!Regex("[a-z0-9][a-z0-9-]{0,63}").matches(id) ||
+            FactoryPatterns.byId(id) != null || name.isBlank() || name.length > 80 ||
+            !bpm.isFinite() || bpm !in 20.0..300.0 ||
+            !swing.isFinite() || swing !in 0.0..1.0
+        ) return false
+        val frozen = try {
+            pattern.copy(steps = pattern.steps.map { it.copy(notes = it.notes.toList()) })
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
+        commands.offer(Command.LoadPattern(id, name, frozen, bpm, swing))
+        return true
     }
 
     /**
@@ -140,23 +197,33 @@ internal class AudioSequencerTransport(
                     anchorSample = sequencer.cursorSample
                 }
                 is Command.SelectFactoryPattern -> applyFactoryPattern(command.factory)
+                is Command.LoadPattern -> applyPattern(
+                    command.id, command.name, command.pattern, command.bpm, command.swing
+                )
+                is Command.Resize -> {
+                    if (command.revision != selectionRevision || command.steps == basePattern.steps.size) continue
+                    val previousEnabled = enabled
+                    basePattern = basePattern.copy(steps = List(command.steps) { position ->
+                        basePattern.steps.getOrNull(position) ?: SequencerStep()
+                    })
+                    enabled = BooleanArray(command.steps) { position ->
+                        position < previousEnabled.size && previousEnabled[position]
+                    }
+                    rebuildAndRelease()
+                }
+                is Command.StepNotes -> {
+                    if (command.revision != selectionRevision || command.index !in basePattern.steps.indices) continue
+                    basePattern = basePattern.copy(steps = basePattern.steps.mapIndexed { position, step ->
+                        if (position == command.index) command.step else step
+                    })
+                    enabled[command.index] = command.step.notes.isNotEmpty()
+                    rebuildAndRelease()
+                }
                 is Command.StepEnabled -> {
-                    if (command.index !in enabled.indices) continue
+                    if (command.revision != selectionRevision || command.index !in enabled.indices) continue
                     if (enabled[command.index] != command.value) {
                         enabled[command.index] = command.value
-                        val updated = StepPattern(
-                            steps = basePattern.steps.mapIndexed { stepIndex, step ->
-                                if (!enabled[stepIndex]) SequencerStep()
-                                else if (step.notes.isNotEmpty()) step
-                                else generatedStep(stepIndex)
-                            },
-                            subdivisionsPerBeat = basePattern.subdivisionsPerBeat
-                        )
-                        releaseHeldNotes(sequencer.replacePattern(updated))
-                        anchorSample = sequencer.cursorSample
-                        patternSnapshot = patternSnapshot.copy(
-                            enabledSteps = enabled.indices.filter { enabled[it] }.toSet()
-                        )
+                        rebuildAndRelease()
                     }
                 }
             }
@@ -170,16 +237,42 @@ internal class AudioSequencerTransport(
      * voice identity ultimately depends on source-tagged synth notes.
      */
     private fun applyFactoryPattern(selected: FactorySequence) {
-        releaseHeldNotes(sequencer.replacePattern(selected.pattern))
-        releaseHeldNotes(sequencer.configure(bpm = selected.bpm, swing = selected.swing))
         factory = selected
-        basePattern = selected.pattern
-        enabled = BooleanArray(basePattern.steps.size) { basePattern.steps[it].notes.isNotEmpty() }
+        applyPattern(selected.id, selected.name, selected.pattern, selected.bpm, selected.swing)
+    }
+
+    private fun applyPattern(id: String, name: String, pattern: StepPattern, bpm: Double, swing: Double) {
+        releaseHeldNotes(sequencer.replacePattern(pattern))
+        releaseHeldNotes(sequencer.configure(bpm = bpm, swing = swing))
+        selectedId = id
+        selectedName = name
+        selectionRevision++
+        basePattern = pattern
+        enabled = BooleanArray(pattern.steps.size) { pattern.steps[it].notes.isNotEmpty() }
         anchorSample = sequencer.cursorSample
-        tempoSnapshot = selected.bpm.toInt()
+        tempoSnapshot = bpm.toInt()
+        publishPatternSnapshot()
+    }
+
+    /** Convert the editable source and mute grid into one transport pattern. */
+    private fun rebuildAndRelease() {
+        val rendered = StepPattern(
+            steps = basePattern.steps.mapIndexed { index, step ->
+                if (!enabled[index]) SequencerStep()
+                else if (step.notes.isNotEmpty()) step
+                else generatedStep(index)
+            },
+            subdivisionsPerBeat = basePattern.subdivisionsPerBeat
+        )
+        releaseHeldNotes(sequencer.replacePattern(rendered))
+        anchorSample = sequencer.cursorSample
+        publishPatternSnapshot()
+    }
+
+    private fun publishPatternSnapshot() {
         patternSnapshot = FactoryPatternSelection(
-            selected.id, selected.name, basePattern.steps.size,
-            enabled.indices.filter { enabled[it] }.toSet()
+            selectedId, selectedName, basePattern.steps.size,
+            enabled.indices.filter { enabled[it] }.toSet(), basePattern, selectionRevision
         )
     }
 
@@ -232,8 +325,14 @@ internal class AudioSequencerTransport(
 
     private sealed interface Command {
         data class SelectFactoryPattern(val factory: FactorySequence) : Command
+        data class LoadPattern(
+            val id: String, val name: String, val pattern: StepPattern,
+            val bpm: Double, val swing: Double
+        ) : Command
+        data class Resize(val steps: Int, val revision: Long) : Command
+        data class StepNotes(val index: Int, val step: SequencerStep, val revision: Long) : Command
         data class Play(val value: Boolean) : Command
         data class Tempo(val bpm: Int) : Command
-        data class StepEnabled(val index: Int, val value: Boolean) : Command
+        data class StepEnabled(val index: Int, val value: Boolean, val revision: Long) : Command
     }
 }
