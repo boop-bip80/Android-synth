@@ -1,6 +1,11 @@
 package com.orbital.synth.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -61,6 +66,28 @@ class OrbitalScreenTest {
             compose.onNodeWithContentDescription(tab).performClick()
             keyboard.assertIsDisplayed()
         }
+    }
+
+    @Test fun keyboardRemainsAvailableInCompactHeight() {
+        compose.setContent {
+            Box(Modifier.fillMaxWidth().height(350.dp)) {
+                OrbitalScreen(
+                    state = OrbitalUiState(),
+                    onNoteOn = {},
+                    onNoteOff = {},
+                    onParameterChange = { _, _ -> },
+                    onModeChange = {},
+                    onOctaveChange = {},
+                )
+            }
+        }
+        val keyboard = compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard",
+            substring = true,
+        )
+        keyboard.assertIsDisplayed()
+        compose.onNodeWithContentDescription("Tab FX").performClick()
+        keyboard.assertIsDisplayed()
     }
 
     @Test fun presetArrowsAreAccessibleAndCallNavigation() {
