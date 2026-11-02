@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.util.Log
 import com.orbital.synth.core.OrbitalSynth
+import com.orbital.synth.core.music.FactorySequence
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -86,12 +87,19 @@ class AndroidAudioOutput(
     val sequencerPlayhead: Int get() = audioSequencer.playhead
     val sequencerTempo: Int get() = audioSequencer.tempo
     val sequencerEnabledSteps: Set<Int> get() = audioSequencer.enabledSteps
+    val sequencerFactoryPatterns: List<FactorySequence> get() = audioSequencer.factoryPatterns
+    val sequencerPatternSelection: FactoryPatternSelection get() = audioSequencer.selection
+    val sequencerPatternId: String get() = audioSequencer.selectedPatternId
+    val sequencerPatternName: String get() = audioSequencer.selectedPatternName
+    val sequencerStepCount: Int get() = audioSequencer.stepCount
 
     /** All sequencer mutations are queued for the audio render worker. */
     fun setSequencerPlaying(playing: Boolean) = audioSequencer.setPlaying(playing)
     fun setSequencerTempo(bpm: Int) = audioSequencer.setTempo(bpm)
     fun setSequencerStepEnabled(index: Int, enabled: Boolean) =
         audioSequencer.setStepEnabled(index, enabled)
+    /** Queues a factory sequence; returns false immediately for an unknown ID. */
+    fun selectFactoryPattern(id: String): Boolean = audioSequencer.selectFactoryPattern(id)
 
     val diagnostics: AudioOutputDiagnostics
         get() = AudioOutputDiagnostics(
