@@ -117,50 +117,137 @@ internal fun OrbitalDisplay(
             },
     ) {
         val c = Offset(size.width * .5f, size.height * .5f)
-        val radius = min(size.width, size.height) * .405f
+        val radius = min(size.width, size.height) * .385f
+        if (radius <= 0f) return@Canvas
         val m = morph.coerceIn(0f, 1f)
         val motion = movement.coerceIn(0f, 1f)
+
+        // The celestial body is calculated from morph and movement rather than
+        // animating a disconnected video. No timers, shader allocation or randomness.
+        val halo = radius * (1.58f + motion * .12f)
         drawCircle(
-            Brush.radialGradient(
-                listOf(
-                    OrbitalPalette.Violet.copy(alpha = .28f),
-                    OrbitalPalette.Blue.copy(alpha = .16f),
-                    OrbitalPalette.Void.copy(alpha = 0f),
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    OrbitalPalette.Violet.copy(alpha = .25f + motion * .12f),
+                    OrbitalPalette.Blue.copy(alpha = .18f),
+                    OrbitalPalette.Cyan.copy(alpha = .08f),
+                    Color.Transparent,
                 ),
                 center = c,
-                radius = radius * 1.52f,
+                radius = halo,
             ),
-            radius = radius * 1.52f,
+            radius = halo,
             center = c,
         )
+        // Floating dust outside the disc establishes a sense of space without
+        // obscuring the gesture surface. Coordinates are deterministic.
+        for (i in 0 until 64) {
+            val angle = i * 2.399963229728653
+            val distance = radius * (1.08f + (i * 31 % 50) / 100f)
+            val p = Offset(
+                c.x + cos(angle).toFloat() * distance,
+                c.y + sin(angle).toFloat() * distance * .87f,
+            )
+            val gold = i % 13 == 0
+            val alpha = if (gold) .68f else .22f + (i % 5) * .045f
+            drawCircle(
+                color = (if (gold) OrbitalPalette.Gold else OrbitalPalette.Cyan).copy(alpha = alpha),
+                radius = (if (gold) 1.35f else .65f).dp.toPx(),
+                center = p,
+            )
+        }
+
+        // Multiple offset illumination gradients give the orb a physical front,
+        // a cool terminator and a dense, deliberately dark interior.
         drawCircle(
-            Brush.radialGradient(
-                listOf(
-                    Color(0xFF133D73),
-                    Color(0xFF0B2B5C),
-                    OrbitalPalette.Violet.copy(alpha = .32f),
-                    Color(0xFF061226),
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color(0xFF275B9B),
+                    Color(0xFF163A79),
+                    Color(0xFF0E2253),
+                    Color(0xFF070E27),
+                    Color(0xFF030712),
                 ),
-                center = Offset(c.x - radius * .24f, c.y - radius * .28f),
-                radius = radius * 1.36f,
+                center = Offset(c.x - radius * .35f, c.y - radius * .34f),
+                radius = radius * 1.42f,
             ),
             radius = radius,
             center = c,
         )
-        for (ring in 0..4) {
-            drawCircle(
-                OrbitalPalette.Blue.copy(alpha = .10f + ring * .045f),
-                radius = radius * (.70f + ring * .093f),
-                center = c,
-                style = Stroke(width = (1 + ring % 2).dp.toPx()),
-            )
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    OrbitalPalette.Cyan.copy(alpha = .27f),
+                    OrbitalPalette.Blue.copy(alpha = .15f),
+                    OrbitalPalette.Violet.copy(alpha = .07f),
+                    Color.Transparent,
+                ),
+                center = Offset(c.x - radius * .42f, c.y - radius * .45f),
+                radius = radius * .95f,
+            ),
+            radius = radius,
+            center = c,
+        )
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color.Transparent,
+                    OrbitalPalette.Violet.copy(alpha = .05f),
+                    OrbitalPalette.Violet.copy(alpha = .32f),
+                    Color(0xFF02040C),
+                ),
+                center = Offset(c.x + radius * .08f, c.y + radius * .02f),
+                radius = radius * 1.07f,
+            ),
+            radius = radius,
+            center = c,
+        )
+        drawCircle(
+            color = OrbitalPalette.Cyan.copy(alpha = .20f),
+            radius = radius,
+            center = c,
+            style = Stroke(width = 1.2.dp.toPx()),
+        )
+        drawCircle(
+            color = OrbitalPalette.Violet.copy(alpha = .10f),
+            radius = radius * 1.012f,
+            center = c,
+            style = Stroke(width = 5.dp.toPx()),
+        )
+
+        // Faint orbital longitude/latitude arcs put the active timbral ribbons
+        // on a readable spherical grid. Both angles are parameter-driven.
+        for (band in -3..3) {
+            val heightFraction = 1f - kotlin.math.abs(band) * .18f
+            val bandRadius = radius * (.14f + heightFraction * .75f)
+            rotate(17f + m * 12f, c) {
+                drawOval(
+                    color = OrbitalPalette.Cyan.copy(alpha = if (band == 0) .18f else .075f),
+                    topLeft = Offset(c.x - bandRadius, c.y - radius * .26f - band * radius * .10f),
+                    size = Size(bandRadius * 2f, radius * (.52f + heightFraction * .07f)),
+                    style = Stroke(width = .55.dp.toPx()),
+                )
+            }
         }
-        val orbitFrequency = 3.0 + m.toDouble() * 2.0
-        val orbitYScale = .88f + m * .12f
+        for (meridian in -2..2) {
+            rotate(meridian * 26f + m * 13f, c) {
+                drawOval(
+                    color = OrbitalPalette.Blue.copy(alpha = .08f),
+                    topLeft = Offset(c.x - radius * .22f, c.y - radius * .96f),
+                    size = Size(radius * .44f, radius * 1.92f),
+                    style = Stroke(width = .6.dp.toPx()),
+                )
+            }
+        }
+
+        // Twelve harmonic ribbons are not a sampled audio spectrum; their phase,
+        // density and curvature communicate the actual morph/movement controls.
+        val orbitFrequency = 2.75 + m.toDouble() * 2.8
+        val orbitYScale = .70f + m * .19f
         val orbitSamples = OrbitalTraceMath.samples
-        for (layer in 0..7) {
+        for (layer in 0 until 12) {
             val path = Path()
-            val phase = motion.toDouble() * PI * 2 + layer * .43
+            val phase = motion.toDouble() * PI * 2.0 + layer * .33
             val shiftedPhase = phase * .65
             val phaseCosine = cos(shiftedPhase)
             val phaseSine = sin(shiftedPhase)
@@ -169,7 +256,7 @@ internal fun OrbitalDisplay(
                 val twist = OrbitalTraceMath.twist(
                     sample, orbitFrequency, phase, phaseCosine, phaseSine,
                 )
-                val rr = radius.toDouble() * (.55 + layer * .049 + twist)
+                val rr = radius.toDouble() * (.37 + layer * .048 + twist * .86)
                 val x = c.x + sample.cosine.toFloat() * rr.toFloat()
                 val y = c.y + sample.sine.toFloat() * rr.toFloat() * orbitYScale
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
@@ -181,59 +268,99 @@ internal fun OrbitalDisplay(
                 2 -> OrbitalPalette.Violet
                 else -> OrbitalPalette.Gold
             }
-            drawPath(path, tint.copy(alpha = .10f), style = Stroke(width = (6 + layer).dp.toPx()))
-            drawPath(path, tint.copy(alpha = .74f), style = Stroke(width = (1.0 + layer * .15).dp.toPx()))
+            val strength = .54f + motion * .19f
+            drawPath(path, tint.copy(alpha = .045f), style = Stroke(width = (8f + layer * .55f).dp.toPx()))
+            drawPath(path, tint.copy(alpha = .20f), style = Stroke(width = (3.3f + layer * .13f).dp.toPx()))
+            drawPath(path, tint.copy(alpha = strength), style = Stroke(width = (1.05f + layer * .055f).dp.toPx()))
         }
-        rotate(24f, c) {
+
+        // Engraved external halo with calibrated, fine tick marks.
+        for (tick in 0 until 96) {
+            val angle = (tick * PI * 2.0 / 96.0) - PI / 2
+            val major = tick % 8 == 0
+            val inner = radius * (if (major) 1.055f else 1.086f)
+            val outer = radius * (if (major) 1.14f else 1.111f)
+            val direction = Offset(cos(angle).toFloat(), sin(angle).toFloat())
+            val tint = if (tick % 24 == 0) OrbitalPalette.Gold else OrbitalPalette.Cyan
+            drawLine(
+                tint.copy(alpha = if (major) .53f else .19f),
+                start = c + direction * inner,
+                end = c + direction * outer,
+                strokeWidth = (if (major) .9f else .5f).dp.toPx(),
+            )
+        }
+        drawCircle(
+            color = OrbitalPalette.Cyan.copy(alpha = .14f),
+            radius = radius * 1.11f,
+            center = c,
+            style = Stroke(width = .6.dp.toPx()),
+        )
+
+        // Two tilted satellite orbits create the holographic instrument silhouette.
+        rotate(28f + 9f * m, c) {
             drawOval(
-                color = OrbitalPalette.Gold.copy(alpha = .60f),
-                topLeft = Offset(c.x - radius * 1.13f, c.y - radius * .35f),
-                size = Size(radius * 2.26f, radius * .70f),
-                style = Stroke(width = .9.dp.toPx()),
+                brush = Brush.sweepGradient(
+                    listOf(
+                        OrbitalPalette.Gold.copy(alpha = .10f),
+                        OrbitalPalette.Cyan.copy(alpha = .60f),
+                        OrbitalPalette.Violet.copy(alpha = .15f),
+                        OrbitalPalette.Gold.copy(alpha = .83f),
+                        OrbitalPalette.Gold.copy(alpha = .10f),
+                    ),
+                    center = c,
+                ),
+                topLeft = Offset(c.x - radius * 1.23f, c.y - radius * .34f),
+                size = Size(radius * 2.46f, radius * .68f),
+                style = Stroke(width = 1.55.dp.toPx(), cap = StrokeCap.Round),
             )
         }
-        rotate(-32f, c) {
+        rotate(-39f + 8f * motion, c) {
             drawOval(
-                color = OrbitalPalette.Cyan.copy(alpha = .25f),
-                topLeft = Offset(c.x - radius * .96f, c.y - radius * .40f),
-                size = Size(radius * 1.92f, radius * .80f),
-                style = Stroke(width = .75.dp.toPx()),
+                color = OrbitalPalette.Blue.copy(alpha = .42f),
+                topLeft = Offset(c.x - radius * 1.12f, c.y - radius * .36f),
+                size = Size(radius * 2.24f, radius * .72f),
+                style = Stroke(width = .85.dp.toPx()),
             )
         }
-        // Deterministic constellation; no random values or recomposition jitter.
-        for (i in 0 until 52) {
-            val a = i * 2.39996323
-            val d = (.15 + (i * 47 % 89) / 100.0) * radius.toDouble()
-            val p = Offset(c.x + (cos(a) * d).toFloat(), c.y + (sin(a) * d).toFloat())
-            val gold = i % 6 == 0
-            drawCircle(
-                if (gold) OrbitalPalette.Gold.copy(alpha = .8f) else OrbitalPalette.Cyan.copy(alpha = .24f),
-                radius = (if (gold) 1.5 else .7).dp.toPx(),
-                center = p,
-            )
-        }
-        listOf(32.0, 158.0, 270.0).forEachIndexed { index, deg ->
-            val a = Math.toRadians(deg)
+        // Glowing orbital junctions and an asymmetrical specular glint.
+        listOf(25.0, 162.0, 277.0).forEachIndexed { index, degrees ->
+            val angle = Math.toRadians(degrees)
             val p = Offset(
-                c.x + (cos(a) * radius.toDouble() * 1.10).toFloat(),
-                c.y + (sin(a) * radius.toDouble() * .56).toFloat(),
+                c.x + (cos(angle) * radius * 1.11).toFloat(),
+                c.y + (sin(angle) * radius * .68).toFloat(),
             )
             val tint = if (index == 1) OrbitalPalette.Gold else OrbitalPalette.Cyan
-            drawCircle(tint.copy(alpha = .16f), 12.dp.toPx(), p)
-            drawCircle(tint, (3.5 + index).dp.toPx(), p)
+            drawCircle(tint.copy(alpha = .09f), 15.dp.toPx(), p)
+            drawCircle(tint.copy(alpha = .22f), 7.dp.toPx(), p)
+            drawCircle(tint, (2.2f + index * .5f).dp.toPx(), p)
+            drawCircle(Color.White.copy(alpha = .9f), .8.dp.toPx(), p)
         }
-        // A luminous reticle follows the sound parameters; it is inset to remain visible at extremes.
+        drawCircle(
+            brush = Brush.radialGradient(
+                listOf(Color.White.copy(alpha = .43f), OrbitalPalette.Cyan.copy(alpha = .10f), Color.Transparent),
+                center = Offset(c.x - radius * .35f, c.y - radius * .47f),
+                radius = radius * .36f,
+            ),
+            center = Offset(c.x - radius * .35f, c.y - radius * .47f),
+            radius = radius * .36f,
+        )
+
+        // The luminous reticle is the accessible XY gesture target, and always
+        // displays the real normalized values even when the instrument is silent.
         if (onExpressionChange != null) {
-            val edge = 16.dp.toPx()
+            val edge = 18.dp.toPx()
             val marker = Offset(
                 edge + (size.width - edge * 2f).coerceAtLeast(0f) * m,
                 edge + (size.height - edge * 2f).coerceAtLeast(0f) * (1f - motion),
             )
-            drawCircle(OrbitalPalette.Cyan.copy(alpha = .13f), 21.dp.toPx(), marker)
-            drawCircle(OrbitalPalette.Gold.copy(alpha = .28f), 13.dp.toPx(), marker)
-            drawCircle(OrbitalPalette.Void.copy(alpha = .95f), 7.dp.toPx(), marker)
-            drawCircle(OrbitalPalette.Gold, 5.dp.toPx(), marker, style = Stroke(1.5.dp.toPx()))
-            drawCircle(Color.White, 1.5.dp.toPx(), marker)
+            val crosshair = 15.dp.toPx()
+            drawLine(OrbitalPalette.Gold.copy(alpha = .21f), marker + Offset(-crosshair, 0f), marker + Offset(crosshair, 0f), .6.dp.toPx())
+            drawLine(OrbitalPalette.Gold.copy(alpha = .21f), marker + Offset(0f, -crosshair), marker + Offset(0f, crosshair), .6.dp.toPx())
+            drawCircle(OrbitalPalette.Cyan.copy(alpha = .09f), 22.dp.toPx(), marker)
+            drawCircle(OrbitalPalette.Gold.copy(alpha = .20f), 13.dp.toPx(), marker)
+            drawCircle(Color(0xFF06111F).copy(alpha = .96f), 7.dp.toPx(), marker)
+            drawCircle(OrbitalPalette.Gold, 5.dp.toPx(), marker, style = Stroke(1.3.dp.toPx()))
+            drawCircle(Color.White, 1.35.dp.toPx(), marker)
         }
     }
 }
@@ -283,7 +410,7 @@ internal fun ModulationGraph(
             }
         }
         Text(
-            "POSITION   /   MORPH   /   SPECTRAL",
+            "MORPH  /  MOVEMENT  /  HARMONIC MOTION",
             modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
             color = OrbitalPalette.Muted,
             fontSize = 9.sp,
@@ -334,39 +461,78 @@ internal fun NeonKnob(
                 },
         ) {
             val c = Offset(size.width / 2f, size.height / 2f)
-            val r = size.minDimension * .39f
-            drawCircle(Brush.radialGradient(listOf(tint.copy(alpha = .22f), Color.Transparent)), r * 1.44f, c)
+            val r = size.minDimension * .365f
+            // Satin-black metal body, backlit edge and a legible value track.
             drawCircle(
-                Brush.radialGradient(listOf(Color(0xFF172F4D), Color(0xFF060D1A))),
+                Brush.radialGradient(listOf(tint.copy(alpha = .19f), Color.Transparent), center = c, radius = r * 1.56f),
+                r * 1.56f, c,
+            )
+            drawCircle(
+                Brush.radialGradient(
+                    listOf(Color(0xFF173457), Color(0xFF09162A), Color(0xFF040913)),
+                    center = Offset(c.x - r * .28f, c.y - r * .30f),
+                    radius = r * 1.38f,
+                ),
                 r, c,
             )
-            drawCircle(OrbitalPalette.PanelEdge.copy(alpha = .9f), r, c, style = Stroke(1.dp.toPx()))
+            drawCircle(tint.copy(alpha = .24f), r * 1.02f, c, style = Stroke(.65.dp.toPx()))
+            drawCircle(Color.White.copy(alpha = .10f), r * .88f, c, style = Stroke(.65.dp.toPx()))
+            drawCircle(Color(0xFF040A16), r * .72f, c)
+            drawCircle(
+                Brush.radialGradient(
+                    listOf(Color(0xFF163457), Color(0xFF0B1A2D), Color(0xFF050913)),
+                    center = Offset(c.x - r * .34f, c.y - r * .37f),
+                    radius = r,
+                ),
+                r * .67f, c,
+            )
+            for (index in 0..32) {
+                val a = Math.toRadians((135.0 + index * 270.0 / 32.0))
+                val direction = Offset(cos(a).toFloat(), sin(a).toFloat())
+                val major = index % 4 == 0
+                drawLine(
+                    tint.copy(alpha = if (major) .31f else .16f),
+                    start = c + direction * r * 1.13f,
+                    end = c + direction * r * (if (major) 1.27f else 1.21f),
+                    strokeWidth = (if (major) .8f else .5f).dp.toPx(),
+                )
+            }
+            val arcPosition = Offset(c.x - r * 1.08f, c.y - r * 1.08f)
+            val arcSize = Size(r * 2.16f, r * 2.16f)
             drawArc(
-                tint.copy(alpha = .16f),
-                startAngle = 135f,
-                sweepAngle = 270f,
-                useCenter = false,
-                topLeft = Offset(c.x - r * 1.14f, c.y - r * 1.14f),
-                size = Size(r * 2.28f, r * 2.28f),
+                tint.copy(alpha = .15f),
+                startAngle = 135f, sweepAngle = 270f, useCenter = false,
+                topLeft = arcPosition, size = arcSize,
                 style = Stroke(3.dp.toPx(), cap = StrokeCap.Round),
+            )
+            drawArc(
+                tint.copy(alpha = .20f),
+                startAngle = 135f, sweepAngle = 270f * v, useCenter = false,
+                topLeft = arcPosition, size = arcSize,
+                style = Stroke(6.dp.toPx(), cap = StrokeCap.Round),
             )
             drawArc(
                 tint,
-                startAngle = 135f,
-                sweepAngle = 270f * v,
-                useCenter = false,
-                topLeft = Offset(c.x - r * 1.14f, c.y - r * 1.14f),
-                size = Size(r * 2.28f, r * 2.28f),
-                style = Stroke(3.dp.toPx(), cap = StrokeCap.Round),
+                startAngle = 135f, sweepAngle = 270f * v, useCenter = false,
+                topLeft = arcPosition, size = arcSize,
+                style = Stroke(2.25.dp.toPx(), cap = StrokeCap.Round),
             )
             val angle = Math.toRadians((135 + 270 * v).toDouble())
+            val marker = Offset(cos(angle).toFloat(), sin(angle).toFloat())
             drawLine(
-                Color.White,
-                Offset(c.x + cos(angle).toFloat() * r * .45f, c.y + sin(angle).toFloat() * r * .45f),
-                Offset(c.x + cos(angle).toFloat() * r * .80f, c.y + sin(angle).toFloat() * r * .80f),
-                strokeWidth = 2.dp.toPx(),
-                cap = StrokeCap.Round,
+                tint.copy(alpha = .22f),
+                c + marker * r * .22f,
+                c + marker * r * .79f,
+                strokeWidth = 5.dp.toPx(), cap = StrokeCap.Round,
             )
+            drawLine(
+                Color.White.copy(alpha = .96f),
+                c + marker * r * .26f,
+                c + marker * r * .80f,
+                strokeWidth = 1.65.dp.toPx(), cap = StrokeCap.Round,
+            )
+            drawCircle(Color.White.copy(alpha = .35f), r * .12f, c)
+            drawCircle(tint.copy(alpha = .67f), r * .065f, c)
         }
         Text(label, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = OrbitalPalette.Text, letterSpacing = .7.sp, textAlign = TextAlign.Center, maxLines = 1)
         Text(valueLabel, fontSize = 10.sp, color = OrbitalPalette.Muted, textAlign = TextAlign.Center, maxLines = 1)
