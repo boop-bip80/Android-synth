@@ -24,7 +24,7 @@ data class UserSequence(
     }
 
     companion object {
-        private val ID_RULE = Regex("[a-z0-9][a-z0-9_-]{0,63}")
+        private val ID_RULE = Regex("[a-z0-9][a-z0-9-]{0,63}")
         fun validId(id: String): Boolean = ID_RULE.matches(id)
     }
 }
