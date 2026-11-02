@@ -6,10 +6,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -152,7 +151,8 @@ class OrbitalScreenTest {
             )
         }
         compose.onNodeWithTag("orbitalExpression").assertIsDisplayed().performTouchInput {
-            click(center)
+            down(center)
+            up()
         }
         compose.runOnIdle {
             assertTrue("Morph touch callback missing", ParameterId.MORPH in updates)
@@ -173,7 +173,7 @@ class OrbitalScreenTest {
             )
         }
         val orbit = compose.onNodeWithTag("orbitalExpression")
-        val actions = orbit.fetchSemanticsNode().config[SemanticsProperties.CustomActions].map { it.label }
+        val actions = orbit.fetchSemanticsNode().config[SemanticsActions.CustomActions].map { it.label }
         assertTrue("Increase morph" in actions)
         assertTrue("Decrease movement" in actions)
         orbit.performTouchInput {
@@ -203,7 +203,7 @@ class OrbitalScreenTest {
         }
         val actions = compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
-        ).fetchSemanticsNode().config[SemanticsProperties.CustomActions].map { it.label }
+        ).fetchSemanticsNode().config[SemanticsActions.CustomActions].map { it.label }
         assertEquals(13, actions.size)
         assertTrue("Play C sharp 4" in actions)
         assertTrue("Play A sharp 4" in actions)
