@@ -53,6 +53,31 @@ class AdvancedPatternComposerTest {
         }
     }
 
+    @Test fun startPitchAnchorsFirstStepAndNearestScaleToneWins() {
+        val startedOnScale = AdvancedPatternComposer.melodicWalk(
+            steps = 1, scale = MusicalScales.MAJOR, tonicPitchClass = 0,
+            lowestMidiNote = 59, highestMidiNote = 63, startMidiNote = 62,
+            maxDegreeLeap = 12, restProbability = 0.0, seed = 999L,
+        )
+        assertEquals(62, startedOnScale.steps.single().notes.single().midiNote)
+
+        // Between C and D, ties deliberately resolve to the lower pitch.
+        val nearest = AdvancedPatternComposer.melodicWalk(
+            steps = 1, scale = MusicalScales.MAJOR, tonicPitchClass = 0,
+            lowestMidiNote = 59, highestMidiNote = 63, startMidiNote = 61,
+            maxDegreeLeap = 12, restProbability = 0.0, seed = 7L,
+        )
+        assertEquals(60, nearest.steps.single().notes.single().midiNote)
+
+        val stationary = AdvancedPatternComposer.melodicWalk(
+            steps = 16, scale = MusicalScales.MAJOR,
+            startMidiNote = 62, maxDegreeLeap = 0, restProbability = 0.0,
+        )
+        assertTrue(stationary.steps.all {
+            it.notes.single().midiNote == 62
+        })
+    }
+
     @Test fun seededMelodicWalkIsReproducibleScaleConstrainedAndBounded() {
         val args = AdvancedPatternComposer.melodicWalk(
             steps = 64,
