@@ -75,6 +75,27 @@ orbital_window_drawn() {
   ' "$snapshot"
 }
 
+# A Pixel Launcher ANR is external to ORBITAL, but its system dialog can
+# steal focus over a correctly drawn ORBITAL window. Recover only this exact
+# external package; any ORBITAL ANR still fails the strict app-focus gate.
+launcher_anr_overlay_visible() {
+  local snapshot="$1"
+  grep -Eq 'mCurrentFocus=.*Application Not Responding: com[.]google[.]android[.]apps[.]nexuslauncher(}|$)' "$snapshot"
+}
+
+recover_launcher_anr_overlay() {
+  local phase="$1"
+  local prior_attempts="$2"
+  if (( prior_attempts == 0 )); then
+    printf '%s: dismiss external Pixel Launcher ANR dialog with BACK\n' "$phase" >> artifacts/external-launcher-anr.txt
+    timeout 10s adb shell input keyevent KEYCODE_BACK || true
+  else
+    printf '%s: launcher ANR persisted; force-stop only Pixel Launcher, relaunch ORBITAL\n' "$phase" >> artifacts/external-launcher-anr.txt
+    timeout 15s adb shell am force-stop com.google.android.apps.nexuslauncher || true
+    launch_orbital "artifacts/${phase}-launcher-recovery-launch.txt"
+  fi
+}
+
 # The emulator runner waits for boot, but package manager initialization may
 # still lag. A bounded readiness gate avoids misdiagnosing that race as a test failure.
 printf '%s\n' 'waiting-for-package-manager' > artifacts/emulator-phase.txt
@@ -118,14 +139,21 @@ adb shell am force-stop com.orbital.synth || true
 launch_orbital artifacts/activity-launch.txt
 
 # Require a real drawn MainActivity surface after the splash disappears.
-# A live process or focused splash is insufficient evidence for a screenshot.
+# A live process, an external system dialog, or focused splash cannot pass.
 app_ready=0
+launcher_anr_recoveries=0
 for attempt in {1..90}; do
   adb shell dumpsys window > artifacts/window-state.txt 2>&1 || true
   if adb shell pidof com.orbital.synth >/dev/null 2>&1 &&
      orbital_window_drawn artifacts/window-state.txt; then
     app_ready=1
     break
+  fi
+  if (( launcher_anr_recoveries < 2 )) &&
+     launcher_anr_overlay_visible artifacts/window-state.txt; then
+    recover_launcher_anr_overlay portrait "$launcher_anr_recoveries"
+    launcher_anr_recoveries=$((launcher_anr_recoveries + 1))
+    sleep 2
   fi
   sleep 1
 done
@@ -165,12 +193,19 @@ launch_orbital artifacts/compact-activity-launch.txt
 
 printf '%s\n' 'compact-screenshot' > artifacts/emulator-phase.txt
 compact_ready=0
+launcher_anr_recoveries=0
 for attempt in {1..90}; do
   adb shell dumpsys window > artifacts/compact-window-state.txt 2>&1 || true
   if adb shell pidof com.orbital.synth >/dev/null 2>&1 &&
      orbital_window_drawn artifacts/compact-window-state.txt; then
     compact_ready=1
     break
+  fi
+  if (( launcher_anr_recoveries < 2 )) &&
+     launcher_anr_overlay_visible artifacts/compact-window-state.txt; then
+    recover_launcher_anr_overlay compact "$launcher_anr_recoveries"
+    launcher_anr_recoveries=$((launcher_anr_recoveries + 1))
+    sleep 2
   fi
   sleep 1
 done

@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -137,6 +138,7 @@ fun OrbitalScreen(
     onSaveSequence: ((String) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
+    var compactGraphExpanded by remember { mutableStateOf(false) }
     var showPatchLibrary by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
     var newPatchName by remember { mutableStateOf("") }
@@ -199,9 +201,10 @@ fun OrbitalScreen(
             .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
         val compactHeight = maxHeight < 500.dp
+        val compactOrbitLayout = maxWidth < 380.dp || LocalDensity.current.fontScale >= 1.2f
         Column(
             Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalArrangement = Arrangement.spacedBy(if (compactHeight) 6.dp else 12.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compactHeight) 6.dp else if (compactOrbitLayout) 8.dp else 12.dp),
         ) {
         Header(
             patch = state.patchName,
@@ -250,10 +253,57 @@ fun OrbitalScreen(
                 .fillMaxWidth()
                 .verticalScroll(editorScroll)
                 .padding(bottom = 5.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compactOrbitLayout) 8.dp else 12.dp),
         ) {
         when (selectedTab) {
             Tab.SOUND -> {
+                if (compactOrbitLayout) {
+                    CompactPatchHeader(
+                        state = state,
+                        onPreviousPatch = onPreviousPatch,
+                        onNextPatch = onNextPatch,
+                    )
+                    Box(Modifier.fillMaxWidth().height(148.dp).testTag("compactOrbitViewport")) {
+                        OrbitalDisplay(
+                            morph = morph,
+                            movement = move,
+                            modifier = Modifier.fillMaxSize(),
+                            onExpressionChange = { nextMorph, nextMovement ->
+                                onParameterChange(ParameterId.MORPH, nextMorph)
+                                onParameterChange(ParameterId.MOVEMENT, nextMovement)
+                            },
+                        )
+                    }
+                    Box(Modifier.fillMaxWidth().testTag("compactOrbitHint")) {
+                        Label("DRAG ORBIT: X = MORPH  /  Y = MOTION")
+                    }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .testTag("compactModulationToggle")
+                            .border(1.dp, OrbitalPalette.PanelEdge, RoundedCornerShape(12.dp))
+                            .background(OrbitalPalette.Panel.copy(alpha = .55f), RoundedCornerShape(12.dp))
+                            .clickable(role = Role.Button) { compactGraphExpanded = !compactGraphExpanded }
+                            .semantics {
+                                contentDescription = if (compactGraphExpanded)
+                                    "Hide modulation graph" else "Show modulation graph"
+                            }
+                            .heightIn(min = 48.dp)
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("MODULATION GRAPH", color = OrbitalPalette.Text,
+                            fontSize = 10.sp, letterSpacing = 1.1.sp)
+                        Text(if (compactGraphExpanded) "−" else "+",
+                            color = OrbitalPalette.Cyan, fontSize = 18.sp)
+                    }
+                    if (compactGraphExpanded) {
+                        Box(Modifier.fillMaxWidth().testTag("compactModulationGraph")) {
+                            ModulationGraph(morph, move, Modifier.fillMaxWidth())
+                        }
+                    }
+                } else {
                 BoxWithConstraints(Modifier.fillMaxWidth().height(244.dp)) {
                     val layoutWidth = maxWidth
                     OrbitalDisplay(
@@ -325,6 +375,7 @@ fun OrbitalScreen(
                     }
                 }
                 ModulationGraph(morph, move, Modifier.fillMaxWidth())
+                }
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(3.dp),
@@ -426,7 +477,7 @@ fun OrbitalScreen(
             onNoteOn = onNoteOn,
             onNoteOff = onNoteOff,
             modifier = Modifier.fillMaxWidth(),
-            preferredHeight = if (compactHeight) 94.dp else null,
+            preferredHeight = if (compactHeight) 94.dp else if (compactOrbitLayout) 110.dp else null,
         )
         Row(
             Modifier.fillMaxWidth(),
@@ -621,6 +672,76 @@ private fun PatchLibraryDialog(
                 }
             }
         }
+        }
+    }
+}
+
+@Composable
+private fun CompactPatchHeader(
+    state: OrbitalUiState,
+    onPreviousPatch: (() -> Unit)?,
+    onNextPatch: (() -> Unit)?,
+) {
+    // Keep controls and metadata outside the touch artwork at 360 dp / large fonts.
+    Column(
+        Modifier.fillMaxWidth().testTag("compactPatchHeader"),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.testTag("compactBankLabel")) {
+                Label("WAVETABLE  /  FACTORY BANK")
+            }
+            Box(Modifier.testTag("compactEngineLabel")) {
+                Label("ENGINE")
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().testTag("compactPatchControls"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            PresetArrow(
+                symbol = "‹",
+                description = "Previous factory preset",
+                enabled = onPreviousPatch != null,
+                onClick = { onPreviousPatch?.invoke() },
+            )
+            Column(
+                Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    state.patchName,
+                    color = OrbitalPalette.Text,
+                    textAlign = TextAlign.Center,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Light,
+                    letterSpacing = 1.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (state.presetCount > 0) {
+                    Label(
+                        "PATCH " +
+                            (state.presetIndex.coerceIn(0, state.presetCount - 1) + 1) +
+                            " / " + state.presetCount,
+                    )
+                }
+            }
+            PresetArrow(
+                symbol = "›",
+                description = "Next factory preset",
+                enabled = onNextPatch != null,
+                onClick = { onNextPatch?.invoke() },
+            )
+        }
+        Box(Modifier.fillMaxWidth().testTag("compactEngineModes"), contentAlignment = Alignment.CenterEnd) {
+            Label("WAVETABLE  /  SPECTRAL  /  HARMONIC")
         }
     }
 }
