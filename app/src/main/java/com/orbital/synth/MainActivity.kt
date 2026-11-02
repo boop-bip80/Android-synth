@@ -16,6 +16,11 @@ import com.orbital.synth.audio.SourceAwareMidiMessageListener
 import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.VoiceMode
+import com.orbital.synth.core.music.SequenceDirectoryStore
+import com.orbital.synth.core.music.SequencerNote
+import com.orbital.synth.core.music.SequencerStep
+import com.orbital.synth.core.music.StepPattern
+import com.orbital.synth.core.music.UserSequence
 import com.orbital.synth.core.preset.FactoryPresets
 import com.orbital.synth.core.preset.loadPatch
 import com.orbital.synth.preset.PatchOutcome
@@ -26,7 +31,10 @@ import com.orbital.synth.ui.PatchChoice
 import com.orbital.synth.ui.SequenceChoice
 import com.orbital.synth.ui.PlayMode
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /**
  * Composes the UI around one long-lived synthesizer and one Android audio output.
@@ -46,9 +54,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var audioOutput: AndroidAudioOutput
     private lateinit var midiManager: AndroidMidiManager
     private lateinit var userPatches: UserPatchRepository
+    private lateinit var userSequences: SequenceDirectoryStore
 
     private var patchIndex = 0
     private var screenState by mutableStateOf(OrbitalUiState())
+    private var sequenceSelectionToken = 0L
+    private var sequenceSaveInFlight = false
+    // Keep the editor responsive until the render worker publishes each queued edit.
+    // These mutations and the Compose poll both run on the main thread.
+    private var pendingStepRevision: Long? = null
+    private val pendingStepNotes = mutableMapOf<Int, List<SequencerNote>>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,17 +76,20 @@ class MainActivity : ComponentActivity() {
 
         audioOutput = AndroidAudioOutput(applicationContext, synth)
         userPatches = UserPatchRepository(applicationContext, synth)
+        userSequences = SequenceDirectoryStore(filesDir.resolve("sequences").toPath())
         refreshPatchChoices()
         val initialSequence = audioOutput.sequencerPatternSelection
         screenState = screenState.copy(
             sequencerTempo = audioOutput.sequencerTempo,
             enabledSteps = initialSequence.enabledSteps,
             sequencerStepCount = initialSequence.stepCount,
+            sequenceNotesByStep = initialSequence.sourcePattern.steps.map { it.notes },
             sequenceChoices = audioOutput.sequencerFactoryPatterns.map {
                 SequenceChoice(it.id, it.name)
             },
             activeSequenceId = initialSequence.id,
         )
+        refreshSequenceChoices()
         midiManager = AndroidMidiManager(applicationContext, object : SourceAwareMidiMessageListener {
             override fun onSourceNoteOn(sourceId: Long, channel: Int, note: Int, velocity: Int) {
                 synth.noteOn(sourceId, channel, note, velocity.coerceIn(0, 127) / 127f)
@@ -122,18 +140,37 @@ class MainActivity : ComponentActivity() {
                     // so the active ID and enabled grid cannot belong to different patterns.
                     val sequence = audioOutput.sequencerPatternSelection
                     val tempo = audioOutput.sequencerTempo
+                    val actualNotes = sequence.sourcePattern.steps.map { it.notes }
+                    if (pendingStepRevision != sequence.revision) {
+                        pendingStepNotes.clear()
+                        pendingStepRevision = null
+                    } else {
+                        pendingStepNotes.entries.removeAll { (index, notes) ->
+                            actualNotes.getOrNull(index) == notes
+                        }
+                    }
+                    val displayedNotes = actualNotes.mapIndexed { index, notes ->
+                        pendingStepNotes[index] ?: notes
+                    }
+                    val displayedEnabled = sequence.enabledSteps.toMutableSet().apply {
+                        pendingStepNotes.forEach { (index, notes) ->
+                            if (notes.isEmpty()) remove(index) else add(index)
+                        }
+                    }
                     if (screenState.sequencerStep != step ||
                         screenState.activeSequenceId != sequence.id ||
-                        screenState.enabledSteps != sequence.enabledSteps ||
+                        screenState.enabledSteps != displayedEnabled ||
                         screenState.sequencerStepCount != sequence.stepCount ||
-                        screenState.sequencerTempo != tempo
+                        screenState.sequencerTempo != tempo ||
+                        screenState.sequenceNotesByStep != displayedNotes
                     ) {
                         screenState = screenState.copy(
                             sequencerStep = step,
                             activeSequenceId = sequence.id,
-                            enabledSteps = sequence.enabledSteps,
+                            enabledSteps = displayedEnabled,
                             sequencerStepCount = sequence.stepCount,
                             sequencerTempo = tempo,
+                            sequenceNotesByStep = displayedNotes,
                         )
                     }
                     delay(32L)
@@ -179,17 +216,13 @@ class MainActivity : ComponentActivity() {
                         // publishes the new length and any truncated step state.
                         audioOutput.setSequencerStepCount(requested)
                     },
+                    onSequencerStepNotesChange = ::updateSequenceStepNotes,
+                    onSaveSequence = ::saveCurrentSequence,
                     onPreviousPatch = { selectFactoryPatch(patchIndex - 1) },
                     onNextPatch = { selectFactoryPatch(patchIndex + 1) },
                     onSavePatch = ::saveCurrentPatch,
                     onSelectPatch = ::activatePatch,
-                    onSelectSequence = { id ->
-                        if (!audioOutput.selectFactoryPattern(id)) {
-                            screenState = screenState.copy(
-                                patchFeedback = "Unknown factory sequence."
-                            )
-                        }
-                    },
+                    onSelectSequence = ::activateSequence,
                 )
             }
         }
@@ -227,6 +260,152 @@ class MainActivity : ComponentActivity() {
                 is PatchOutcome.Failure -> {
                     screenState = screenState.copy(patchFeedback = result.message)
                 }
+            }
+        }
+    }
+
+    /** User patterns are read from app-private storage off the UI/audio threads. */
+    private fun refreshSequenceChoices() {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { userSequences.list() } }
+            result.onSuccess { saved ->
+                val factories = audioOutput.sequencerFactoryPatterns.map {
+                    SequenceChoice(it.id, it.name)
+                }
+                screenState = screenState.copy(
+                    sequenceChoices = factories + saved.map { SequenceChoice(it.id, it.name) }
+                )
+            }.onFailure { failure ->
+                screenState = screenState.copy(
+                    patchFeedback = "Sequence library unavailable: ${failure.message ?: "read error"}"
+                )
+            }
+        }
+    }
+
+    /** An immediate UI preview is reconciled with the worker's immutable snapshot. */
+    private fun updateSequenceStepNotes(step: Int, notes: List<SequencerNote>) {
+        val selection = audioOutput.sequencerPatternSelection
+        if (!audioOutput.setSequencerStepNotes(step, notes)) {
+            screenState = screenState.copy(patchFeedback = "Invalid step edit; nothing changed.")
+            return
+        }
+        if (pendingStepRevision != selection.revision) pendingStepNotes.clear()
+        pendingStepRevision = selection.revision
+        val frozen = notes.toList()
+        pendingStepNotes[step] = frozen
+        val visible = screenState.sequenceNotesByStep
+        if (step in visible.indices) {
+            screenState = screenState.copy(
+                sequenceNotesByStep = visible.toMutableList().apply { this[step] = frozen },
+                enabledSteps = if (frozen.isEmpty()) screenState.enabledSteps - step
+                    else screenState.enabledSteps + step,
+            )
+        }
+    }
+
+    /** Save the currently audible grid as a new editable user pattern. */
+    private fun saveCurrentSequence(name: String) {
+        if (sequenceSaveInFlight) return
+        val selected = audioOutput.sequencerPatternSelection
+        if (screenState.activeSequenceId != selected.id ||
+            screenState.sequencerStepCount != selected.stepCount
+        ) {
+            screenState = screenState.copy(patchFeedback = "Wait for the sequence to finish loading.")
+            return
+        }
+        val title = name.trim()
+        val bankIds = audioOutput.sequencerFactoryPatterns.map { it.id }.toSet()
+        val stored = runCatching {
+            val notes = selected.sourcePattern.steps.mapIndexed { index, step ->
+                screenState.sequenceNotesByStep.getOrNull(index) ?: step.notes
+            }
+            val enabled = screenState.enabledSteps
+            val audibleSteps = notes.indices.map { index ->
+                when {
+                    index !in enabled -> SequencerStep()
+                    notes[index].isNotEmpty() -> SequencerStep(notes[index])
+                    else -> {
+                        // Match the transport's generated-note behavior for an
+                        // enabled factory rest, so Save As preserves what plays.
+                        var nearestPitch = 60
+                        for (distance in 1..notes.size) {
+                            val previous = (index - distance + notes.size) % notes.size
+                            val previousNote = notes[previous].firstOrNull()
+                            if (previousNote != null) {
+                                nearestPitch = previousNote.midiNote
+                                break
+                            }
+                        }
+                        SequencerStep(listOf(SequencerNote(nearestPitch, velocity = 92, gate = 0.72)))
+                    }
+                }
+            }
+            StepPattern(audibleSteps, selected.sourcePattern.subdivisionsPerBeat)
+        }
+        if (stored.isFailure) {
+            screenState = screenState.copy(patchFeedback = "Could not capture sequence: ${stored.exceptionOrNull()?.message}")
+            return
+        }
+        val pattern = stored.getOrThrow()
+        val bpm = screenState.sequencerTempo.toDouble()
+        val swing = selected.swing
+        sequenceSaveInFlight = true
+        lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val used = bankIds + userSequences.list().map { it.id }
+                        val slug = title.lowercase(Locale.ROOT)
+                            .replace(Regex("[^a-z0-9]+"), "-").trim('-').take(48)
+                            .ifBlank { "user-sequence" }
+                        var id = slug
+                        var suffix = 2
+                        while (id in used) {
+                            id = "${slug.take(55)}-${suffix++}"
+                        }
+                        UserSequence(id, title, pattern, bpm = bpm, swing = swing).also {
+                            userSequences.save(it)
+                        }
+                    }
+                }
+                result.onSuccess { saved ->
+                    screenState = screenState.copy(patchFeedback = "Saved sequence ${saved.name}")
+                    refreshSequenceChoices()
+                }.onFailure { failure ->
+                    screenState = screenState.copy(
+                        patchFeedback = "Could not save sequence: ${failure.message ?: "storage error"}"
+                    )
+                }
+            } finally {
+                sequenceSaveInFlight = false
+            }
+        }
+    }
+
+    /** Factory selection is instant; user-pattern reads are cancellable by request order. */
+    private fun activateSequence(id: String) {
+        val request = ++sequenceSelectionToken
+        pendingStepNotes.clear()
+        pendingStepRevision = null
+        if (audioOutput.sequencerFactoryPatterns.any { it.id == id }) {
+            audioOutput.selectFactoryPattern(id)
+            return
+        }
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { userSequences.load(id) } }
+            if (request != sequenceSelectionToken) return@launch
+            result.onSuccess { saved ->
+                if (saved == null || !audioOutput.loadSequencerPattern(
+                        saved.id, saved.name, saved.pattern, saved.bpm, saved.swing
+                    )
+                ) {
+                    screenState = screenState.copy(patchFeedback = "Sequence not found or invalid.")
+                }
+            }.onFailure { failure ->
+                screenState = screenState.copy(
+                    patchFeedback = "Could not load sequence: ${failure.message ?: "read error"}"
+                )
             }
         }
     }

@@ -23,7 +23,9 @@ data class FactoryPatternSelection(
     /** Source notes survive mute/unmute; render-time generated rests remain separate. */
     val sourcePattern: StepPattern,
     /** Changes on selection/load, allowing stale UI grid edits to be discarded. */
-    val revision: Long
+    val revision: Long,
+    /** The groove of the selected pattern, retained when saving a user copy. */
+    val swing: Double,
 )
 
 /**
@@ -66,7 +68,7 @@ internal class AudioSequencerTransport(
     /** One atomic UI snapshot, so ID, name, step count and grid never mix across patterns. */
     @Volatile private var patternSnapshot = FactoryPatternSelection(
         factory.id, factory.name, basePattern.steps.size,
-        enabled.indices.filter { enabled[it] }.toSet(), basePattern, selectionRevision
+        enabled.indices.filter { enabled[it] }.toSet(), basePattern, selectionRevision, factory.swing
     )
 
     val factoryPatterns: List<FactorySequence> get() = FactoryPatterns.ALL
@@ -272,7 +274,8 @@ internal class AudioSequencerTransport(
     private fun publishPatternSnapshot() {
         patternSnapshot = FactoryPatternSelection(
             selectedId, selectedName, basePattern.steps.size,
-            enabled.indices.filter { enabled[it] }.toSet(), basePattern, selectionRevision
+            enabled.indices.filter { enabled[it] }.toSet(), basePattern, selectionRevision,
+            sequencer.swing,
         )
     }
 
