@@ -37,7 +37,7 @@ class SequencerToggleReconcilerTest {
     @Test fun selectionRevisionChangesDiscardOldPendingToggle() {
         val intents = SequencerToggleReconciler()
         intents.record(2L, step = 0, enabled = false, ticket = 1L)
-        assertEquals(setOf(4), intents.reconcile(3L, 0L, setOf(0, 4), 5))
+        assertEquals(setOf(0, 4), intents.reconcile(3L, 0L, setOf(0, 4), 5))
     }
 
     @Test fun laterNoteEditCanReplacePendingToggleAndResizeDropsTruncatedStep() {
