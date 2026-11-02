@@ -90,6 +90,7 @@ data class OrbitalUiState(
     val sequencerRunning: Boolean = false,
     val enabledSteps: Set<Int> = emptySet(),
     val sequencerStep: Int = -1,
+    val sequencerStepCount: Int = 16,
     val sequencerTempo: Int = 112,
     val presetIndex: Int = 0,
     val presetCount: Int = 0,
@@ -148,30 +149,30 @@ fun OrbitalScreen(
     var sequencerPlaying by remember { mutableStateOf(false) }
     var tempo by remember { mutableIntStateOf(112) }
     var playhead by remember { mutableIntStateOf(-1) }
+    // The standalone demo also supports longer patterns when no audio transport is supplied.
+    val visibleStepCount = state.sequencerStepCount.coerceIn(1, 64)
     val steps = remember {
-        mutableStateListOf(
-            true, false, false, true,
-            false, true, false, false,
-            true, false, true, false,
-            false, true, false, true,
-        )
+        mutableStateListOf<Boolean>().apply {
+            val initialHits = setOf(0, 3, 5, 8, 10, 13, 15)
+            repeat(64) { index -> add(index % 16 in initialHits) }
+        }
     }
 
-    // A self-contained 16-step live pattern. Stop/cancellation sends note-off.
-    LaunchedEffect(externalSequencer, sequencerPlaying, tempo, state.octave) {
+    // Stop/cancellation always sends note-off, including while the pattern length changes.
+    LaunchedEffect(externalSequencer, sequencerPlaying, tempo, state.octave, visibleStepCount) {
         if (externalSequencer || !sequencerPlaying) {
             playhead = -1
             return@LaunchedEffect
         }
         val stepMs = (60_000L / tempo / 4L).coerceAtLeast(45L)
         while (isActive) {
-            playhead = (playhead + 1) % steps.size
+            playhead = (playhead + 1) % visibleStepCount
             val current = playhead
             val enabled = steps[current]
             val note = (((state.octave + 1) * 12) + intArrayOf(
                 0, 3, 7, 10, 12, 10, 7, 3,
                 0, 5, 7, 12, 10, 7, 5, 3,
-            )[current]).coerceIn(0, 127)
+            )[current % 16]).coerceIn(0, 127)
             if (enabled) currentOn(note)
             try {
                 delay(stepMs * 3 / 4)
@@ -365,7 +366,8 @@ fun OrbitalScreen(
                 onParameterChange,
             )
             Tab.SEQ -> SequencerPanel(
-                if (externalSequencer) List(16) { it in state.enabledSteps } else steps,
+                if (externalSequencer) List(visibleStepCount) { it in state.enabledSteps }
+                else steps.take(visibleStepCount),
                 if (externalSequencer) state.sequencerStep else playhead,
                 if (externalSequencer) state.sequencerRunning else sequencerPlaying,
                 {
@@ -954,51 +956,65 @@ private fun SequencerPanel(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("16-STEP ORBIT", color = OrbitalPalette.Text, fontSize = 13.sp, letterSpacing = 1.9.sp)
+            Text("${steps.size}-STEP ORBIT", color = OrbitalPalette.Text, fontSize = 13.sp, letterSpacing = 1.9.sp)
             Spacer(Modifier.weight(1f))
             Pill(if (playing) "STOP" else "PLAY ▶", playing, onTogglePlaying)
         }
         SequenceSelector(sequenceChoices, activeSequenceId, onSelectSequence)
         Label("Tap any step to enable/disable it. The running pattern plays the synthesizer.")
         BoxWithConstraints(Modifier.fillMaxWidth()) {
-            // 8 columns are too narrow to touch reliably on a 360dp phone.
+            // Four 56dp touch targets per row on a phone, eight on a wider display.
+            // The parent editor scrolls vertically, independently of the anchored keyboard.
             val columns = if (maxWidth >= 480.dp) 8 else 4
+            val rowCount = (steps.size + columns - 1) / columns
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (row in 0 until 16 / columns) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (i in row * columns until row * columns + columns) {
-                    val enabled = steps[i]
-                    val current = playhead == i
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .height(56.dp)
-                            .border(
-                                1.dp,
-                                if (current) OrbitalPalette.Gold
-                                else if (enabled) OrbitalPalette.Cyan
-                                else OrbitalPalette.PanelEdge,
-                                RoundedCornerShape(8.dp),
-                            )
-                            .background(
-                                if (enabled) OrbitalPalette.Cyan.copy(alpha = if (current) .36f else .14f)
-                                else OrbitalPalette.Panel,
-                                RoundedCornerShape(8.dp),
-                            )
-                            .toggleable(value = enabled, role = Role.Checkbox) { onStepToggle(i) }
-                            .semantics {
-                                contentDescription = "Step ${i + 1}, ${if (enabled) "on" else "off"}" +
-                                    (if (current) ", playing" else "")
-                            },
-                        contentAlignment = Alignment.Center,
+                repeat(rowCount) { row ->
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text(
-                            (i + 1).toString().padStart(2, '0'),
-                            color = if (enabled) OrbitalPalette.Text else OrbitalPalette.Muted,
-                            fontSize = 11.sp,
-                        )
-                    }
+                        val firstIndex = row * columns
+                        val countInRow = minOf(columns, steps.size - firstIndex)
+                        repeat(countInRow) { column ->
+                            val index = firstIndex + column
+                            val enabled = steps[index]
+                            val current = playhead == index
+                            Box(
+                                Modifier
+                                    .weight(1f)
+                                    .height(56.dp)
+                                    .border(
+                                        1.dp,
+                                        if (current) OrbitalPalette.Gold
+                                        else if (enabled) OrbitalPalette.Cyan
+                                        else OrbitalPalette.PanelEdge,
+                                        RoundedCornerShape(8.dp),
+                                    )
+                                    .background(
+                                        if (enabled) OrbitalPalette.Cyan.copy(
+                                            alpha = if (current) .36f else .14f,
+                                        ) else OrbitalPalette.Panel,
+                                        RoundedCornerShape(8.dp),
+                                    )
+                                    .toggleable(value = enabled, role = Role.Checkbox) {
+                                        onStepToggle(index)
+                                    }
+                                    .semantics {
+                                        contentDescription = "Step ${index + 1} of ${steps.size}, " +
+                                            (if (enabled) "on" else "off") +
+                                            (if (current) ", playing" else "")
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    (index + 1).toString().padStart(2, '0'),
+                                    color = if (enabled) OrbitalPalette.Text else OrbitalPalette.Muted,
+                                    fontSize = 11.sp,
+                                )
+                            }
                         }
+                        // Preserve identical cell widths when the final row is partial.
+                        repeat(columns - countInRow) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             }
@@ -1022,7 +1038,8 @@ private fun SequencerPanel(
                 .padding(14.dp),
         ) {
             Text(
-                "16 steps • 1/16 notes • one-bar loop. The sequence runs only while this screen is open and PLAY is enabled.",
+                "${steps.size} editable steps • tap a cell to change its enabled state. " +
+                    "Cycle length follows the selected pattern; the connected audio transport owns playback timing.",
                 color = OrbitalPalette.Muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
