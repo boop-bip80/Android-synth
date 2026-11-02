@@ -7,6 +7,9 @@ import com.orbital.synth.core.preset.SynthPatch
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Rule
@@ -128,6 +131,33 @@ class UserPatchRepositoryTest {
         failure(repository.importPatchText("ORBITAL-PATCH/99\n"), PatchFailureKind.INVALID_FORMAT)
         failure(repository.saveCurrentAs("Bad", tags = setOf("x".repeat(50))),
             PatchFailureKind.INVALID_DATA)
+    }
+
+    @Test fun concurrentSaveAsRequestsGetUniqueIdsAndPreserveEveryPatch() = runBlocking {
+        val repository = repository(snapshot = { mapOf("CUTOFF" to .57f) })
+        val saved = coroutineScope {
+            (1..32).map {
+                async(Dispatchers.Default) {
+                    success(repository.saveCurrentAs("Poly Pad"))
+                }
+            }.awaitAll()
+        }
+        val ids = saved.map { it.patch.id }
+        assertEquals("No two simultaneous saves may overwrite the same file", 32, ids.toSet().size)
+        assertEquals(32, success(repository.listUser()).size)
+        assertTrue(ids.contains("user-poly-pad"))
+        assertTrue(ids.contains("user-poly-pad-32"))
+        for (id in ids) {
+            val patch = success(repository.load(id))
+            assertEquals("Poly Pad", patch.name)
+            assertEquals(.57f, patch.parameters["CUTOFF"]!!, .000001f)
+        }
+    }
+
+    @Test fun oversizedImportReturnsTypedFormatErrorWithoutCreatingFiles() = runBlocking {
+        val repository = repository()
+        failure(repository.importPatchText("X".repeat(65_537)), PatchFailureKind.INVALID_FORMAT)
+        assertTrue(success(repository.listUser()).isEmpty())
     }
 
     @Test fun rejectsTraversalAndFactoryDeletion() = runBlocking {
