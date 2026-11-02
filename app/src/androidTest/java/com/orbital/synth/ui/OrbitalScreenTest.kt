@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
@@ -155,6 +156,36 @@ class OrbitalScreenTest {
             assertTrue("Movement touch callback missing", ParameterId.MOVEMENT in updates)
             assertEquals(.5f, updates.getValue(ParameterId.MORPH), .02f)
             assertEquals(.5f, updates.getValue(ParameterId.MOVEMENT), .02f)
+        }
+    }
+
+    @Test fun soundOrbitDragTracksBothAxesAndAdvertisesAccessibleAdjustments() {
+        val updates = mutableListOf<Pair<ParameterId, Float>>()
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { id, value -> updates += id to value },
+                onModeChange = {}, onOctaveChange = {},
+            )
+        }
+        val orbit = compose.onNodeWithTag("orbitalExpression")
+        val actions = orbit.fetchSemanticsNode().config[SemanticsProperties.CustomActions].map { it.label }
+        assertTrue("Increase morph" in actions)
+        assertTrue("Decrease movement" in actions)
+        orbit.performTouchInput {
+            down(center)
+            moveTo(Offset(center.x + 42f, center.y - 35f))
+            moveTo(Offset(center.x + 82f, center.y - 70f))
+            up()
+        }
+        compose.runOnIdle {
+            val morphValues = updates.filter { it.first == ParameterId.MORPH }.map { it.second }
+            val movementValues = updates.filter { it.first == ParameterId.MOVEMENT }.map { it.second }
+            assertTrue("Morph should respond during a drag", morphValues.size >= 2)
+            assertTrue("Movement should respond during a drag", movementValues.size >= 2)
+            assertTrue("Morph must increase moving right", morphValues.last() > morphValues.first())
+            assertTrue("Movement must increase moving upward", movementValues.last() > movementValues.first())
         }
     }
 
