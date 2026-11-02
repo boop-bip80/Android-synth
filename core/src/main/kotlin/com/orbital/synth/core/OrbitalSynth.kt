@@ -50,6 +50,9 @@ class OrbitalSynth(
     private val bendBits = AtomicInteger(java.lang.Float.floatToRawIntBits(0f))
     private val events = ConcurrentLinkedQueue<Event>()
     private val heldNotes = BooleanArray(128)
+    // Multiple inputs can hold the same pitch simultaneously (touch, MIDI, sequencer).
+    // Pair each note-off with one note-on instead of cutting every matching voice.
+    private val heldCounts = IntArray(128)
     private val heldVelocities = FloatArray(128)
     private val heldOrders = LongArray(128)
 
@@ -225,6 +228,7 @@ class OrbitalSynth(
                 is Event.NoteOff -> handleNoteOff(event.note, glideSec, wave, morph)
                 Event.AllNotesOff -> {
                     heldNotes.fill(false)
+                    heldCounts.fill(0)
                     previousFrequency = null
                     for (voice in voices) voice.noteOff()
                 }
@@ -238,6 +242,7 @@ class OrbitalSynth(
         for (held in heldNotes) if (held) { alreadyHeld = true; break }
 
         heldNotes[note] = true
+        if (heldCounts[note] < Int.MAX_VALUE) heldCounts[note]++
         heldVelocities[note] = velocity
         heldOrders[note] = ++eventOrder
         val toFrequency = Voice.midiFrequency(note)
@@ -259,14 +264,33 @@ class OrbitalSynth(
     }
 
     private fun handleNoteOff(note: Int, glideSec: Double, wave: Float, morph: Float) {
-        heldNotes[note] = false
+        val remainingHolds = if (heldCounts[note] > 0) heldCounts[note] - 1 else 0
+        heldCounts[note] = remainingHolds
+        heldNotes[note] = remainingHolds > 0
         when (playbackMode) {
             VoiceMode.POLY -> {
-                for (voice in voices) if (voice.active && voice.note == note) voice.noteOff()
+                // Release only as many sounding voices as there are unmatched note-offs.
+                // Prefer the newest voice: a repeated note-on from another source should
+                // not cut off an older held touch key. Source IDs would permit exact pairing.
+                var sounding = 0
+                for (voice in voices) {
+                    if (voice.active && !voice.releasing && voice.note == note) sounding++
+                }
+                while (sounding > remainingHolds) {
+                    var newest: Voice? = null
+                    for (voice in voices) {
+                        if (voice.active && !voice.releasing && voice.note == note &&
+                            (newest == null || voice.startedAt > newest.startedAt)
+                        ) newest = voice
+                    }
+                    if (newest == null) break
+                    newest.noteOff()
+                    sounding--
+                }
             }
             VoiceMode.MONO, VoiceMode.LEGATO -> {
                 val voice = voices[0]
-                if (voice.active && voice.note == note) {
+                if (remainingHolds == 0 && voice.active && voice.note == note) {
                     val remaining = latestHeldNote()
                     if (remaining < 0) {
                         voice.noteOff()

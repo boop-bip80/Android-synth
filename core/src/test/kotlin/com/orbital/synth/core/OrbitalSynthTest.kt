@@ -207,6 +207,65 @@ class OrbitalSynthTest {
         assertEquals(0, synth.activeVoiceCount)
     }
 
+    @Test fun overlappingSamePitchNotesReleaseOneVoiceAtATime() {
+        val synth = OrbitalSynth(maxVoices = 4)
+        synth.setParameter(ParameterId.RELEASE, 0f)
+        val audio = FloatArray(4096 * 2)
+        synth.noteOn(60)
+        synth.renderStereo(audio, 512)
+        synth.noteOn(60)
+        synth.renderStereo(audio, 512)
+        assertEquals(2, synth.activeVoiceCount)
+
+        // A sequencer note-off must not kill a touch voice sustaining the same pitch.
+        synth.noteOff(60)
+        synth.renderStereo(audio, 4096)
+        assertEquals(1, synth.activeVoiceCount)
+        assertTrue(rms(audio) > 0.001)
+
+        synth.noteOff(60)
+        synth.renderStereo(audio, 4096)
+        assertEquals(0, synth.activeVoiceCount)
+    }
+
+    @Test fun repeatedSamePitchIsHeldUntilFinalReleaseWithOneVoiceCapacity() {
+        val synth = OrbitalSynth(maxVoices = 1)
+        synth.setVoiceMode(VoiceMode.LEGATO)
+        synth.setParameter(ParameterId.RELEASE, 0f)
+        val audio = FloatArray(4096 * 2)
+        synth.noteOn(69)
+        synth.noteOn(69)
+        synth.renderStereo(audio, 512)
+        assertEquals(1, synth.activeVoiceCount)
+
+        synth.noteOff(69)
+        synth.renderStereo(audio, 4096)
+        assertEquals(1, synth.activeVoiceCount)
+        assertTrue(rms(audio) > 0.001)
+
+        synth.noteOff(69)
+        synth.renderStereo(audio, 4096)
+        assertEquals(0, synth.activeVoiceCount)
+    }
+
+    @Test fun allNotesOffResetsOverlappingHeldCounts() {
+        val synth = OrbitalSynth(maxVoices = 2)
+        synth.setParameter(ParameterId.RELEASE, 0f)
+        val audio = FloatArray(4096 * 2)
+        synth.noteOn(60)
+        synth.noteOn(60)
+        synth.renderStereo(audio, 512)
+        synth.allNotesOff()
+        synth.renderStereo(audio, 4096)
+        assertEquals(0, synth.activeVoiceCount)
+
+        synth.noteOn(60)
+        synth.renderStereo(audio, 512)
+        synth.noteOff(60)
+        synth.renderStereo(audio, 4096)
+        assertEquals(0, synth.activeVoiceCount)
+    }
+
     private fun pureSine(sampleRate: Int = 48_000): OrbitalSynth = OrbitalSynth(sampleRate).apply {
         setParameter(ParameterId.WAVE, 0f)
         setParameter(ParameterId.MORPH, 0f)
