@@ -6,6 +6,7 @@ import com.orbital.synth.core.performance.ArpeggiatorDirection
 import com.orbital.synth.core.performance.ArpeggiatorSettings
 import com.orbital.synth.core.performance.PerformanceArpeggiator
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Audio-worker owner of the arpeggiator, including direct-play bypass.
@@ -24,21 +25,30 @@ internal class PerformanceArpTransport(
     private val renderFrames: (FloatArray, Int) -> Unit,
     private val noteOn: (Long, Int, Int, Float) -> Unit,
     private val noteOff: (Long, Int, Int) -> Unit,
+    // Optional deterministic test seam after epoch check, before offer; never per sample.
+    private val beforeInputEnqueue: (() -> Unit)? = null,
 ) {
     private sealed interface Command {
         data class Enabled(val value: Boolean) : Command
         data class Settings(val value: ArpeggiatorSettings) : Command
         data class InputOn(
-            val source: Long, val channel: Int, val note: Int, val velocity: Int
+            val source: Long, val channel: Int, val note: Int,
+            val velocity: Int, val epoch: Long
         ) : Command
-        data class InputOff(val source: Long, val channel: Int, val note: Int) : Command
-        data class SourceOff(val source: Long) : Command
-        data object Panic : Command
+        data class InputOff(
+            val source: Long, val channel: Int, val note: Int, val epoch: Long
+        ) : Command
+        data class SourceOff(val source: Long, val epoch: Long) : Command
+        data class Panic(val epoch: Long) : Command
     }
 
     private data class Key(val source: Long, val channel: Int, val note: Int)
 
     private val commands = ConcurrentLinkedQueue<Command>()
+    // Odd epochs accept input, even epochs reject it. A queued physical command
+    // from an earlier worker can NEVER be consumed by a newer worker, even if
+    // the producer was preempted after checking isRunning but before queue.offer.
+    private val inputEpoch = AtomicLong(0L)
     private val editLock = Any()
     @Volatile private var requestedEnabled = false
     @Volatile private var requestedSettings = ArpeggiatorSettings()
@@ -130,22 +140,55 @@ internal class PerformanceArpTransport(
     fun inputNoteOn(source: Long, channel: Int, note: Int, velocity: Int = 127): Boolean {
         if (channel !in 0..15 || note !in 0..127 || velocity !in 0..127) return false
         if (velocity == 0) return inputNoteOff(source, channel, note)
-        commands.offer(Command.InputOn(source, channel, note, velocity))
-        return true
+        val epoch = activeInputEpoch() ?: return false
+        if (inputEpoch.get() != epoch) return false
+        beforeInputEnqueue?.invoke()
+        // Even if stop/restart races this offer, the consumer rejects old epochs.
+        commands.offer(Command.InputOn(source, channel, note, velocity, epoch))
+        return inputEpoch.get() == epoch
     }
 
     fun inputNoteOff(source: Long, channel: Int, note: Int): Boolean {
         if (channel !in 0..15 || note !in 0..127) return false
-        commands.offer(Command.InputOff(source, channel, note))
-        return true
+        val epoch = activeInputEpoch() ?: return false
+        if (inputEpoch.get() != epoch) return false
+        beforeInputEnqueue?.invoke()
+        commands.offer(Command.InputOff(source, channel, note, epoch))
+        return inputEpoch.get() == epoch
     }
 
     fun inputSourceAllNotesOff(source: Long) {
-        commands.offer(Command.SourceOff(source))
+        val epoch = activeInputEpoch() ?: return
+        if (inputEpoch.get() != epoch) return
+        beforeInputEnqueue?.invoke()
+        commands.offer(Command.SourceOff(source, epoch))
     }
 
     fun panic() {
-        commands.offer(Command.Panic)
+        val epoch = activeInputEpoch() ?: return
+        commands.offer(Command.Panic(epoch))
+    }
+
+    private fun activeInputEpoch(): Long? {
+        val epoch = inputEpoch.get()
+        return if (epoch > 0L && (epoch and 1L) != 0L) epoch else null
+    }
+
+    /** Called on worker lifecycle only; MIDI and UI producer paths never lock. */
+    private fun activateInputEpoch() {
+        while (true) {
+            val observed = inputEpoch.get()
+            if ((observed and 1L) != 0L) return
+            if (inputEpoch.compareAndSet(observed, observed + 1L)) return
+        }
+    }
+
+    private fun deactivateInputEpoch() {
+        while (true) {
+            val observed = inputEpoch.get()
+            if ((observed and 1L) == 0L) return
+            if (inputEpoch.compareAndSet(observed, observed + 1L)) return
+        }
     }
 
     fun onWorkerStart() {
@@ -156,9 +199,13 @@ internal class PerformanceArpTransport(
         releaseGenerated(arpeggiator.configure(requestedSettings))
         workerEnabled = requestedEnabled
         if (workerEnabled) arpeggiator.start()
+        activateInputEpoch()
     }
 
     fun onWorkerStop() {
+        // Invalidate old commands BEFORE clearing the queue. A delayed producer
+        // may enqueue afterward but its stale epoch will be rejected on restart.
+        deactivateInputEpoch()
         releaseGenerated(arpeggiator.panic())
         releaseDirect()
         workerEnabled = false
@@ -200,6 +247,7 @@ internal class PerformanceArpTransport(
         for (ignored in 0 until 512) {
             when (val command = commands.poll() ?: break) {
                 is Command.Enabled -> {
+                    if (command.value != requestedEnabled) continue
                     if (workerEnabled == command.value) continue
                     if (command.value) {
                         releaseDirect()
@@ -213,9 +261,11 @@ internal class PerformanceArpTransport(
                     }
                 }
                 is Command.Settings -> {
+                    if (command.value != requestedSettings) continue
                     releaseGenerated(arpeggiator.configure(command.value))
                 }
                 is Command.InputOn -> {
+                    if (command.epoch != inputEpoch.get()) continue
                     if (workerEnabled) {
                         arpeggiator.noteOn(
                             command.source, command.channel, command.note, command.velocity
@@ -230,6 +280,7 @@ internal class PerformanceArpTransport(
                     }
                 }
                 is Command.InputOff -> {
+                    if (command.epoch != inputEpoch.get()) continue
                     if (workerEnabled) {
                         releaseGenerated(arpeggiator.noteOff(
                             command.source, command.channel, command.note
@@ -245,10 +296,12 @@ internal class PerformanceArpTransport(
                     }
                 }
                 is Command.SourceOff -> {
+                    if (command.epoch != inputEpoch.get()) continue
                     releaseDirectSource(command.source)
                     releaseGenerated(arpeggiator.allNotesOff(command.source))
                 }
-                Command.Panic -> {
+                is Command.Panic -> {
+                    if (command.epoch != inputEpoch.get()) continue
                     releaseGenerated(arpeggiator.panic())
                     releaseDirect()
                     if (workerEnabled) arpeggiator.start()
