@@ -69,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.core.music.SequencerNote
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.pow
@@ -92,6 +93,8 @@ data class OrbitalUiState(
     val sequencerStep: Int = -1,
     val sequencerStepCount: Int = 16,
     val sequencerTempo: Int = 112,
+    /** Immutable sequencer notes supplied by the render-worker snapshot. */
+    val sequenceNotesByStep: List<List<SequencerNote>> = emptyList(),
     val presetIndex: Int = 0,
     val presetCount: Int = 0,
     val patchChoices: List<PatchChoice> = emptyList(),
@@ -130,6 +133,8 @@ fun OrbitalScreen(
     onSelectPatch: ((String) -> Unit)? = null,
     onSelectSequence: ((String) -> Unit)? = null,
     onSequencerLengthChange: ((Int) -> Unit)? = null,
+    onSequencerStepNotesChange: ((Int, List<SequencerNote>) -> Unit)? = null,
+    onSaveSequence: ((String) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var showPatchLibrary by remember { mutableStateOf(false) }
@@ -336,6 +341,24 @@ fun OrbitalScreen(
                     NeonKnob("FX", parameter(ParameterId.FX_AMOUNT), percent(parameter(ParameterId.FX_AMOUNT)), OrbitalPalette.Cyan,
                         { onParameterChange(ParameterId.FX_AMOUNT, it) }, Modifier.weight(1f), knobSize)
                 }
+                // Voice engine parameters appear as luminous knobs when present.
+                val voiceParameters = listOf("UNISON", "DETUNE").mapNotNull { name ->
+                    ParameterId.entries.firstOrNull { it.name == name }?.let { id -> name to id }
+                }
+                if (voiceParameters.isNotEmpty()) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        voiceParameters.forEach { (name, id) ->
+                            NeonKnob(
+                                name, parameter(id), percent(parameter(id)),
+                                if (name == "UNISON") OrbitalPalette.Gold else OrbitalPalette.Violet,
+                                { onParameterChange(id, it) }, Modifier.weight(1f), 62.dp,
+                            )
+                        }
+                    }
+                }
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -388,6 +411,10 @@ fun OrbitalScreen(
                 state.activeSequenceId,
                 onSelectSequence,
                 onSequencerLengthChange,
+                state.sequenceNotesByStep,
+                onSequencerStepNotesChange,
+                ((state.octave + 1) * 12).coerceIn(0, 127),
+                onSaveSequence,
             )
             Tab.FX -> FxPanel(parameter, onParameterChange)
         }
@@ -837,7 +864,7 @@ private fun SequenceSelector(
     }
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Label("FACTORY SEQUENCE")
+            Label("SEQUENCE LIBRARY")
             Spacer(Modifier.weight(1f))
             Label(if (presented.isEmpty()) "NO PATTERNS" else "${presented.size} AVAILABLE")
         }
@@ -1020,7 +1047,15 @@ private fun SequencerPanel(
     activeSequenceId: String?,
     onSelectSequence: ((String) -> Unit)?,
     onSequencerLengthChange: ((Int) -> Unit)?,
+    sequenceNotesByStep: List<List<SequencerNote>>,
+    onSequencerStepNotesChange: ((Int, List<SequencerNote>) -> Unit)?,
+    defaultMidiNote: Int,
+    onSaveSequence: ((String) -> Unit)?,
 ) {
+    var selectedStep by remember(activeSequenceId, steps.size) { mutableIntStateOf(0) }
+    var selectedNoteIndex by remember(activeSequenceId, selectedStep) { mutableIntStateOf(0) }
+    var showSaveSequenceDialog by remember { mutableStateOf(false) }
+    var sequenceName by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
         Row(
             Modifier.fillMaxWidth(),
@@ -1031,8 +1066,23 @@ private fun SequencerPanel(
             Pill(if (playing) "STOP" else "PLAY ▶", playing, onTogglePlaying)
         }
         SequenceSelector(sequenceChoices, activeSequenceId, onSelectSequence)
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Label("PERSIST THIS PATTERN")
+            TextButton(
+                enabled = onSaveSequence != null,
+                onClick = {
+                    sequenceName = ""
+                    showSaveSequenceDialog = true
+                },
+                modifier = Modifier.semantics { contentDescription = "Save sequence as a new pattern" },
+            ) { Text("SAVE SEQUENCE", color = OrbitalPalette.Gold) }
+        }
         SequenceLengthPanel(steps.size, onSequencerLengthChange)
-        Label("Tap any step to enable/disable it. The running pattern plays the synthesizer.")
+        Label("Tap to toggle a step. STEP DETAIL offers pitch, velocity, gate, chance and ties.")
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             // Four 56dp touch targets per row on a phone, eight on a wider display.
             // The parent editor scrolls vertically, independently of the anchored keyboard.
@@ -1057,6 +1107,7 @@ private fun SequencerPanel(
                                     .border(
                                         1.dp,
                                         if (current) OrbitalPalette.Gold
+                                        else if (selectedStep == index) OrbitalPalette.Violet
                                         else if (enabled) OrbitalPalette.Cyan
                                         else OrbitalPalette.PanelEdge,
                                         RoundedCornerShape(8.dp),
@@ -1074,14 +1125,40 @@ private fun SequencerPanel(
                                         contentDescription = "Step ${index + 1} of ${steps.size}, " +
                                             (if (enabled) "on" else "off") +
                                             (if (current) ", playing" else "")
+                                        customActions = listOf(
+                                            CustomAccessibilityAction("Edit step " + (index + 1)) {
+                                                selectedStep = index
+                                                true
+                                            },
+                                        )
                                     },
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Text(
-                                    (index + 1).toString().padStart(2, '0'),
-                                    color = if (enabled) OrbitalPalette.Text else OrbitalPalette.Muted,
-                                    fontSize = 11.sp,
-                                )
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(
+                                        (index + 1).toString().padStart(2, '0'),
+                                        color = if (enabled) OrbitalPalette.Text else OrbitalPalette.Muted,
+                                        fontSize = 11.sp,
+                                    )
+                                    val voiceCount = sequenceNotesByStep.getOrNull(index)?.size ?: 0
+                                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        repeat(voiceCount.coerceAtMost(4)) { voiceIndex ->
+                                            Box(
+                                                Modifier
+                                                    .size(4.dp)
+                                                    .background(
+                                                        if (voiceIndex == 0) OrbitalPalette.Cyan
+                                                        else if (voiceIndex == 1) OrbitalPalette.Violet
+                                                        else OrbitalPalette.Gold,
+                                                        RoundedCornerShape(50),
+                                                    ),
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                         // Preserve identical cell widths when the final row is partial.
@@ -1090,6 +1167,51 @@ private fun SequencerPanel(
                 }
             }
         }
+        if (showSaveSequenceDialog) {
+            AlertDialog(
+                onDismissRequest = { showSaveSequenceDialog = false },
+                title = { Text("SAVE SEQUENCE") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = sequenceName,
+                            onValueChange = { sequenceName = it.take(80) },
+                            label = { Text("Pattern name") },
+                            singleLine = true,
+                            modifier = Modifier.testTag("sequenceNameInput"),
+                        )
+                        Text(
+                            "Creates a saved copy of the current sequence; factory patterns stay unchanged.",
+                            fontSize = 12.sp,
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = onSaveSequence != null && sequenceName.trim().isNotEmpty(),
+                        onClick = {
+                            val name = sequenceName.trim()
+                            showSaveSequenceDialog = false
+                            sequenceName = ""
+                            onSaveSequence?.invoke(name)
+                        },
+                    ) { Text("SAVE") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSaveSequenceDialog = false }) { Text("CANCEL") }
+                },
+            )
+        }
+        StepNoteInspector(
+            step = selectedStep,
+            stepCount = steps.size,
+            stepNotes = sequenceNotesByStep.getOrNull(selectedStep).orEmpty(),
+            selectedNoteIndex = selectedNoteIndex,
+            onSelectNote = { selectedNoteIndex = it },
+            onSelectStep = { selectedStep = it.coerceIn(0, steps.lastIndex) },
+            onStepEdit = onSequencerStepNotesChange,
+            defaultMidiNote = defaultMidiNote,
+        )
         Label("TEMPO  /  " + bpm + " BPM")
         Slider(
             value = bpm.toFloat(),
@@ -1109,13 +1231,242 @@ private fun SequencerPanel(
                 .padding(14.dp),
         ) {
             Text(
-                "${steps.size} editable steps • tap a cell to change its enabled state. " +
-                    "Cycle length follows the selected pattern; the connected audio transport owns playback timing.",
+                "Tap to mute/unmute. Use STEP DETAIL arrows to select notes and edit " +
+                    "each part of the chord; connected audio transport owns playback timing.",
                 color = OrbitalPalette.Muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
         }
+    }
+}
+
+
+// Pitch, velocity, gate, probability and ties are edited as immutable note lists.
+// The host queues changes to its audio worker; Compose never owns sequencer timing.
+@Composable
+private fun StepNoteInspector(
+    step: Int,
+    stepCount: Int,
+    stepNotes: List<SequencerNote>,
+    selectedNoteIndex: Int,
+    onSelectNote: (Int) -> Unit,
+    onSelectStep: (Int) -> Unit,
+    onStepEdit: ((Int, List<SequencerNote>) -> Unit)?,
+    defaultMidiNote: Int,
+) {
+    val editable = onStepEdit != null
+    val voiceIndex = selectedNoteIndex.coerceIn(0, (stepNotes.size - 1).coerceAtLeast(0))
+    val voice = stepNotes.getOrNull(voiceIndex)
+    val occupied = stepNotes.map { it.midiNote }.toSet()
+    val safeDefault = defaultMidiNote.coerceIn(0, 127)
+    val freePitch = (safeDefault..127).firstOrNull { it !in occupied }
+        ?: (0 until safeDefault).firstOrNull { it !in occupied }
+
+    fun editVoice(updated: SequencerNote) {
+        if (editable && voice != null &&
+            (updated.midiNote == voice.midiNote ||
+                stepNotes.indices.none { it != voiceIndex && stepNotes[it].midiNote == updated.midiNote })
+        ) {
+            onStepEdit?.invoke(step, stepNotes.mapIndexed { index, original ->
+                if (index == voiceIndex) updated else original
+            })
+        }
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .border(1.dp, OrbitalPalette.Violet.copy(alpha = .55f), RoundedCornerShape(14.dp))
+            .background(
+                Brush.verticalGradient(
+                    listOf(OrbitalPalette.Violet.copy(alpha = .13f), OrbitalPalette.Panel),
+                ),
+                RoundedCornerShape(14.dp),
+            )
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("STEP DETAIL", color = OrbitalPalette.Cyan, fontSize = 11.sp, letterSpacing = 1.4.sp)
+            Spacer(Modifier.weight(1f))
+            Text(
+                (step + 1).toString().padStart(2, '0') + " / " + stepCount.toString().padStart(2, '0'),
+                color = OrbitalPalette.Gold, fontSize = 12.sp,
+            )
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PresetArrow("←", "Previous editable step", step > 0) { onSelectStep(step - 1) }
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Text(
+                    if (stepNotes.isEmpty()) "REST" else stepNotes.size.toString() + " NOTE VOICE(S)",
+                    color = OrbitalPalette.Text,
+                    fontSize = 11.sp, letterSpacing = .7.sp,
+                )
+            }
+            PresetArrow("→", "Next editable step", step < stepCount - 1) {
+                onSelectStep(step + 1)
+            }
+        }
+        if (!editable) {
+            Text(
+                "Per-note editing requires a connected sequencer host.",
+                color = OrbitalPalette.Muted,
+                fontSize = 11.sp,
+            )
+        }
+        if (voice == null) {
+            Text("No stored notes on this step", color = OrbitalPalette.Muted, fontSize = 11.sp)
+            TextButton(
+                enabled = editable && freePitch != null,
+                onClick = { freePitch?.let { onStepEdit?.invoke(step, listOf(SequencerNote(it))) } },
+                modifier = Modifier.semantics { contentDescription = "Add note to selected step" },
+            ) { Text("＋ ADD NOTE", color = if (editable) OrbitalPalette.Cyan else OrbitalPalette.Muted) }
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Label("CHORD VOICE " + (voiceIndex + 1) + " / " + stepNotes.size)
+                Spacer(Modifier.weight(1f))
+                PresetArrow("‹", "Previous chord voice", voiceIndex > 0) {
+                    onSelectNote(voiceIndex - 1)
+                }
+                Spacer(Modifier.width(6.dp))
+                PresetArrow("›", "Next chord voice", voiceIndex < stepNotes.lastIndex) {
+                    onSelectNote(voiceIndex + 1)
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PresetArrow("−", "Decrease step note pitch", editable && voice.midiNote > 0 &&
+                    voice.midiNote - 1 !in (occupied - voice.midiNote)) {
+                    editVoice(voice.copy(midiNote = voice.midiNote - 1))
+                }
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Text(
+                        midiPitchLabel(voice.midiNote),
+                        color = OrbitalPalette.Text,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 18.sp,
+                    )
+                }
+                PresetArrow("+", "Increase step note pitch", editable && voice.midiNote < 127 &&
+                    voice.midiNote + 1 !in (occupied - voice.midiNote)) {
+                    editVoice(voice.copy(midiNote = voice.midiNote + 1))
+                }
+            }
+            StepValueSlider(
+                title = "VELOCITY",
+                description = "Selected step note velocity",
+                value = voice.velocity.toFloat(),
+                range = 1f..127f,
+                valueText = voice.velocity.toString() + " / 127",
+                enabled = editable,
+                onValueChange = { editVoice(voice.copy(velocity = it.roundToInt().coerceIn(1, 127))) },
+            )
+            StepValueSlider(
+                title = "GATE",
+                description = "Selected step note gate",
+                value = voice.gate.toFloat(),
+                range = .01f..1f,
+                valueText = (voice.gate * 100).roundToInt().toString() + "%",
+                enabled = editable,
+                onValueChange = {
+                    editVoice(voice.copy(gate = it.coerceIn(.01f, 1f).toDouble()))
+                },
+            )
+            StepValueSlider(
+                title = "CHANCE",
+                description = "Selected step note probability",
+                value = voice.probability.toFloat(),
+                range = 0f..1f,
+                valueText = (voice.probability * 100).roundToInt().toString() + "%",
+                enabled = editable,
+                onValueChange = {
+                    editVoice(voice.copy(probability = it.coerceIn(0f, 1f).toDouble()))
+                },
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (voice.tie) "TIE ON  ·  sustain from previous step" else "TIE OFF",
+                    color = if (voice.tie) OrbitalPalette.Gold else OrbitalPalette.Muted,
+                    fontSize = 11.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    enabled = editable,
+                    onClick = { editVoice(voice.copy(tie = !voice.tie)) },
+                    modifier = Modifier.semantics { contentDescription = "Toggle selected note tie" },
+                ) { Text(if (voice.tie) "UNTIE" else "TIE", color = OrbitalPalette.Cyan) }
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                TextButton(
+                    enabled = editable && stepNotes.size < 16 && freePitch != null,
+                    onClick = {
+                        freePitch?.let {
+                            onSelectNote(stepNotes.size)
+                            onStepEdit?.invoke(step, stepNotes + SequencerNote(it))
+                        }
+                    },
+                    modifier = Modifier.semantics { contentDescription = "Add chord voice to selected step" },
+                ) { Text("＋ ADD VOICE", color = OrbitalPalette.Cyan) }
+                TextButton(
+                    enabled = editable,
+                    onClick = {
+                        onSelectNote((voiceIndex - 1).coerceAtLeast(0))
+                        onStepEdit?.invoke(step, stepNotes.filterIndexed { index, _ -> index != voiceIndex })
+                    },
+                    modifier = Modifier.semantics { contentDescription = "Remove selected chord voice" },
+                ) { Text("REMOVE", color = OrbitalPalette.Gold) }
+            }
+        }
+    }
+}
+
+private fun midiPitchLabel(pitch: Int): String {
+    val names = arrayOf("C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B")
+    return names[pitch % 12] + (pitch / 12 - 1) + "  •  MIDI " + pitch
+}
+
+@Composable
+private fun StepValueSlider(
+    title: String,
+    description: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    valueText: String,
+    enabled: Boolean,
+    onValueChange: (Float) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Label(title)
+            Spacer(Modifier.weight(1f))
+            Text(valueText, color = OrbitalPalette.Gold, fontSize = 11.sp)
+        }
+        Slider(
+            value = value.coerceIn(range.start, range.endInclusive),
+            onValueChange = onValueChange,
+            valueRange = range,
+            enabled = enabled,
+            modifier = Modifier.semantics { contentDescription = description },
+            colors = SliderDefaults.colors(
+                thumbColor = OrbitalPalette.Cyan,
+                activeTrackColor = OrbitalPalette.Violet,
+                inactiveTrackColor = OrbitalPalette.PanelEdge,
+            ),
+        )
     }
 }
 
@@ -1181,6 +1532,8 @@ private fun defaultValue(id: ParameterId): Float = when (id) {
     ParameterId.LFO_RATE -> .39f
     ParameterId.LFO_DEPTH -> .21f
     ParameterId.GLIDE -> .12f
+    // Compatible with optional new voice-engine parameters on merged builds.
+    else -> .25f
 }
 
 private fun percent(value: Float): String = (value.coerceIn(0f, 1f) * 100f).roundToInt().toString() + "%"
