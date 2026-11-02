@@ -76,6 +76,23 @@ internal fun OrbitalKeyboard(
     val pressedCounts = remember { mutableStateMapOf<Int, Int>() }
     val accessibilityScope = rememberCoroutineScope()
 
+    // Share note ownership between simultaneous fingers and TalkBack actions.
+    // A key is released only after its last owner lets go.
+    fun pressNote(note: Int) {
+        val holders = pressedCounts[note] ?: 0
+        if (holders == 0) noteOn(note)
+        pressedCounts[note] = holders + 1
+    }
+    fun releaseNote(note: Int) {
+        val holders = pressedCounts[note] ?: return
+        if (holders <= 1) {
+            pressedCounts.remove(note)
+            noteOff(note)
+        } else {
+            pressedCounts[note] = holders - 1
+        }
+    }
+
     BoxWithConstraints(modifier) {
         val whiteCount = if (maxWidth >= 560.dp) 15 else 8
         Canvas(
@@ -84,15 +101,22 @@ internal fun OrbitalKeyboard(
                 .height(preferredHeight ?: if (whiteCount == 15) 142.dp else 158.dp)
                 .semantics {
                     contentDescription = "Multitouch piano keyboard. Swipe across keys to play; use OCT buttons to change range."
-                    customActions = (0 until 8).map { index ->
-                        val note = (octave + 1) * 12 + whiteKeyOffset(index)
-                        val noteName = listOf("C", "D", "E", "F", "G", "A", "B", "C")[index]
-                        val octaveName = octave + if (index == 7) 1 else 0
-                        CustomAccessibilityAction("Play " + noteName + octaveName) {
-                            noteOn(note)
+                    customActions = (0..12).mapNotNull { semitone ->
+                        val note = (octave + 1) * 12 + semitone
+                        if (note !in 0..127) return@mapNotNull null
+                        val name = listOf(
+                            "C", "C sharp", "D", "D sharp", "E", "F",
+                            "F sharp", "G", "G sharp", "A", "A sharp", "B", "C",
+                        )[semitone]
+                        val octaveName = octave + if (semitone == 12) 1 else 0
+                        CustomAccessibilityAction("Play $name $octaveName") {
+                            pressNote(note)
                             accessibilityScope.launch {
-                                delay(300)
-                                noteOff(note)
+                                try {
+                                    delay(300)
+                                } finally {
+                                    releaseNote(note)
+                                }
                             }
                             true
                         }
@@ -101,20 +125,7 @@ internal fun OrbitalKeyboard(
                 .pointerInput(octave, whiteCount) {
                     awaitPointerEventScope {
                         val pointerToNote = mutableMapOf<PointerId, Int>()
-                        fun release(note: Int) {
-                            val count = (pressedCounts[note] ?: 0) - 1
-                            if (count <= 0) {
-                                pressedCounts.remove(note)
-                                noteOff(note)
-                            } else {
-                                pressedCounts[note] = count
-                            }
-                        }
-                        fun press(note: Int) {
-                            val count = pressedCounts[note] ?: 0
-                            if (count == 0) noteOn(note)
-                            pressedCounts[note] = count + 1
-                        }
+                        // All owners use the same reference-counted note lifecycle.
                         try {
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -131,8 +142,8 @@ internal fun OrbitalKeyboard(
                                         )
                                     } else null
                                     if (previous != next) {
-                                        if (previous != null) release(previous)
-                                        if (next != null) press(next)
+                                        if (previous != null) releaseNote(previous)
+                                        if (next != null) pressNote(next)
                                         if (next == null) pointerToNote.remove(change.id)
                                         else pointerToNote[change.id] = next
                                     }
@@ -140,9 +151,8 @@ internal fun OrbitalKeyboard(
                                 }
                             }
                         } finally {
-                            pointerToNote.values.toList().forEach { release(it) }
+                            pointerToNote.values.toList().forEach { releaseNote(it) }
                             pointerToNote.clear()
-                            pressedCounts.clear()
                         }
                     }
                 },

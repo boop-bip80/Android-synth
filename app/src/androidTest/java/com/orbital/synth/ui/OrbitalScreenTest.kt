@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -14,10 +15,12 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ParameterId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -132,6 +135,45 @@ class OrbitalScreenTest {
         }
         compose.onNodeWithContentDescription("Previous factory preset").assertIsNotEnabled()
         compose.onNodeWithContentDescription("Next factory preset").assertIsNotEnabled()
+    }
+
+    @Test fun soundOrbitIsAnInteractiveExpressionSurface() {
+        val updates = mutableMapOf<ParameterId, Float>()
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { id, value -> updates[id] = value },
+                onModeChange = {}, onOctaveChange = {},
+            )
+        }
+        compose.onNodeWithTag("orbitalExpression").assertIsDisplayed().performTouchInput {
+            click(center)
+        }
+        compose.runOnIdle {
+            assertTrue("Morph touch callback missing", ParameterId.MORPH in updates)
+            assertTrue("Movement touch callback missing", ParameterId.MOVEMENT in updates)
+            assertEquals(.5f, updates.getValue(ParameterId.MORPH), .02f)
+            assertEquals(.5f, updates.getValue(ParameterId.MOVEMENT), .02f)
+        }
+    }
+
+    @Test fun keyboardExposesChromaticAccessibleActions() {
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+            )
+        }
+        val actions = compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        ).fetchSemanticsNode().config[SemanticsProperties.CustomActions].map { it.label }
+        assertEquals(13, actions.size)
+        assertTrue("Play C sharp 4" in actions)
+        assertTrue("Play A sharp 4" in actions)
+        assertTrue("Play C 5" in actions)
     }
 
     @Test fun keyboardHitTestingMatchesBlackAndWhiteGeometry() {

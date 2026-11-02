@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -52,8 +56,63 @@ internal fun OrbitalDisplay(
     morph: Float,
     movement: Float,
     modifier: Modifier = Modifier,
+    onExpressionChange: ((Float, Float) -> Unit)? = null,
 ) {
-    Canvas(modifier) {
+    val expressionCallback by rememberUpdatedState(onExpressionChange)
+    Canvas(
+        modifier
+            .testTag("orbitalExpression")
+            .semantics {
+                if (onExpressionChange != null) {
+                    contentDescription = "Orbital expression surface. Drag horizontally to change morph and vertically to change movement."
+                    customActions = listOf(
+                        CustomAccessibilityAction("Increase morph") {
+                            expressionCallback?.invoke((morph + .05f).coerceAtMost(1f), movement)
+                            true
+                        },
+                        CustomAccessibilityAction("Decrease morph") {
+                            expressionCallback?.invoke((morph - .05f).coerceAtLeast(0f), movement)
+                            true
+                        },
+                        CustomAccessibilityAction("Increase movement") {
+                            expressionCallback?.invoke(morph, (movement + .05f).coerceAtMost(1f))
+                            true
+                        },
+                        CustomAccessibilityAction("Decrease movement") {
+                            expressionCallback?.invoke(morph, (movement - .05f).coerceAtLeast(0f))
+                            true
+                        },
+                    )
+                }
+            }
+            .pointerInput(onExpressionChange != null) {
+                if (onExpressionChange != null) {
+                    detectTapGestures { point ->
+                        val (nextMorph, nextMovement) = expressionCoordinates(
+                            point.x, point.y, size.width.toFloat(), size.height.toFloat(),
+                        )
+                        expressionCallback?.invoke(nextMorph, nextMovement)
+                    }
+                }
+            }
+            .pointerInput(onExpressionChange != null) {
+                if (onExpressionChange != null) {
+                    fun update(point: Offset) {
+                        val (nextMorph, nextMovement) = expressionCoordinates(
+                            point.x, point.y, size.width.toFloat(), size.height.toFloat(),
+                        )
+                        expressionCallback?.invoke(nextMorph, nextMovement)
+                    }
+                    detectDragGestures(
+                        onDragStart = { update(it) },
+                        onDrag = { change, _ ->
+                            update(change.position)
+                            change.consume()
+                        },
+                    )
+                }
+            },
+    ) {
         val c = Offset(size.width * .5f, size.height * .5f)
         val radius = min(size.width, size.height) * .405f
         val m = morph.coerceIn(0f, 1f)
@@ -152,6 +211,19 @@ internal fun OrbitalDisplay(
             val tint = if (index == 1) OrbitalPalette.Gold else OrbitalPalette.Cyan
             drawCircle(tint.copy(alpha = .16f), 12.dp.toPx(), p)
             drawCircle(tint, (3.5 + index).dp.toPx(), p)
+        }
+        // A luminous reticle follows the sound parameters; it is inset to remain visible at extremes.
+        if (onExpressionChange != null) {
+            val edge = 16.dp.toPx()
+            val marker = Offset(
+                edge + (size.width - edge * 2f).coerceAtLeast(0f) * m,
+                edge + (size.height - edge * 2f).coerceAtLeast(0f) * (1f - motion),
+            )
+            drawCircle(OrbitalPalette.Cyan.copy(alpha = .13f), 21.dp.toPx(), marker)
+            drawCircle(OrbitalPalette.Gold.copy(alpha = .28f), 13.dp.toPx(), marker)
+            drawCircle(OrbitalPalette.Void.copy(alpha = .95f), 7.dp.toPx(), marker)
+            drawCircle(OrbitalPalette.Gold, 5.dp.toPx(), marker, style = Stroke(1.5.dp.toPx()))
+            drawCircle(Color.White, 1.5.dp.toPx(), marker)
         }
     }
 }
