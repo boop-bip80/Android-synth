@@ -11,7 +11,8 @@ permissions:
 
 concurrency:
   group: android-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Keep main push/dispatch validations running; cancel only stale PR attempts.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -42,7 +43,9 @@ jobs:
         with:
           name: orbital-debug-apk
           path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: warn
+          # On a green job, a missing deliverable is a CI failure; on a failed
+          # build/emulator run, retain best-effort artifact diagnostics.
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
           retention-days: 14
       - name: Upload instrumentation APK
         if: always()
@@ -50,7 +53,9 @@ jobs:
         with:
           name: orbital-debug-android-test-apk
           path: app/build/outputs/apk/androidTest/debug/*.apk
-          if-no-files-found: warn
+          # On a green job, a missing deliverable is a CI failure; on a failed
+          # build/emulator run, retain best-effort artifact diagnostics.
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
           retention-days: 14
       - name: Upload lint report
         if: always()
@@ -119,7 +124,9 @@ jobs:
           path: |
             artifacts/orbital-emulator.png
             artifacts/orbital-compact-emulator.png
-          if-no-files-found: warn
+          # On a green job, a missing deliverable is a CI failure; on a failed
+          # build/emulator run, retain best-effort artifact diagnostics.
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
           retention-days: 14
       - name: Upload emulator diagnostics
         if: always()
