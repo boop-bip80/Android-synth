@@ -56,6 +56,23 @@ class VoiceStealTailTest {
             maxDifference < 0.005f)
     }
 
+    @Test fun changingWaveAndMorphOnRetriggerDoesNotRewriteTheOldTail() {
+        val reference = sustainedVoice(48_000, 69, 18_000.0)
+        val stolen = sustainedVoice(48_000, 69, 18_000.0)
+        repeat(3_000) {
+            reference.nextSample(1f, 1f, 1.0)
+            stolen.nextSample(1f, 1f, 1.0)
+        }
+
+        stolen.begin(60, 0f, 2L, null, 0.0, 0f, 0f)
+        stolen.preparePitch(1.0)
+        for (frame in 0 until 64) {
+            val expected = reference.nextSample(1f, 1f, 1.0) * ((64 - frame) / 64f)
+            val actual = stolen.nextSample(0f, 0f, 1.0)
+            assertEquals("Old timbre was replaced at frame $frame", expected, actual, 0.0001f)
+        }
+    }
+
     private fun sustainedVoice(sampleRate: Int, note: Int, cutoff: Double): Voice =
         Voice(sampleRate).apply {
             configure(
