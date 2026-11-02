@@ -144,9 +144,32 @@ object FactoryPatterns {
         ), bpm = 108.0, swing = .10,
     )
 
+    /** 32-step polymetric cross-rhythm; exercises a full two-bar user grid. */
+    val ECLIPSE_SHIFT_32 = FactorySequence(
+        "eclipse-32", "Eclipse Shift 32",
+        AdvancedPatternComposer.polymeter(
+            PatternComposer.euclidean(8, 3, 36, velocity = 116, gate = .46,
+                accentEvery = 2, accentVelocity = 127),
+            PatternComposer.euclidean(32, 11, 67, rotation = 5, velocity = 79, gate = .60),
+            PatternComposer.euclidean(16, 7, 79, rotation = 3, velocity = 74, gate = .25),
+        ), bpm = 116.0, swing = .14,
+    )
+
+    /** 64-step evolving loop, with independent 16- and 64-step voices. */
+    val DEEP_ORBIT_64 = FactorySequence(
+        "deep-orbit-64", "Deep Orbit 64",
+        AdvancedPatternComposer.polymeter(
+            PatternComposer.euclidean(16, 5, 43, velocity = 114, gate = .57,
+                accentEvery = 2, accentVelocity = 126),
+            PatternComposer.euclidean(64, 23, 74, rotation = 11, velocity = 83, gate = .31),
+            PatternComposer.euclidean(32, 9, 67, rotation = 7, velocity = 71, gate = .48),
+        ), bpm = 98.0, swing = .11,
+    )
+
     val ALL: List<FactorySequence> =
         listOf(AURORA, COMET_ARP, ION_BASS, CHORD_CLOUD, PRISM_PULSE, LUNAR_PLUCK,
-            NEBULA_CIRCUIT, GRAVITY_GARDEN, SPECTRAL_WEAVE, HALO_WALK)
+            NEBULA_CIRCUIT, GRAVITY_GARDEN, SPECTRAL_WEAVE, HALO_WALK,
+            ECLIPSE_SHIFT_32, DEEP_ORBIT_64)
 
     val DEFAULT: FactorySequence get() = AURORA
     fun byId(id: String): FactorySequence? = ALL.firstOrNull { it.id == id }
