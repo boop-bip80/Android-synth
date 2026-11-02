@@ -49,7 +49,7 @@ class StereoChorus(sampleRate: Int = 48_000) {
 
     /**
      * [rateHz] in 0.02..8 Hz, [depth]/[wet]/[stereoWidth] in 0..1.
-     * Non-finite inputs fall back to safe defaults. wet=0 is an exact dry path.
+     * Non-finite inputs fall back to safe defaults. Initial wet=0 is an exact dry path.
      * Subsequent depth/wet/width changes are slewed over roughly 10 ms, avoiding zipper noise.
      */
     fun configure(rateHz: Float, depth: Float, wet: Float, stereoWidth: Float = 1f) {
