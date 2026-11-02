@@ -12,6 +12,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -314,7 +316,7 @@ class OrbitalScreenTest {
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
         compose.onNodeWithText("1-STEP ORBIT").assertExists()
         compose.onNodeWithContentDescription("Step 1 of 1, on").performClick()
-        compose.onNodeWithContentDescription("Step 2 of 1, on").assertDoesNotExist()
+        assertEquals(0, compose.onAllNodesWithContentDescription("Step 2 of 1, on").fetchSemanticsNodes().size)
         compose.runOnIdle { assertEquals(listOf(0), toggled) }
     }
 
@@ -417,7 +419,7 @@ class OrbitalScreenTest {
         }
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
         compose.onNodeWithContentDescription("Choose sequence").assertIsNotEnabled()
-        compose.onNodeWithText("CHOOSE SEQUENCE").assertDoesNotExist()
+        assertEquals(0, compose.onAllNodesWithText("CHOOSE SEQUENCE").fetchSemanticsNodes().size)
     }
 
     @Test fun factorySequenceSelectorIsDisabledForEmptyLibrary() {
