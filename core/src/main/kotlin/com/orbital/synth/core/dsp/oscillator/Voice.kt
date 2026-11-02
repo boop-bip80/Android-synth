@@ -44,6 +44,11 @@ internal class Voice(private val sampleRate: Int) {
 
     private var stage = Stage.OFF
     private var velocity = 0f
+    private var targetVelocity = 0f
+    // Retuning a held legato note to a new velocity must not step its amplitude
+    // at nonzero envelope level. The smoothing time is constant across rates.
+    private val velocitySlewCoefficient = (1.0 - exp(-1.0 / (sampleRate * 0.005))).toFloat()
+    private val sustainSlewCoefficient = (1.0 - exp(-1.0 / (sampleRate * 0.005))).toFloat()
     private var phase = 0.0
     // The two side oscillators track the whole note even while their mix is dry.
     // Enabling unison mid-note therefore never resets the oscillator clock.
@@ -205,6 +210,7 @@ internal class Voice(private val sampleRate: Int) {
 
         note = midiNote
         velocity = noteVelocity.coerceIn(0f, 1f)
+        targetVelocity = velocity
         startedAt = order
         active = true
         releasing = false
@@ -226,7 +232,7 @@ internal class Voice(private val sampleRate: Int) {
 
     fun retune(midiNote: Int, noteVelocity: Float, glideSeconds: Double) {
         note = midiNote
-        velocity = noteVelocity.coerceIn(0f, 1f)
+        targetVelocity = noteVelocity.coerceIn(0f, 1f)
         targetFrequency = midiFrequency(midiNote)
         startGlide(glideSeconds)
         setPan(midiNote, smooth = true)
@@ -277,6 +283,7 @@ internal class Voice(private val sampleRate: Int) {
 
                 advanceFilterCoefficients()
                 advanceUnisonControls()
+                velocity += (targetVelocity - velocity) * velocitySlewCoefficient
                 val centerSample = WavetableBank.sample(phase, mipLevel, wave, morph, mipFade)
                 val waveSample = if (unisonMix <= 0.000001f) centerSample else {
                     val low = WavetableBank.sample(lowerPhase, mipLevel, wave, morph, mipFade)
@@ -380,15 +387,19 @@ internal class Voice(private val sampleRate: Int) {
                 if (envelopeLevel >= 1f) stage = Stage.DECAY
             }
             Stage.DECAY -> {
-                envelopeLevel -= decayStep
                 if (envelopeLevel <= sustain) {
-                    envelopeLevel = sustain
+                    // Raising sustain above the current decay level must not
+                    // jump directly to the new target at an arbitrary phase.
                     stage = Stage.SUSTAIN
+                    envelopeLevel += (sustain - envelopeLevel) * sustainSlewCoefficient
+                } else {
+                    envelopeLevel = max(sustain, envelopeLevel - decayStep)
+                    if (envelopeLevel <= sustain) stage = Stage.SUSTAIN
                 }
             }
             Stage.SUSTAIN -> {
-                // Slew moving sustain values; parameter automation must not create a click.
-                envelopeLevel += (sustain - envelopeLevel) * 0.004f
+                // Sample-rate independent smoothing also handles automation after decay.
+                envelopeLevel += (sustain - envelopeLevel) * sustainSlewCoefficient
             }
             Stage.RELEASE -> {
                 envelopeLevel -= releaseStep
