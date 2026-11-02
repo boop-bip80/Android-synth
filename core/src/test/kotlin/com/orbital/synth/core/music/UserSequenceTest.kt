@@ -100,6 +100,7 @@ class UserSequenceTest {
         rejects { SequenceCodec.decode(canonical.replace("step.2=", "step.2=61,100,0.5,1.0")) }
         rejects { SequenceCodec.decode(canonical.replace("name=", "name=%XX")) }
         rejects { UserSequence("../escape", "Bad", StepPattern()) }
+        rejects { UserSequence("has_underscore", "Bad", StepPattern()) }
         rejects { UserSequence("safe", "\n", StepPattern()) }
         rejects { UserSequence("safe", "OK", StepPattern(), bpm = Double.POSITIVE_INFINITY) }
         rejects { SequenceCodec.decode("x".repeat(SequenceCodec.MAX_BYTES + 1)) }
