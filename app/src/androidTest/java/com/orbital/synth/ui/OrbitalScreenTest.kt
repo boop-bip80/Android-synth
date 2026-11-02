@@ -6,13 +6,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.core.music.SequencerNote
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -151,7 +153,8 @@ class OrbitalScreenTest {
             )
         }
         compose.onNodeWithTag("orbitalExpression").assertIsDisplayed().performTouchInput {
-            click(center)
+            down(center)
+            up()
         }
         compose.runOnIdle {
             assertTrue("Morph touch callback missing", ParameterId.MORPH in updates)
@@ -172,7 +175,7 @@ class OrbitalScreenTest {
             )
         }
         val orbit = compose.onNodeWithTag("orbitalExpression")
-        val actions = orbit.fetchSemanticsNode().config[SemanticsProperties.CustomActions].map { it.label }
+        val actions = orbit.fetchSemanticsNode().config[SemanticsActions.CustomActions].map { it.label }
         assertTrue("Increase morph" in actions)
         assertTrue("Decrease movement" in actions)
         orbit.performTouchInput {
@@ -202,7 +205,7 @@ class OrbitalScreenTest {
         }
         val actions = compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
-        ).fetchSemanticsNode().config[SemanticsProperties.CustomActions].map { it.label }
+        ).fetchSemanticsNode().config[SemanticsActions.CustomActions].map { it.label }
         assertEquals(13, actions.size)
         assertTrue("Play C sharp 4" in actions)
         assertTrue("Play A sharp 4" in actions)
@@ -313,7 +316,7 @@ class OrbitalScreenTest {
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
         compose.onNodeWithText("1-STEP ORBIT").assertExists()
         compose.onNodeWithContentDescription("Step 1 of 1, on").performClick()
-        compose.onNodeWithContentDescription("Step 2 of 1, on").assertDoesNotExist()
+        assertEquals(0, compose.onAllNodesWithContentDescription("Step 2 of 1, on").fetchSemanticsNodes().size)
         compose.runOnIdle { assertEquals(listOf(0), toggled) }
     }
 
@@ -383,8 +386,8 @@ class OrbitalScreenTest {
         }
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
         compose.onNodeWithText("Aurora Orbit").assertExists()
-        compose.onNodeWithContentDescription("Choose factory sequence").performClick()
-        compose.onNodeWithContentDescription("Select factory sequence Comet Cascade").performClick()
+        compose.onNodeWithContentDescription("Choose sequence").performClick()
+        compose.onNodeWithContentDescription("Select sequence Comet Cascade").performClick()
         compose.runOnIdle { assertEquals("comet", selectedId) }
     }
 
@@ -415,8 +418,8 @@ class OrbitalScreenTest {
             )
         }
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
-        compose.onNodeWithContentDescription("Choose factory sequence").assertIsNotEnabled()
-        compose.onNodeWithText("CHOOSE SEQUENCE").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Choose sequence").assertIsNotEnabled()
+        assertEquals(0, compose.onAllNodesWithText("CHOOSE SEQUENCE").fetchSemanticsNodes().size)
     }
 
     @Test fun factorySequenceSelectorIsDisabledForEmptyLibrary() {
@@ -429,7 +432,7 @@ class OrbitalScreenTest {
             )
         }
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
-        compose.onNodeWithContentDescription("Factory sequences unavailable").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Sequence library unavailable").assertIsNotEnabled()
     }
 
     @Test fun expressionCoordinatesClampOutOfBoundsAndGuardZeroSize() {
@@ -438,4 +441,85 @@ class OrbitalScreenTest {
         assertEquals(1f to 0f, expressionCoordinates(500f, 200f, 100f, 100f))
         assertEquals(.5f to .5f, expressionCoordinates(10f, 10f, 0f, 100f))
     }
+
+    @Test fun stepInspectorEditsPitchWithoutDroppingChordVoices() {
+        val edits = mutableListOf<Pair<Int, List<SequencerNote>>>()
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(
+                    enabledSteps = setOf(0),
+                    sequenceNotesByStep = listOf(
+                        listOf(SequencerNote(60), SequencerNote(67, velocity = 110)),
+                    ),
+                ),
+                onNoteOn = {}, onNoteOff = {}, onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+                onSequencerToggle = {}, onStepToggle = {},
+                onSequencerStepNotesChange = { step, notes -> edits += step to notes },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Increase step note pitch").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(0, edits.single().first)
+            assertEquals(61, edits.single().second[0].midiNote)
+            assertEquals(67, edits.single().second[1].midiNote)
+            assertEquals(110, edits.single().second[1].velocity)
+        }
+    }
+
+    @Test fun emptyStepAddsValidatedDefaultPitchThroughHost() {
+        val edits = mutableListOf<Pair<Int, List<SequencerNote>>>()
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(
+                    octave = 4,
+                    sequenceNotesByStep = listOf(emptyList()),
+                ),
+                onNoteOn = {}, onNoteOff = {}, onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+                onSequencerToggle = {}, onStepToggle = {},
+                onSequencerStepNotesChange = { step, notes -> edits += step to notes },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Add note to selected step").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(0, edits.single().first)
+            assertEquals(60, edits.single().second.single().midiNote)
+        }
+    }
+
+    @Test fun sequenceSaveUsesTrimmedNameAndRequiresHostCallback() {
+        var saved: String? = null
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(),
+                onNoteOn = {}, onNoteOff = {}, onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+                onSaveSequence = { saved = it },
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Save sequence as a new pattern").performScrollTo().performClick()
+        compose.onNodeWithTag("sequenceNameInput").performTextReplacement("  Solar Pattern  ")
+        compose.onNodeWithText("SAVE").performClick()
+        compose.runOnIdle { assertEquals("Solar Pattern", saved) }
+    }
+
+    @Test fun sequenceEditingAndSaveControlsAreDisabledWithoutHost() {
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(sequenceNotesByStep = listOf(listOf(SequencerNote(60)))),
+                onNoteOn = {}, onNoteOff = {}, onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+            )
+        }
+        compose.onNodeWithContentDescription("Tab SEQ").performClick()
+        compose.onNodeWithContentDescription("Save sequence as a new pattern")
+            .performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Increase step note pitch")
+            .performScrollTo().assertIsNotEnabled()
+    }
+
 }
