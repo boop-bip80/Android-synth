@@ -1,6 +1,8 @@
 package com.orbital.synth.audio
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MidiPortSessionTest {
@@ -183,5 +185,91 @@ class MidiPortSessionTest {
         port.close()
         assertEquals(32, events.notes.count { it == "on:0:60:100" })
         assertEquals(32, events.notes.count { it == "off:0:60:0" })
+    }
+
+    @Test
+    fun taggedPortsKeepIdenticalPitchesIndependentAcrossPedalAndDisconnect() {
+        val events = mutableListOf<String>()
+        val listener = object : SourceAwareMidiMessageListener {
+            override fun onSourceNoteOn(sourceId: Long, channel: Int, note: Int, velocity: Int) {
+                events += "on:$sourceId:$channel:$note"
+            }
+            override fun onSourceNoteOff(sourceId: Long, channel: Int, note: Int, velocity: Int) {
+                events += "off:$sourceId:$channel:$note"
+            }
+        }
+        val usb = MidiPortSession(MidiSourceRouter(101L, listener))
+        val wireless = MidiPortSession(MidiSourceRouter(102L, listener))
+        usb.feed(byteArrayOf(0x90.toByte(), 60, 120))
+        wireless.feed(byteArrayOf(0x90.toByte(), 60, 100))
+        usb.feed(byteArrayOf(0xB0.toByte(), 64, 127, 0x80.toByte(), 60, 0))
+        assertEquals(listOf("on:101:0:60", "on:102:0:60"), events)
+
+        // Closing a sustained USB note cannot send a release for the other port.
+        usb.close()
+        assertEquals(
+            listOf("on:101:0:60", "on:102:0:60", "off:101:0:60"),
+            events
+        )
+        wireless.feed(byteArrayOf(0x80.toByte(), 60, 0))
+        wireless.close()
+        assertEquals("off:102:0:60", events.last())
+        assertEquals(4, events.size)
+    }
+
+    @Test
+    fun sourceAwareDefaultsAndLegacyListenerBothReceiveExactlyOneEvent() {
+        val legacy = Events()
+        val oldPort = MidiPortSession(MidiSourceRouter(200L, legacy))
+        oldPort.feed(byteArrayOf(0x91.toByte(), 61, 120))
+        oldPort.close()
+        assertEquals(listOf("on:1:61:120", "off:1:61:0"), legacy.notes)
+
+        val fallback = Events()
+        val aware = object : SourceAwareMidiMessageListener {
+            override fun onNoteOn(channel: Int, note: Int, velocity: Int) {
+                fallback.onNoteOn(channel, note, velocity)
+            }
+            override fun onNoteOff(channel: Int, note: Int, velocity: Int) {
+                fallback.onNoteOff(channel, note, velocity)
+            }
+        }
+        val newPort = MidiPortSession(MidiSourceRouter(201L, aware))
+        newPort.feed(byteArrayOf(0x92.toByte(), 62, 99))
+        newPort.close()
+        assertEquals(listOf("on:2:62:99", "off:2:62:0"), fallback.notes)
+    }
+
+    @Test
+    fun closedGateRejectsLatePacketsAndCannotBeReactivatedByOldAttach() {
+        val events = mutableListOf<String>()
+        val listener = object : SourceAwareMidiMessageListener {
+            override fun onSourceNoteOn(sourceId: Long, channel: Int, note: Int, velocity: Int) {
+                events += "on:$sourceId:$note"
+            }
+            override fun onSourceNoteOff(sourceId: Long, channel: Int, note: Int, velocity: Int) {
+                events += "off:$sourceId:$note"
+            }
+        }
+        val oldGate = MidiPortGate()
+        val oldPort = MidiPortSession(MidiSourceRouter(301L, listener))
+        assertFalse(oldGate.acceptsInput) // no input before connection acceptance
+        assertTrue(oldGate.activate())
+        if (oldGate.acceptsInput) oldPort.feed(byteArrayOf(0x90.toByte(), 64, 100))
+        oldGate.close()
+        oldPort.close()
+        assertFalse(oldGate.acceptsInput)
+        assertFalse(oldGate.activate()) // stale late openDevice callback
+        if (oldGate.acceptsInput) oldPort.feed(byteArrayOf(0x90.toByte(), 65, 100))
+
+        val reconnected = MidiPortSession(MidiSourceRouter(302L, listener))
+        val newGate = MidiPortGate()
+        assertTrue(newGate.activate())
+        if (newGate.acceptsInput) reconnected.feed(byteArrayOf(0x90.toByte(), 64, 110))
+        reconnected.close()
+        assertEquals(
+            listOf("on:301:64", "off:301:64", "on:302:64", "off:302:64"),
+            events
+        )
     }
 }
