@@ -51,6 +51,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -380,14 +384,29 @@ private fun StepRhythmPanel(
                 onChange(config.copy(enabled = !config.enabled))
             }
         }
-        repeat(2) { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                repeat(8) { column ->
-                    val index = row * 8 + column
-                    StepRhythmPad(
-                        index, config, config.enabled && index == playhead,
-                        onChange, Modifier.weight(1f),
-                    )
+        BoxWithConstraints(Modifier.fillMaxWidth().testTag("modStepPadGrid")) {
+            // The STEP editor is nested inside two padded panels. Eight fixed
+            // columns made its real phone hit boxes narrower than 48dp. Use
+            // the same measured-width policy and 2dp gutters as the route bank;
+            // preserve all sixteen IDs while adding scrollable rows as needed.
+            val columns = ModulationRouteGridSizing.columnsForWidth(maxWidth.value)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                repeat(ModulationRouteGridSizing.rowsFor(config.values.size, columns)) { row ->
+                    Row(Modifier.fillMaxWidth()) {
+                        repeat(columns) { column ->
+                            val index = ModulationRouteGridSizing.index(row, column, columns)
+                            if (index >= config.values.size) {
+                                Spacer(Modifier.weight(1f))
+                            } else {
+                                StepRhythmPad(
+                                    index, config, config.enabled && index == playhead,
+                                    onChange, Modifier.weight(1f).padding(
+                                        horizontal = ModulationRouteGridSizing.CELL_GUTTER_DP.dp,
+                                    ),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -476,6 +495,21 @@ private fun StepRhythmPad(
                 .semantics {
                     contentDescription = "STEP pad " + (index + 1) +
                         ", " + ("%.2f".format(value)) + ", tap vertically to edit"
+                    stateDescription = java.lang.String.format(
+                        java.util.Locale.getDefault(), "%+.2f bipolar", value,
+                    )
+                    progressBarRangeInfo = ProgressBarRangeInfo(value, -1f..1f)
+                    // A described Canvas is not enough for TalkBack/Switch
+                    // Access. Publish through the SAME immutable host callback
+                    // as physical painting, without arming or resetting STEP.
+                    setProgress { requested ->
+                        if (!requested.isFinite()) return@setProgress false
+                        val bounded = requested.coerceIn(-1f, 1f)
+                        val current = latestConfig
+                        if (current.values[index] == bounded) return@setProgress false
+                        latestCallback(current.withStep(index, bounded))
+                        true
+                    }
                 }
                 .pointerInput(index) {
                     detectTapGestures { position ->
