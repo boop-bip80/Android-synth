@@ -632,32 +632,34 @@ fun PatchGraphPanel(
                 enabled = routePage < 7,
             ) { routePage = (routePage + 1).coerceAtMost(7) }
         }
+        // Every one of the 64 saved routes now has a real, reachable cable
+        // trace card (two per row, eight per bank) instead of number-only keys.
+        // The card is static and truthfully distinguishes inverse polarity,
+        // zero-depth silence, dormant sources and reserved non-audio targets.
         Column(
             Modifier.fillMaxWidth().testTag("patchGraphRouteBank"),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            repeat(2) { row ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    repeat(4) { column ->
-                        val index = routePage * 8 + row * 4 + column
-                        val route = routeBank[index]
-                        val live = route.destination in PatchGraphUiModel.liveTargets
+            repeat(4) { row ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    repeat(2) { column ->
+                        val index = routePage * 8 + row * 2 + column
+                        val cable = PatchCableTraceModel.describe(
+                            index, routeBank[index], lfos, stepConfig,
+                        )
                         Box(Modifier.weight(1f)) {
-                            PatchChip(
-                                label = (index + 1).toString().padStart(2, '0'),
+                            PatchCableTraceCard(
+                                trace = cable,
                                 selected = routeIndex == index,
-                                tint = if (!route.enabled) OrbitalPalette.Muted
-                                    else if (live) OrbitalPalette.Teal else OrbitalPalette.Gold,
-                                description = "Select route " + (index + 1) +
-                                    if (!route.enabled) ", empty or bypassed"
-                                    else if (live) ", live destination"
-                                    else ", reserved destination",
-                                tag = "patchRoute" + index,
-                                fill = true,
-                            ) {
-                                selectedRoute = index
-                                notice = "Editing route " + (index + 1) + "."
-                            }
+                                onClick = {
+                                    selectedRoute = index
+                                    notice = "Editing saved route " + (index + 1) +
+                                        " / " + cable.status.caption + "."
+                                },
+                            )
                         }
                     }
                 }
