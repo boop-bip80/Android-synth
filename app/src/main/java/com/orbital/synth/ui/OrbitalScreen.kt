@@ -354,6 +354,14 @@ fun OrbitalScreen(
                     onNextPatch = onNextPatch,
                     engineName = engineChoice.name,
                 )
+                if (compactHeight) {
+                    CompactSoundPanel(
+                        parameter = parameter,
+                        engineId = engineId,
+                        engineValue = engineValue,
+                        onParameterChange = onParameterChange,
+                    )
+                } else {
                 if (compactOrbitLayout) {
                     Box(Modifier.fillMaxWidth().height(148.dp).testTag("compactOrbitViewport")) {
                         OrbitalDisplay(
@@ -524,6 +532,7 @@ fun OrbitalScreen(
                         .semantics { contentDescription = "Edit sequencer" }) {
                         SignalTile("MOD", move, OrbitalPalette.Violet, Modifier.fillMaxWidth())
                     }
+                }
                 }
             }
             Tab.PLAY -> PlayPanel(
@@ -2146,6 +2155,106 @@ private fun StepValueSlider(
                 inactiveTrackColor = OrbitalPalette.PanelEdge,
             ),
         )
+    }
+}
+
+private enum class CompactSoundPage(val caption: String) {
+    LIVE("LIVE"), TONE("TONE"), VOICE("VOICE"), ENGINE("ENGINE")
+}
+
+/**
+ * A 350dp-high landscape viewport gives the editor very little visible space.
+ * Render a lightweight, paged performance rack rather than eagerly creating
+ * the full orbit/ribbon graph, knob bank and four signal visualizations.
+ * All parameters remain accessible, and the full portrait editor is unchanged.
+ */
+@Composable
+private fun CompactSoundPanel(
+    parameter: (ParameterId) -> Float,
+    engineId: ParameterId?,
+    engineValue: Float,
+    onParameterChange: (ParameterId, Float) -> Unit,
+) {
+    var page by remember { mutableStateOf(CompactSoundPage.LIVE) }
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Text(
+            "SONIC RACK  /  STAGE VIEW",
+            color = OrbitalPalette.Cyan, fontSize = 11.sp, letterSpacing = 1.5.sp,
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            CompactSoundPage.entries.forEach { choice ->
+                Pill(
+                    label = choice.caption,
+                    active = page == choice,
+                    onClick = { page = choice },
+                    description = "Sound rack " + choice.name,
+                    role = Role.RadioButton,
+                )
+            }
+        }
+        when (page) {
+            CompactSoundPage.LIVE -> {
+                CompactFxControl("MORPH", parameter(ParameterId.MORPH), ParameterId.MORPH,
+                    onParameterChange, "Cross-wavetable expression")
+                CompactFxControl("MOTION", parameter(ParameterId.MOVEMENT), ParameterId.MOVEMENT,
+                    onParameterChange, "Modulation movement")
+                CompactFxControl("FX", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT,
+                    onParameterChange, "Stereo space and texture")
+            }
+            CompactSoundPage.TONE -> {
+                CompactFxControl("WAVE", parameter(ParameterId.WAVE), ParameterId.WAVE,
+                    onParameterChange, "Oscillator shape")
+                CompactFxControl("CUTOFF", parameter(ParameterId.CUTOFF), ParameterId.CUTOFF,
+                    onParameterChange, "Filter cutoff")
+                CompactFxControl("RESONANCE", parameter(ParameterId.RESONANCE), ParameterId.RESONANCE,
+                    onParameterChange, "Filter resonance")
+            }
+            CompactSoundPage.VOICE -> {
+                val digitalMode = engineArchitectureIndex(engineValue) >= 3
+                if (digitalMode) {
+                    Text(
+                        "UNISON / DETUNE: WT + ANALOG ENGINES",
+                        color = OrbitalPalette.Muted, fontSize = 9.sp,
+                    )
+                }
+                val voiceIds = listOf("UNISON", "DETUNE", "CHARACTER")
+                    .mapNotNull { name ->
+                        ParameterId.entries.firstOrNull { it.name == name }?.let { name to it }
+                    }
+                voiceIds.forEach { (label, id) ->
+                    CompactFxControl(label, parameter(id), id, onParameterChange,
+                        "Synthesis voice parameter")
+                }
+                if (voiceIds.isEmpty()) {
+                    Label("VOICE MACROS WILL APPEAR WITH SUPPORTED ENGINES")
+                }
+            }
+            CompactSoundPage.ENGINE -> {
+                Label("SYNTHESIS ARCHITECTURE  /  MODELED + INSPIRED")
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    EngineArchitectures.forEachIndexed { index, choice ->
+                        Pill(
+                            label = choice.name,
+                            active = engineArchitectureIndex(engineValue) == index,
+                            onClick = { engineId?.let { onParameterChange(it, choice.value) } },
+                            description = "Select synthesis architecture " + choice.name,
+                            role = Role.RadioButton,
+                            enabled = engineId != null,
+                        )
+                    }
+                }
+                ParameterId.entries.firstOrNull { it.name == "CHARACTER" }?.let { id ->
+                    CompactFxControl("CHARACTER", parameter(id), id, onParameterChange,
+                        "Engine timbre and model character")
+                }
+            }
+        }
     }
 }
 
