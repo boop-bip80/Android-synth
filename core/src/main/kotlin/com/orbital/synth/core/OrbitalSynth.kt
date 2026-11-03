@@ -535,7 +535,7 @@ class OrbitalSynth(
         val decaySec = 0.020 + decay.toDouble() * decay * 3.5
         val releaseSec = 0.020 + release.toDouble() * release * 4.0
         val glideSec = if (glide <= 0f) 0.0 else 0.004 + glide.toDouble() * glide * 0.75
-        val cutoffHz = (45.0 * 2.0.pow(cutoff * 8.7)).coerceAtMost(sampleRate * 0.45)
+        val cutoffHz = FilterCutoffMath.baseHz(cutoff, sampleRate)
         val lfoHz = 0.05 * 2.0.pow(lfoRate * 8.0)
         val lfoIncrement = lfoHz / sampleRate
         val modulationDepth = movement * lfoDepth
@@ -646,8 +646,7 @@ class OrbitalSynth(
             if (filterRoutingActive && filterControlFrame == 0) {
                 // Consume all 64 summed cables and let the real SVF/ladder/SEM
                 // pole slews work continuously between bounded target updates.
-                val hz = (45.0 * 2.0.pow(liveModulation.cutoff * 8.7))
-                    .coerceAtMost(sampleRate * 0.45)
+                val hz = FilterCutoffMath.baseHz(liveModulation.cutoff, sampleRate)
                 for (voice in voices) {
                     if (voice.active) voice.retargetFilter(hz, liveModulation.resonance)
                 }

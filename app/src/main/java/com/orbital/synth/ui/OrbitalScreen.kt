@@ -85,7 +85,6 @@ import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import com.orbital.synth.core.music.SequencerNote
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlin.math.pow
 import kotlin.math.roundToInt
 
 enum class PlayMode { POLY, MONO, LEGATO }
@@ -201,6 +200,8 @@ fun OrbitalScreen(
     /** Real output PCM telemetry; read only while the immersive stage is visible. */
     onReadAudioVisual: (() -> AudioVisualSnapshot)? = null,
     onStageTouchSettingsChange: ((StageTouchSettings) -> Unit)? = null,
+    /** Rendering rate of the ONE host OrbitalSynth for exact filter Hz readouts. */
+    synthSampleRate: Int = 48_000,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var immersiveMode by remember { mutableStateOf(false) }
@@ -593,6 +594,7 @@ fun OrbitalScreen(
                         compact = compactOrbitLayout,
                         audioRms = soundVisual.rms,
                         audioPeak = soundVisual.peak,
+                        synthSampleRate = synthSampleRate,
                         patchName = state.patchName,
                         patchId = state.activePatchId,
                         patchEpoch = state.performanceResetEpoch,
@@ -2850,8 +2852,3 @@ private fun defaultValue(id: ParameterId): Float = when (id) {
 }
 
 private fun percent(value: Float): String = (value.coerceIn(0f, 1f) * 100f).roundToInt().toString() + "%"
-private fun cutoffLabel(value: Float): String {
-    val hz = 40.0 * 400.0.pow(value.coerceIn(0f, 1f).toDouble())
-    return if (hz >= 1000.0) "%.1f kHz".format(java.util.Locale.US, hz / 1000.0)
-    else hz.roundToInt().toString() + " Hz"
-}

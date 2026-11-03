@@ -110,6 +110,7 @@ fun ReferenceSoundHero(
     onPreviousPatch: (() -> Unit)? = null,
     onNextPatch: (() -> Unit)? = null,
     onOpenEngine: (() -> Unit)? = null,
+    synthSampleRate: Int = 48_000,
 ) {
     val safeMorph = ReferenceSoundUiModel.normalized(parameters[ParameterId.MORPH] ?: .5f)
     val safeMovement = ReferenceSoundUiModel.normalized(parameters[ParameterId.MOVEMENT] ?: .5f)
@@ -302,13 +303,13 @@ fun ReferenceSoundHero(
                         Text(
                             "SOUND / PATCH",
                             color = OrbitalPalette.Muted,
-                            fontSize = 8.sp,
-                            letterSpacing = 1.1.sp,
+                            fontSize = 9.5.sp,
+                            letterSpacing = .65.sp,
                         )
                         Text(
                             patchName,
                             color = OrbitalPalette.Text,
-                            fontSize = 11.sp,
+                            fontSize = 12.5.sp,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -351,13 +352,13 @@ fun ReferenceSoundHero(
                     Text(
                         "ENGINE",
                         color = OrbitalPalette.Muted,
-                        fontSize = 8.sp,
-                        letterSpacing = 1.1.sp,
+                        fontSize = 9.5.sp,
+                        letterSpacing = .65.sp,
                     )
                     Text(
                         engineName,
                         color = OrbitalPalette.Cyan,
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -401,6 +402,7 @@ fun ReferenceSoundHero(
             audioRms = audioRms,
             compact = compact,
             showExpressionRibbon = false,
+            synthSampleRate = synthSampleRate,
         )
     }
 }
