@@ -200,6 +200,33 @@ class ModularFxRuntimeTest {
         assertEquals(0, synth.activeVoiceCount)
     }
 
+    @Test fun bypassFadeEndingOnBlockBoundaryCannotResurrectOldDelayEchoes() {
+        // At 8kHz the bypass slew is exactly 80 frames. If the audio worker
+        // skips idle rack processing immediately afterward, the final fade
+        // frame must have discarded delay history before the next enable.
+        val fx = com.orbital.synth.core.dsp.processing.ModularFxChain(8_000)
+        val delay = FxModuleConfig(FxModuleType.DELAY,
+            enabled = true, wet = 1f, depth = 0f, rate = 0f)
+        val stereo = FloatArray(2)
+        fx.setSlot(0, delay)
+        repeat(400) { frame ->
+            fx.process(if (frame == 300) 1f else 0f, 0f, stereo)
+        }
+        fx.setSlot(0, delay.copy(enabled = false))
+        repeat(80) { fx.process(0f, 0f, stereo) }
+        assertFalse("Exactly the final fade sample should retire processing",
+            fx.needsProcessing)
+
+        // Intentionally do not call process() for any idle block, matching
+        // OrbitalSynth's no-voice/no-FX CPU fast path.
+        fx.setSlot(0, delay)
+        repeat(300) {
+            fx.process(0f, 0f, stereo)
+            assertEquals("A reenabled delay cannot replay old notes", 0f, stereo[0], 0f)
+            assertEquals(0f, stereo[1], 0f)
+        }
+    }
+
     private fun clearTone(): OrbitalSynth = OrbitalSynth().apply {
         setParameter(ParameterId.WAVE, 0f)
         setParameter(ParameterId.MORPH, 0f)
