@@ -46,6 +46,12 @@ internal class LiveModulationHost(sampleRate: Int) {
     private val rack = ModulationRack(sampleRate, LFO_COUNT, ROUTE_COUNT).apply {
         setDestinationSlewMs(ModDestination.MORPH, 8f)
         setDestinationSlewMs(ModDestination.PITCH, 8f)
+        // Touch/LFO sweeps should sound fluid; the voice filters additionally
+        // interpolate their pole coefficients at audio rate.
+        setDestinationSlewMs(ModDestination.CUTOFF, 12f)
+        setDestinationSlewMs(ModDestination.RESONANCE, 12f)
+        setDestinationSlewMs(ModDestination.AMP, 8f)
+        setDestinationSlewMs(ModDestination.PAN, 8f)
     }
 
     private val publishedRoutes = AtomicReferenceArray<ModulationRouteConfig>(ROUTE_COUNT).apply {
@@ -74,9 +80,23 @@ internal class LiveModulationHost(sampleRate: Int) {
         private set
     var pitchRouteActive: Boolean = false
         private set
+    var filterRouteActive: Boolean = false
+        private set
+    var ampRouteActive: Boolean = false
+        private set
+    var panRouteActive: Boolean = false
+        private set
     var morph: Float = 0.5f
         private set
     var pitchSemitones: Float = 0f
+        private set
+    var cutoff: Float = 0.5f
+        private set
+    var resonance: Float = 0.5f
+        private set
+    var ampGain: Float = 1f
+        private set
+    var panOffset: Float = 0f
         private set
 
     fun setRoute(
@@ -146,11 +166,14 @@ internal class LiveModulationHost(sampleRate: Int) {
         )
     }
 
-    fun syncBlock(baseMorph: Float): Boolean {
+    fun syncBlock(baseMorph: Float, baseCutoff: Float, baseResonance: Float): Boolean {
         val latestRouteRevision = routeRevision.get()
         if (latestRouteRevision != appliedRouteRevision) {
             var count = 0
             var pitchCount = 0
+            var filterCount = 0
+            var ampCount = 0
+            var panCount = 0
             for (i in 0 until ROUTE_COUNT) {
                 val next = publishedRoutes.get(i)
                 if (next !== appliedRoutes[i]) {
@@ -163,11 +186,20 @@ internal class LiveModulationHost(sampleRate: Int) {
                 }
                 if (next.enabled) {
                     count++
-                    if (next.destination == ModDestination.PITCH) pitchCount++
+                    when (next.destination) {
+                        ModDestination.PITCH -> pitchCount++
+                        ModDestination.CUTOFF, ModDestination.RESONANCE -> filterCount++
+                        ModDestination.AMP -> ampCount++
+                        ModDestination.PAN -> panCount++
+                        else -> Unit // All other typed targets remain explicitly reserved.
+                    }
                 }
             }
             active = count > 0
             pitchRouteActive = pitchCount > 0
+            filterRouteActive = filterCount > 0
+            ampRouteActive = ampCount > 0
+            panRouteActive = panCount > 0
             appliedRouteRevision = latestRouteRevision
             if (!active) rack.resetSmoothing()
         }
@@ -207,6 +239,11 @@ internal class LiveModulationHost(sampleRate: Int) {
         }
         baseValues[ModDestination.MORPH.ordinal] = baseMorph.coerceIn(0f, 1f)
         baseValues[ModDestination.PITCH.ordinal] = 0.5f
+        baseValues[ModDestination.CUTOFF.ordinal] = baseCutoff.coerceIn(0f, 1f)
+        baseValues[ModDestination.RESONANCE.ordinal] = baseResonance.coerceIn(0f, 1f)
+        // These buses are bipolar around 0.5, so unconnected routes are neutral.
+        baseValues[ModDestination.AMP.ordinal] = 0.5f
+        baseValues[ModDestination.PAN.ordinal] = 0.5f
         return true
     }
 
@@ -216,6 +253,11 @@ internal class LiveModulationHost(sampleRate: Int) {
         morph = frameValues[ModDestination.MORPH.ordinal]
         // 0.5 is neutral, +/-6 semitones is the programmed full pitch range.
         pitchSemitones = (frameValues[ModDestination.PITCH.ordinal] - 0.5f) * 12f
+        cutoff = frameValues[ModDestination.CUTOFF.ordinal]
+        resonance = frameValues[ModDestination.RESONANCE.ordinal]
+        // User-programmed AMP route is a 0..2 linear multiplier, neutral at 1.
+        ampGain = frameValues[ModDestination.AMP.ordinal] * 2f
+        panOffset = (frameValues[ModDestination.PAN.ordinal] - 0.5f) * 2f
     }
 
     fun onNoteOn() {
