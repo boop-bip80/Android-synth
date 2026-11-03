@@ -1,6 +1,10 @@
 package com.orbital.synth.ui
 
+import android.graphics.Bitmap
 import android.util.Log
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
+import java.io.FileOutputStream
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
@@ -69,9 +73,42 @@ class Compact350SoundInstrumentedTest {
         node.assertIsDisplayed()
     }
 
+    /** Save actual device screen pixels for strict CI extraction, not a Compose mock. */
+    private fun captureNativeFrame(filename: String) {
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        val screenshot = checkNotNull(
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+        ) { "Real compact350 API35 framebuffer is required" }
+        try {
+            assertTrue("Real Android screen must have physical pixels",
+                screenshot.width >= 360 && screenshot.height >= 350)
+            val image = File(compose.activity.filesDir, filename)
+            FileOutputStream(image).use { out ->
+                assertTrue("Real framebuffer PNG encoder failed",
+                    screenshot.compress(Bitmap.CompressFormat.PNG, 100, out))
+                out.fd.sync()
+            }
+            assertTrue("Native OSC8 screenshot must contain rendered graphics",
+                image.length() > 4096L)
+            Log.i(TAG, "phase=compact-native-png-$filename-${image.length()}-bytes")
+        } finally {
+            screenshot.recycle()
+        }
+    }
+
     @Test fun shortLandscapeSoundHasReachableEightLayerEditorAndAnchoredPiano() {
         Log.i(TAG, "phase=start")
-        val slots = mutableStateOf(List(8) { OscillatorSlot() })
+        val slots = mutableStateOf(
+            List(8) { index ->
+                if (index == 7) {
+                    OscillatorSlot(
+                        enabled = true, waveform = .5f, morph = .33f, level = .44f,
+                        coarseSemitones = -7, fineCents = 12f,
+                        noiseLevel = .76f, noiseColor = .65f,
+                    )
+                } else OscillatorSlot()
+            }
+        )
         Log.i(TAG, "phase=before-set-content")
         compose.setContent {
             Box(Modifier.width(360.dp).height(350.dp)) {
@@ -117,6 +154,77 @@ class Compact350SoundInstrumentedTest {
         eighth.assertIsDisplayed().performClick()
         compose.onNodeWithTag("oscillatorLayer7").assertIsSelected()
         Log.i(TAG, "phase=after-eighth-layer-selected")
+        compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        ).assertIsDisplayed()
+        // Separate native frame verifies the selected OSC8 chip and anchored
+        // keybed on the FIRST 350dp screen, before vertically revealing wave.
+        captureNativeFrame("orbital-compact350-osc8-selector.png")
+        // A compact OSC8 layer is reachable immediately, but its luminous
+        // wave field may be below the short editor fold. Scroll ONLY with
+        // real finger gestures, never Compose performScrollTo(), which hangs
+        // some API35 hardware rendering paths in this weighted viewport.
+        val wave = compose.onNodeWithTag("oscillatorWaveCanvas")
+        val editor = compose.onNodeWithTag("soundEditorScroll").assertIsDisplayed()
+        val density = compose.activity.resources.displayMetrics.density
+        var fullyInView = false
+        for (attempt in 0 until 12) {
+            val editorRect = editor.fetchSemanticsNode().boundsInRoot
+            val waveRect = wave.fetchSemanticsNode().boundsInRoot
+            fullyInView = visible(wave) &&
+                waveRect.top >= editorRect.top - 1f &&
+                waveRect.bottom <= editorRect.bottom + 1f
+            if (fullyInView) break
+            Log.i(TAG, "phase=luminous-physical-reveal-$attempt wave=$waveRect editor=$editorRect")
+            editor.performTouchInput {
+                val x = 3f // Panel gutter: no child Canvas gesture should own this.
+                val bottom = center.y * 1.84f
+                val top = center.y * .20f
+                down(Offset(x, bottom))
+                moveTo(Offset(x, center.y * 1.2f))
+                moveTo(Offset(x, top))
+                up()
+            }
+            compose.waitForIdle()
+        }
+        val waveBounds = wave.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val editorBounds = editor.fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            "96dp physical waveform must fit within compact editor after real swipes: " +
+                "wave=$waveBounds editor=$editorBounds",
+            waveBounds.top >= editorBounds.top - 1f &&
+                waveBounds.bottom <= editorBounds.bottom + 1f,
+        )
+        assertTrue(
+            "Compact OSC8 waveform must expose physical 96dp touch height",
+            waveBounds.height in (95f * density)..(99f * density),
+        )
+        Log.i(TAG, "phase=compact-luminous-wave-visible bounds=$waveBounds")
+
+        // Finger taps modify BOTH oscillator axes and forward ALL V6 fields,
+        // preserving noise color/level, tuning, waveform and enabled state.
+        wave.performTouchInput {
+            click(Offset((center.x * 2f) * .82f, (center.y * 2f) * .18f))
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            val edit = slots.value[7]
+            assertEquals(.82f, edit.morph, .07f)
+            assertEquals(.82f, edit.level, .07f)
+            assertEquals(.76f, edit.noiseLevel, 0f)
+            assertEquals(.65f, edit.noiseColor, 0f)
+            assertEquals(-7, edit.coarseSemitones)
+            assertEquals(12f, edit.fineCents, 0f)
+            assertEquals(.5f, edit.waveform, 0f)
+            assertTrue(edit.enabled)
+        }
+        Log.i(TAG, "phase=compact-luminous-osc8-xy-pcm-config-updated")
+
+        // Real framebuffer after OSC8 finger gestures, with the wave visible.
+        captureNativeFrame("orbital-compact350-luminous.png")
+
+        // Neither physical editor swipes nor touch synthesis can dislodge the
+        // live keybed. The permanent OSC toggle remains immediately available.
         compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
         ).assertIsDisplayed()
