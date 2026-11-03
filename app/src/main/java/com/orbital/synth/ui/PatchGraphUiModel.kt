@@ -112,6 +112,10 @@ internal object PatchGraphUiModel {
         FxModuleType.TREMOLO -> "TREM"
         FxModuleType.CHORUS -> "CHORUS"
         FxModuleType.DELAY -> "DELAY"
+        FxModuleType.REVERB -> "REVERB"
+        FxModuleType.PHASER -> "PHASE"
+        FxModuleType.BITCRUSH -> "CRUSH"
+        else -> type.name.take(6)
     }
 
     fun build(
