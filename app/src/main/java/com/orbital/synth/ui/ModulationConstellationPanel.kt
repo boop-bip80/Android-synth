@@ -8,6 +8,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,12 +39,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -57,6 +62,8 @@ import com.orbital.synth.core.dsp.processing.LfoShape
 import com.orbital.synth.core.dsp.processing.ModCurve
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
+import com.orbital.synth.core.dsp.processing.StepDirection
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
@@ -77,6 +84,11 @@ fun ModulationConstellationPanel(
     onRouteClear: (Int) -> Unit,
     onTempoChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    /** Null means the host has not yet connected the real DSP sequencer. */
+    stepConfig: ModulationStepConfig? = null,
+    onStepChange: ((ModulationStepConfig) -> Unit)? = null,
+    /** Audio-worker playhead; never a guessed UI animation counter. */
+    stepPlayhead: Int = 0,
 ) {
     val lanes = List(8) { lfos.getOrNull(it) ?: ModulationLfoConfig() }
     val patch = List(64) { routes.getOrNull(it) ?: ModulationRouteConfig() }
@@ -148,6 +160,10 @@ fun ModulationConstellationPanel(
             lanes.forEachIndexed { index, config ->
                 LfoCard(index, config) { onLfoChange(index, it) }
             }
+        }
+
+        if (stepConfig != null && onStepChange != null) {
+            StepRhythmPanel(stepConfig, stepPlayhead, onStepChange)
         }
 
         Text("PATCH BAY  /  SELECT ANY OF 64 ROUTES", color = OrbitalPalette.Text,
@@ -291,6 +307,192 @@ fun ModulationConstellationPanel(
             color = OrbitalPalette.Muted, fontSize = 10.sp,
             modifier = Modifier.testTag("modulationLiveDestinationsLegend"),
         )
+    }
+}
+
+/**
+ * Touch-drawn, sixteen-pad rhythmic modulation. All interactions are immutable
+ * editor callbacks; the visible playhead comes from real DSP frame advancement.
+ */
+@Composable
+private fun StepRhythmPanel(
+    config: ModulationStepConfig,
+    playhead: Int,
+    onChange: (ModulationStepConfig) -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth().testTag("modStepRhythmPanel")
+            .border(1.dp, OrbitalPalette.Violet.copy(alpha = .58f), RoundedCornerShape(16.dp))
+            .background(Brush.verticalGradient(
+                listOf(Color(0xFF140A29), Color(0xFF040710), Color(0xFF071D29))
+            ), RoundedCornerShape(16.dp))
+            .padding(11.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text("S T E P  /  T O U C H   R H Y T H M",
+                    color = OrbitalPalette.Gold, fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold)
+                Text("16 BIPOLAR PADS  •  REAL AUDIO-CLOCKED MODULATION",
+                    color = OrbitalPalette.Muted, fontSize = 9.sp)
+            }
+            NeonButton(if (config.enabled) "ON" else "OFF",
+                "Toggle STEP modulator", OrbitalPalette.Cyan) {
+                onChange(config.copy(enabled = !config.enabled))
+            }
+        }
+        repeat(2) { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                repeat(8) { column ->
+                    val index = row * 8 + column
+                    StepRhythmPad(
+                        index, config, config.enabled && index == playhead,
+                        onChange, Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+        Text(
+            if (config.enabled)
+                "STEP CLOCK ARMED  •  Tap higher or lower inside a pad to draw bipolar modulation."
+            else
+                "STEP CLOCK DISARMED  •  Draw a pattern, then tap ON and route STEP to a live destination.",
+            color = if (config.enabled) OrbitalPalette.Teal else OrbitalPalette.Muted,
+            fontSize = 10.sp,
+            modifier = Modifier.testTag("modStepSourceStatus"),
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            EnumPicker(
+                "ORDER", config.direction, StepDirection.entries,
+                { ModulationConstellationModel.enumLabel(it.name) },
+                { onChange(config.copy(direction = it)) }, Modifier.weight(1f),
+            )
+            Column(Modifier.weight(1f)) {
+                Text("LENGTH  " + config.length, color = OrbitalPalette.Muted, fontSize = 9.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    NeonButton("−", "Shorten STEP pattern", OrbitalPalette.Violet) {
+                        onChange(config.copy(length = (config.length - 1).coerceAtLeast(1)))
+                    }
+                    NeonButton("+", "Lengthen STEP pattern", OrbitalPalette.Cyan) {
+                        onChange(config.copy(length = (config.length + 1).coerceAtMost(16)))
+                    }
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                Text("BEATS / PAD  " + config.beatsPerStep,
+                    color = OrbitalPalette.Muted, fontSize = 9.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    NeonButton("÷2", "Faster STEP clock", OrbitalPalette.Violet) {
+                        onChange(config.copy(beatsPerStep =
+                            ModulationConstellationModel.adjacentBeats(config.beatsPerStep, -1)))
+                    }
+                    NeonButton("×2", "Slower STEP clock", OrbitalPalette.Cyan) {
+                        onChange(config.copy(beatsPerStep =
+                            ModulationConstellationModel.adjacentBeats(config.beatsPerStep, 1)
+                                .coerceAtMost(8f)))
+                    }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("GLIDE  " + ("%.0f".format(config.glide * 100f)) + "%",
+                color = OrbitalPalette.Cyan, fontSize = 10.sp)
+            NeonButton(
+                if (config.retriggerOnNote) "RETRIGGER ON" else "FREE RUN",
+                "Toggle STEP note retrigger", OrbitalPalette.Gold,
+            ) { onChange(config.copy(retriggerOnNote = !config.retriggerOnNote)) }
+        }
+        Slider(
+            value = config.glide,
+            onValueChange = { onChange(config.copy(glide = it)) },
+            valueRange = 0f..1f,
+            modifier = Modifier.fillMaxWidth().testTag("modStepGlideSlider"),
+            colors = SliderDefaults.colors(
+                thumbColor = OrbitalPalette.Gold,
+                activeTrackColor = OrbitalPalette.Violet,
+                inactiveTrackColor = OrbitalPalette.DeepBlue,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun StepRhythmPad(
+    index: Int,
+    config: ModulationStepConfig,
+    highlighted: Boolean,
+    onChange: (ModulationStepConfig) -> Unit,
+    modifier: Modifier,
+) {
+    val latestConfig by androidx.compose.runtime.rememberUpdatedState(config)
+    val latestCallback by androidx.compose.runtime.rememberUpdatedState(onChange)
+    val value = config.values[index]
+    val tint = if (value >= 0f) OrbitalPalette.Cyan else OrbitalPalette.Violet
+    Box(modifier, contentAlignment = Alignment.Center) {
+        Canvas(
+            Modifier.fillMaxWidth().height(76.dp)
+                .testTag("modStepPad" + index)
+                .semantics {
+                    contentDescription = "STEP pad " + (index + 1) +
+                        ", " + ("%.2f".format(value)) + ", tap vertically to edit"
+                }
+                .pointerInput(index) {
+                    detectTapGestures { position ->
+                        val y = position.y.coerceIn(0f, size.height.toFloat())
+                        val next = (1f - 2f * y / size.height.coerceAtLeast(1)).coerceIn(-1f, 1f)
+                        latestCallback(latestConfig.withStep(index, next))
+                    }
+                }
+                .pointerInput(index) {
+                    detectDragGestures { change, _ ->
+                        val y = change.position.y.coerceIn(0f, size.height.toFloat())
+                        val next = (1f - 2f * y / size.height.coerceAtLeast(1)).coerceIn(-1f, 1f)
+                        latestCallback(latestConfig.withStep(index, next))
+                        change.consume()
+                    }
+                },
+        ) {
+            val radius = CornerRadius(7.dp.toPx())
+            drawRoundRect(
+                if (highlighted) OrbitalPalette.Gold.copy(alpha = .23f)
+                else Color(0xFF07152C),
+                cornerRadius = radius,
+            )
+            drawRoundRect(
+                tint.copy(alpha = if (highlighted) .95f else .32f),
+                cornerRadius = radius, style = Stroke(width =
+                    if (highlighted) 1.5.dp.toPx() else .7.dp.toPx()),
+            )
+            val middle = size.height * .50f
+            drawLine(OrbitalPalette.Muted.copy(alpha = .36f),
+                Offset(4.dp.toPx(), middle),
+                Offset(size.width - 4.dp.toPx(), middle),
+                strokeWidth = .65.dp.toPx())
+            val extent = size.height * .43f * abs(value)
+            val top = if (value >= 0f) middle - extent else middle
+            val pad = 6.dp.toPx()
+            drawRoundRect(
+                brush = Brush.verticalGradient(
+                    listOf(tint.copy(alpha = .96f), tint.copy(alpha = .38f))
+                ),
+                topLeft = Offset(pad, top),
+                size = Size((size.width - pad * 2f).coerceAtLeast(1f),
+                    extent.coerceAtLeast(.8.dp.toPx())),
+                cornerRadius = CornerRadius(3.dp.toPx()),
+            )
+            if (highlighted) {
+                drawCircle(OrbitalPalette.Gold.copy(alpha = .96f),
+                    radius = 2.7.dp.toPx(), center = Offset(size.width / 2f, 7.dp.toPx()))
+            }
+        }
+        Text((index + 1).toString().padStart(2, '0'),
+            Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp),
+            color = if (highlighted) OrbitalPalette.Gold else OrbitalPalette.Muted,
+            fontFamily = FontFamily.Monospace, fontSize = 9.sp)
     }
 }
 

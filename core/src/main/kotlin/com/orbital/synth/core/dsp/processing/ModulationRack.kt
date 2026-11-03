@@ -35,6 +35,13 @@ class ModulationRack(
         TempoLfo(sampleRate, (randomSeed + 0x9e37 * (slot + 1)).let { if (it == 0) 1 else it })
     }
     private val lfoEnabled = BooleanArray(lfoCount) { it == 0 }
+    private val stepSequencer = TempoStepSequencer(sampleRate, randomSeed)
+    private var externalStepValue = 0f
+
+    val stepPlayhead: Int get() = stepSequencer.playheadIndex
+    val stepEnabled: Boolean get() = stepSequencer.enabled
+    fun setStepPattern(config: ModulationStepConfig) = stepSequencer.configure(config)
+    fun advanceStepOnly(samples: Int) = stepSequencer.advance(samples)
     private val retriggerOnGate = BooleanArray(lfoCount)
     private val beatsPerCycle = FloatArray(lfoCount)
     private var tempoBpm = 120f
@@ -74,6 +81,7 @@ class ModulationRack(
     /** Recalculate all tempo-synced lanes while preserving oscillator phases. */
     fun setTempoBpm(bpm: Float) {
         tempoBpm = safeTempo(bpm)
+        stepSequencer.setTempoBpm(tempoBpm)
         for (i in lfos.indices) {
             if (beatsPerCycle[i] > 0f) {
                 lfos[i].syncToTempo(tempoBpm, beatsPerCycle[i])
@@ -97,6 +105,7 @@ class ModulationRack(
         for (i in lfos.indices) {
             if (retriggerOnGate[i]) lfos[i].reset()
         }
+        stepSequencer.onNoteOn()
     }
 
     /**
@@ -107,7 +116,9 @@ class ModulationRack(
      */
     fun setSource(source: ModSource, value: Float) {
         if (!value.isFinite()) return
-        sourceValues[source.ordinal] = value.coerceIn(-1f, 1f)
+        val safe = value.coerceIn(-1f, 1f)
+        if (source == ModSource.STEP) externalStepValue = safe
+        sourceValues[source.ordinal] = safe
     }
 
     /** 0 ms bypasses smoothing; nonzero times are first-order sample slews. */
@@ -127,6 +138,10 @@ class ModulationRack(
         for (i in lfos.indices) {
             sourceValues[lfoIds[i]] = if (lfoEnabled[i]) lfos[i].next() else 0f
         }
+        // A programmed STEP sequencer overrides the older manual STEP source
+        // without discarding its external value when the lane is disabled.
+        sourceValues[ModSource.STEP.ordinal] =
+            if (stepSequencer.enabled) stepSequencer.next() else externalStepValue
         matrix.apply(base, sourceValues, targetValues)
         for (i in targetValues.indices) {
             val target = targetValues[i]
@@ -148,6 +163,7 @@ class ModulationRack(
         for (i in lfos.indices) {
             if (lfoEnabled[i]) lfos[i].advance(samples)
         }
+        stepSequencer.advance(samples)
     }
 
     /** Useful when loading a new preset: avoids old glide targets leaking in. */

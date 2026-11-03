@@ -9,6 +9,8 @@ import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModCurve
 import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.dsp.processing.FxModuleType
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
+import com.orbital.synth.core.dsp.processing.StepDirection
 
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -25,11 +27,12 @@ import java.nio.charset.StandardCharsets
  * param.CUTOFF=0.62
  */
 object PatchCodec {
-    const val CURRENT_VERSION: Int = 4
+    const val CURRENT_VERSION: Int = 5
     private const val MAGIC_V1 = "ORBITAL-PATCH/1"
     private const val MAGIC_V2 = "ORBITAL-PATCH/2"
     private const val MAGIC_V3 = "ORBITAL-PATCH/3"
     private const val MAGIC_V4 = "ORBITAL-PATCH/4"
+    private const val MAGIC_V5 = "ORBITAL-PATCH/5"
     private val OSC_FIELD = Regex("osc\\.[0-7]")
     private val LFO_FIELD = Regex("lfo\\.[0-7]")
     private val ROUTE_FIELD = Regex("route\\.([0-9]|[1-5][0-9]|6[0-3])")
@@ -40,10 +43,12 @@ object PatchCodec {
     fun encode(patch: SynthPatch): String {
         val out = StringBuilder(512)
         val hasFx = patch.fxSlots.isNotEmpty()
+        val hasSteps = patch.modulationSteps != null
         val hasModulation = patch.modulationRoutes.isNotEmpty() ||
             patch.modulationLfos.isNotEmpty() || patch.modulationTempoBpm != 120f
         out.append(
             when {
+                hasSteps -> MAGIC_V5
                 hasFx -> MAGIC_V4
                 hasModulation -> MAGIC_V3
                 patch.oscillatorSlots.isNotEmpty() -> MAGIC_V2
@@ -67,7 +72,7 @@ object PatchCodec {
                 .append(slot.coarseSemitones).append(',')
                 .append(slot.fineCents).append('\n')
         }
-        if (hasModulation || hasFx) {
+        if (hasModulation || hasFx || hasSteps) {
             out.append("mod.tempo=").append(patch.modulationTempoBpm).append('\n')
             patch.modulationLfos.forEachIndexed { index, lfo ->
                 out.append("lfo.").append(index).append('=')
@@ -97,6 +102,17 @@ object PatchCodec {
                     .append(fx.stereo).append('\n')
             }
         }
+        patch.modulationSteps?.let { steps ->
+            out.append("step.seq=")
+                .append(if (steps.enabled) '1' else '0').append(',')
+                .append(steps.direction.name).append(',')
+                .append(steps.length).append(',')
+                .append(steps.beatsPerStep).append(',')
+                .append(steps.glide).append(',')
+                .append(if (steps.retriggerOnNote) '1' else '0')
+            for (value in steps.values) out.append(',').append(value)
+            out.append('\n')
+        }
         require(out.length <= MAX_TEXT_LENGTH) { "Patch exceeds format size limit" }
         return out.toString()
     }
@@ -109,6 +125,7 @@ object PatchCodec {
             MAGIC_V2 -> 2
             MAGIC_V3 -> 3
             MAGIC_V4 -> 4
+            MAGIC_V5 -> 5
             else -> throw IllegalArgumentException("Unknown patch format/version")
         }
 
@@ -124,7 +141,8 @@ object PatchCodec {
                 (version >= 2 && OSC_FIELD.matches(key)) ||
                 (version >= 3 && (key == "mod.tempo" ||
                     LFO_FIELD.matches(key) || ROUTE_FIELD.matches(key))) ||
-                (version == 4 && FX_FIELD.matches(key))) {
+                (version >= 4 && FX_FIELD.matches(key)) ||
+                (version == 5 && key == "step.seq")) {
                 "Unknown patch field"
             }
             require(key !in values) { "Duplicate patch field" }
@@ -238,6 +256,25 @@ object PatchCodec {
             "V4 patches must contain explicit FX slot state"
         }
 
+        val steps = if (version == 5) {
+            val fields = (values["step.seq"]
+                ?: throw IllegalArgumentException("V5 STEP settings are required")).split(',')
+            require(fields.size == 22) { "A V5 STEP lane requires sixteen pads" }
+            ModulationStepConfig(
+                enabled = flag(fields[0]),
+                direction = StepDirection.valueOf(fields[1]),
+                length = fields[2].toIntOrNull()
+                    ?: throw IllegalArgumentException("Malformed STEP length"),
+                beatsPerStep = fields[3].toFloatOrNull()
+                    ?: throw IllegalArgumentException("Malformed STEP duration"),
+                glide = fields[4].toFloatOrNull()
+                    ?: throw IllegalArgumentException("Malformed STEP glide"),
+                retriggerOnNote = flag(fields[5]),
+                values = fields.drop(6).map { it.toFloatOrNull()
+                    ?: throw IllegalArgumentException("Malformed STEP pad") },
+            )
+        } else null
+
         fun required(field: String): String =
             unescape(values[field] ?: throw IllegalArgumentException("Missing patch field"))
 
@@ -260,6 +297,7 @@ object PatchCodec {
             modulationLfos = lfos,
             modulationTempoBpm = tempo,
             fxSlots = fxSlots,
+            modulationSteps = steps,
         )
     }
 

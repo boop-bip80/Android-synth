@@ -54,7 +54,7 @@ class PatchFxV4Test {
             fxSlots = fxLayers,
         )
         val encoded = PatchCodec.encode(patch)
-        assertEquals(4, PatchCodec.CURRENT_VERSION)
+        assertEquals(5, PatchCodec.CURRENT_VERSION)
         assertTrue(encoded.startsWith("ORBITAL-PATCH/4\n"))
         assertTrue(encoded.contains("fx.0=1,SATURATION,"))
         assertTrue(encoded.contains("fx.1=0,DELAY,"))
@@ -168,7 +168,7 @@ class PatchFxV4Test {
         rejects { PatchCodec.decode(v4.replace("fx.1=", "fx.3=")) }
         rejects { PatchCodec.decode(v4 + originalFirst + "\n") }
         rejects { PatchCodec.decode(v4.replace("ORBITAL-PATCH/4", "ORBITAL-PATCH/3")) }
-        rejects { PatchCodec.decode(v4.replace("ORBITAL-PATCH/4", "ORBITAL-PATCH/5")) }
+        rejects { PatchCodec.decode(v4.replace("ORBITAL-PATCH/4", "ORBITAL-PATCH/6")) }
         rejects { PatchCodec.decode(v4.replace("mod.tempo=120.0\n", "")) }
         rejects { PatchCodec.decode(v4.replace(Regex("fx\\.[0-5]=[^\\n]*\\n"), "")) }
     }
