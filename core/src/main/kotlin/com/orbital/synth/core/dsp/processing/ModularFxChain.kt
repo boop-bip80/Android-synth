@@ -65,9 +65,18 @@ class ModularFxChain(
 
     fun setSlot(index: Int, config: FxModuleConfig) {
         require(index in 0 until slotCount)
+        // An atomic immutable snapshot stays referentially/equally stable between
+        // UI edits. Avoid allocating a copy on every audio callback/block.
+        if (config == stages[index].requested) return
         if (!config.wet.isFinite() || !config.depth.isFinite() ||
             !config.rate.isFinite() || !config.stereo.isFinite()) return
-        val safe = config.copy(
+        // The Android-facing synth API publishes already normalized configs, so
+        // the common audio-worker path reuses that instance without allocation.
+        val validRange = config.wet >= 0f && config.wet <= 1f &&
+            config.depth >= 0f && config.depth <= 1f &&
+            config.rate >= 0f && config.rate <= 1f &&
+            config.stereo >= 0f && config.stereo <= 1f
+        val safe = if (validRange) config else config.copy(
             wet = config.wet.coerceIn(0f, 1f),
             depth = config.depth.coerceIn(0f, 1f),
             rate = config.rate.coerceIn(0f, 1f),
@@ -75,6 +84,17 @@ class ModularFxChain(
         )
         stages[index].configure(safe)
     }
+
+    /**
+     * True while a slot is enabled or a wet/bypass/type transition is still
+     * audible. The audio engine uses this to keep rendering delay tails after
+     * the last note ends. When all slots are off this is a cheap exact dry path.
+     */
+    val needsProcessing: Boolean
+        get() {
+            for (stage in stages) if (stage.needsProcessing) return true
+            return false
+        }
 
     /** Last requested (validated) settings; audio state may still be fading. */
     fun slot(index: Int): FxModuleConfig {
@@ -131,6 +151,8 @@ class ModularFxChain(
     private class FxStage(sampleRate: Int) {
         var requested = FxModuleConfig()
             private set
+        val needsProcessing: Boolean
+            get() = wet > 0f || targetWet > 0f || pendingTypeSwitch
         private var active = requested
         private val chorus = StereoChorus(sampleRate).apply { resetForBypass() }
         private val delay = StereoDelay(sampleRate, maxDelaySeconds = 1.25f).apply {
@@ -245,6 +267,14 @@ class ModularFxChain(
             }
             advanceWet()
             if (wet == 0f) {
+                // The last fade frame may coincide with the host block boundary.
+                // The synth then skips this slot on future silent blocks; retire
+                // echo/chorus history NOW, not on a hypothetical next callback.
+                if (targetWet == 0f && !historyCleared) {
+                    chorus.resetForBypass()
+                    delay.resetForBypass()
+                    historyCleared = true
+                }
                 output[0] = left
                 output[1] = right
                 return

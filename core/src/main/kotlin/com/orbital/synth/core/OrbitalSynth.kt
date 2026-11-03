@@ -9,6 +9,9 @@ import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
 import com.orbital.synth.core.dsp.processing.Drive
 import com.orbital.synth.core.dsp.processing.FxBypassCrossfade
+import com.orbital.synth.core.dsp.processing.FxModuleConfig
+import com.orbital.synth.core.dsp.processing.FxModuleType
+import com.orbital.synth.core.dsp.processing.ModularFxChain
 import com.orbital.synth.core.dsp.processing.StereoChorus
 import com.orbital.synth.core.dsp.processing.StereoDelay
 import com.orbital.synth.core.dsp.processing.StereoReverb
@@ -124,6 +127,17 @@ class OrbitalSynth(
     private val fxReverb = StereoReverb(sampleRate).apply { resetForBypass() }
     private val reverbScratch = FloatArray(2)
     private val fxCrossfade = FxBypassCrossfade(sampleRate)
+
+    // The user-programmable FX chain follows the existing master FX bus. Each
+    // processor owns its own delay/chorus history and only the audio worker uses it.
+    private val modularFx = ModularFxChain(sampleRate, slotCount = 6)
+    val fxSlotCount: Int get() = 6
+    private val fxSlots = AtomicReferenceArray<FxModuleConfig>(6).apply {
+        for (slot in 0 until length()) set(slot, FxModuleConfig())
+    }
+    // Preallocated block-wide snapshots prevent a mid-block UI edit from giving
+    // different frames different active FX topologies.
+    private val blockFxSlots = Array(6) { FxModuleConfig() }
     // Hold the old drive amount across a fade-out; Fx_AMOUNT=0 must not alter
     // the wet signal before the 10 ms master-bus crossfade reaches true dry.
     private var driveTarget = 0f
@@ -285,6 +299,49 @@ class OrbitalSynth(
     }
 
     /**
+     * Thread-safe UI/MIDI entry point for six independently programmable FX
+     * modules after the original master FX. Configuration is published as an
+     * immutable atomic snapshot and applied at the next audio block boundary.
+     * No mutable processor state is touched by the caller.
+     */
+    fun setFxSlot(index: Int, config: FxModuleConfig) {
+        require(index in 0 until fxSlotCount) { "FX slot must be 0..5" }
+        if (!config.wet.isFinite() || !config.depth.isFinite() ||
+            !config.rate.isFinite() || !config.stereo.isFinite()) return
+        fxSlots.set(index, config.copy(
+            wet = config.wet.coerceIn(0f, 1f),
+            depth = config.depth.coerceIn(0f, 1f),
+            rate = config.rate.coerceIn(0f, 1f),
+            stereo = config.stereo.coerceIn(0f, 1f),
+        ))
+    }
+
+    fun setFxSlot(
+        index: Int, type: FxModuleType, enabled: Boolean,
+        wet: Float, depth: Float = 0.5f, rate: Float = 0.5f, stereo: Float = 0.5f,
+    ) = setFxSlot(index, FxModuleConfig(type, enabled, wet, depth, rate, stereo))
+
+    /** Immutable settings as published by the UI, even during an audible fade. */
+    fun fxSlot(index: Int): FxModuleConfig {
+        require(index in 0 until fxSlotCount) { "FX slot must be 0..5" }
+        return fxSlots.get(index)
+    }
+
+    fun clearFxRack() {
+        for (slot in 0 until fxSlotCount) fxSlots.set(slot, FxModuleConfig())
+    }
+
+    /**
+     * Reorder entire FX processors on the audio worker without copying history.
+     * Queuing this event preserves ordering relative to note events and avoids
+     * touching the chain or moving module state from the UI thread.
+     */
+    fun moveFxSlot(from: Int, to: Int) {
+        require(from in 0 until fxSlotCount && to in 0 until fxSlotCount)
+        if (from != to) events.offer(Event.MoveFxSlot(from, to))
+    }
+
+    /**
      * Render [frames] interleaved float stereo frames into an already allocated buffer.
      * Only the first 2*frames entries are written. No Android dependency is required.
      */
@@ -340,6 +397,11 @@ class OrbitalSynth(
                 resonance, wave, morph)
         }
         drainEvents(glideSec, wave, morph)
+        for (slot in 0 until fxSlotCount) {
+            blockFxSlots[slot] = fxSlots.get(slot)
+            modularFx.setSlot(slot, blockFxSlots[slot])
+        }
+        val modularFxNeedsProcessing = modularFx.needsProcessing
 
         // Reserve room for upward bend and vibrato when selecting anti-alias mip levels.
         val highestPitchMultiplier = 2.0.pow((max(0.0, pitchBend) +
@@ -393,6 +455,14 @@ class OrbitalSynth(
             }
             // Keep configured free-running LFOs in time without 8x trigonometry.
             if (modulationEnabled) liveModulation.advanceSilence(frames)
+            // Delay/chorus memory can remain audible after all held voices stop.
+            // Keep rendering only the modular chain on silence, with no voice or
+            // trigonometric voice-LFO work, until its wet/bypass tails retire.
+            if (modularFxNeedsProcessing) {
+                for (frame in 0 until frames) {
+                    modularFx.process(0f, 0f, output, frame * 2)
+                }
+            }
             return
         }
 
@@ -460,6 +530,9 @@ class OrbitalSynth(
                 output[offset] = dryLeft
                 output[offset + 1] = dryRight
             }
+            if (modularFxNeedsProcessing) {
+                modularFx.process(output[offset], output[offset + 1], output, offset)
+            }
         }
 
         // Keep the UI-facing diagnostic in sync with voices that ended within this block.
@@ -492,8 +565,21 @@ class OrbitalSynth(
                 is Event.SourceAllNotesOff ->
                     handleSourceAllNotesOff(event.sourceId, glideSec, wave, morph)
                 is Event.Mode -> changeMode(event.mode, glideSec, wave, morph)
+                is Event.MoveFxSlot -> handleFxSlotMove(event.from, event.to)
             }
         }
+    }
+
+    /** Worker-only synchronized movement of the immutable settings and DSP history. */
+    private fun handleFxSlotMove(from: Int, to: Int) {
+        val moving = fxSlots.get(from)
+        if (from < to) {
+            for (slot in from until to) fxSlots.set(slot, fxSlots.get(slot + 1))
+        } else {
+            for (slot in from downTo to + 1) fxSlots.set(slot, fxSlots.get(slot - 1))
+        }
+        fxSlots.set(to, moving)
+        modularFx.moveSlot(from, to)
     }
 
     private fun handleNoteOn(
@@ -831,6 +917,7 @@ class OrbitalSynth(
             val channel: Int = 0, val tagged: Boolean = false
         ) : Event
         data class Mode(val mode: VoiceMode) : Event
+        data class MoveFxSlot(val from: Int, val to: Int) : Event
         data class SourceAllNotesOff(val sourceId: Long) : Event
         data object AllNotesOff : Event
     }
