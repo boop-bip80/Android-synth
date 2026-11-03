@@ -1,0 +1,221 @@
+package com.orbital.synth.ui
+
+import androidx.compose.foundation.layout.Column
+import android.util.Log
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.swipe
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.orbital.synth.core.OscillatorSlot
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * Tests genuine pointer delivery to the drawn Canvas, not direct fake callback
+ * invocations. The complete immutable V6 slot is the publication contract.
+ */
+@RunWith(AndroidJUnit4::class)
+class LuminousOscillatorWaveEditorTest {
+    @get:Rule val compose = createComposeRule()
+
+    private fun originalSlot() = OscillatorSlot(
+        enabled = true, waveform = .5f, morph = .33f, level = .44f,
+        coarseSemitones = -7, fineCents = 12f,
+        noiseLevel = .76f, noiseColor = .65f,
+    )
+
+    @Test fun physicallyTappingHolographicWavePublishesBothAxesAndKeepsV6Noise() {
+        var state by mutableStateOf(originalSlot())
+        var callbacks = 0
+        compose.setContent {
+            MaterialTheme {
+                Column {
+                    LuminousOscillatorWaveEditor(
+                        slot = state,
+                        onSlotChange = { next ->
+                            callbacks++
+                            state = next
+                        },
+                    )
+                }
+            }
+        }
+        compose.onNodeWithTag("oscillatorWaveCanvas").assertIsDisplayed()
+            .performTouchInput {
+                click(Offset((center.x * 2f) * .82f, (center.y * 2f) * .18f))
+            }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertTrue("Canvas tap must reach callback", callbacks > 0)
+            assertEquals(.82f, state.morph, .07f)
+            assertEquals(.82f, state.level, .07f)
+            assertEquals(.5f, state.waveform, 0f)
+            assertEquals(.76f, state.noiseLevel, 0f)
+            assertEquals(.65f, state.noiseColor, 0f)
+            assertEquals(-7, state.coarseSemitones)
+            assertEquals(12f, state.fineCents, 0f)
+        }
+    }
+
+    @Test fun dragReleaseThenFreshTapCannotLeaveStuckWaveGestureOrScroller() {
+        var state by mutableStateOf(originalSlot())
+        var callbacks = 0
+        compose.setContent {
+            MaterialTheme {
+                Column {
+                    LuminousOscillatorWaveEditor(
+                        slot = state,
+                        onSlotChange = {
+                            callbacks++
+                            state = it
+                        },
+                    )
+                }
+            }
+        }
+        compose.onNodeWithTag("oscillatorWaveCanvas").assertIsDisplayed()
+            .performTouchInput {
+                swipe(
+                    start = Offset((center.x * 2f) * .12f, (center.y * 2f) * .84f),
+                    end = Offset((center.x * 2f) * .88f, (center.y * 2f) * .12f),
+                    durationMillis = 310,
+                )
+            }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertTrue("Pointer drag must deliver continuous wave edits", callbacks >= 2)
+            assertTrue("Drag X must reach 88% blend: ${state.morph}",
+                state.morph in .79f..94f)
+            assertTrue("Drag Y must reach 88% level: ${state.level}",
+                state.level in .79f..94f)
+        }
+
+        val afterDrag = callbacks
+        compose.onNodeWithTag("oscillatorWaveCanvas").performTouchInput {
+            click(Offset((center.x * 2f) * .21f, (center.y * 2f) * .72f))
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertTrue("UP must retire previous pointer, fresh tap must fire",
+                callbacks > afterDrag)
+            assertEquals(.21f, state.morph, .06f)
+            assertEquals(.28f, state.level, .06f)
+            assertEquals(.76f, state.noiseLevel, 0f)
+            assertEquals(.65f, state.noiseColor, 0f)
+        }
+    }
+
+    @Test fun accessibleSeventyDpRailsUseTalkBackProgressAndRealFingerTaps() {
+        Log.i("LuminousGestureProbe", "01 begin isolated accessibility+pointer test")
+        var state by mutableStateOf(originalSlot())
+        compose.setContent {
+            MaterialTheme {
+                Column {
+                    LuminousOscillatorWaveEditor(slot = state, onSlotChange = { state = it })
+                }
+            }
+        }
+        Log.i("LuminousGestureProbe", "02 content composed; checking visible morph rail")
+        compose.onNodeWithTag("luminousMorphControl").assertIsDisplayed()
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(.64f) }
+        Log.i("LuminousGestureProbe", "03 morph accessible SetProgress returned")
+        compose.waitForIdle()
+        Log.i("LuminousGestureProbe", "03a idle after first semantics mutation")
+        compose.runOnIdle { assertEquals(.64f, state.morph, .005f) }
+        Log.i("LuminousGestureProbe", "03b first semantics committed real slot state")
+        compose.onNodeWithTag("luminousLevelControl").assertIsDisplayed()
+        Log.i("LuminousGestureProbe", "03c level rail visible after morph recomposition")
+        compose.onNodeWithTag("luminousLevelControl")
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(.91f) }
+        Log.i("LuminousGestureProbe", "04 level accessible SetProgress applied")
+        compose.waitForIdle()
+        Log.i("LuminousGestureProbe", "05 idle before semantics assertions")
+        compose.runOnIdle {
+            assertEquals(.64f, state.morph, .005f)
+            assertEquals(.91f, state.level, .005f)
+            assertEquals(.76f, state.noiseLevel, 0f)
+        }
+
+        Log.i("LuminousGestureProbe", "06 semantics passed; starting real finger on level rail")
+        compose.onNodeWithTag("luminousLevelControl").assertIsDisplayed().performTouchInput {
+            click(Offset((center.x * 2f) * .25f, (center.y * 2f) * .75f))
+        }
+        Log.i("LuminousGestureProbe", "07 real finger gesture returned")
+        compose.waitForIdle()
+        Log.i("LuminousGestureProbe", "08 idle before final pointer assertions")
+        compose.runOnIdle {
+            assertEquals("Rail must accept genuine touch X as normalized level",
+                .25f, state.level, .06f)
+            assertEquals(.64f, state.morph, .005f)
+        }
+    }
+
+    @Test fun compactWaveFitsNinetySixDpWithAccessibleFiftyTwoDpRailsAndRealTouch() {
+        var state by mutableStateOf(originalSlot())
+        var calls = 0
+        compose.setContent {
+            MaterialTheme {
+                Column {
+                    LuminousOscillatorWaveEditor(
+                        slot = state,
+                        onSlotChange = { next ->
+                            calls++
+                            state = next
+                        },
+                        compact = true,
+                    )
+                }
+            }
+        }
+        val density = InstrumentationRegistry.getInstrumentation()
+            .targetContext.resources.displayMetrics.density
+        val waveform = compose.onNodeWithTag("oscillatorWaveCanvas")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val morph = compose.onNodeWithTag("luminousMorphControl")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val level = compose.onNodeWithTag("luminousLevelControl")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("Compact wave must be a real 96dp rendered field: $waveform",
+            waveform.height in (95f * density)..(99f * density))
+        assertTrue("Spectral morph rail must remain >=48dp for TalkBack: $morph",
+            morph.height >= 48f * density)
+        assertTrue("OSC level rail must remain >=48dp for TalkBack: $level",
+            level.height >= 48f * density)
+        assertTrue("Touch rails must be physically paired below the wave",
+            morph.top >= waveform.bottom && level.top >= waveform.bottom)
+
+        // Both accessible precision and real finger drag use the same
+        // immutable V6 slot callback; the compact editor changes no DSP.
+        compose.onNodeWithTag("luminousMorphControl")
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(.69f) }
+        compose.waitForIdle()
+        compose.onNodeWithTag("oscillatorWaveCanvas").assertIsDisplayed()
+            .performTouchInput {
+                click(Offset((center.x * 2f) * .77f, (center.y * 2f) * .22f))
+            }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertTrue("Real compact finger must publish an actual OSC slot", calls >= 2)
+            assertEquals(.77f, state.morph, .07f)
+            assertEquals(.78f, state.level, .07f)
+            assertEquals(.76f, state.noiseLevel, 0f)
+            assertEquals(.65f, state.noiseColor, 0f)
+            assertEquals(-7, state.coarseSemitones)
+            assertEquals(12f, state.fineCents, 0f)
+        }
+    }
+}
