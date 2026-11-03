@@ -151,6 +151,12 @@ class ImmersiveLiveFrameCaptureTest {
         compose.mainClock.advanceTimeBy(1_250L)
         compose.waitForIdle()
         Thread.sleep(1_150L)
+        // First entry to Android immersive mode may show its own OS education.
+        // Acknowledge only that identified prompt, then still require real app focus.
+        if (AndroidImmersiveTutorial.acknowledgeOnlyIfSystemOverlayOwnsFocus()) {
+            Thread.sleep(350L)
+            compose.waitForIdle()
+        }
         requireFocusedActivity("before idle stage framebuffer")
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val idleBitmap = checkNotNull(automation.takeScreenshot()) {

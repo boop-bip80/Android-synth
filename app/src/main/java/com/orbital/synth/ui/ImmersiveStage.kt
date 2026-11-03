@@ -230,6 +230,8 @@ internal fun ImmersiveStage(
         }
     }
 
+    FocusSystemBarsEffect(focusMode = cleanCanvas)
+
     val parameter = { id: ParameterId ->
         (state.parameters[id] ?: .5f).coerceIn(0f, 1f)
     }
