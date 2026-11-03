@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -72,32 +73,41 @@ fun ReferencePerformanceKeybed(
     val expressiveNow by rememberUpdatedState(onExpressiveNoteOn)
     val panicNow by rememberUpdatedState(onAllNotesOff)
     val octaveNow by rememberUpdatedState(onOctaveChange)
-    val heldCounts = remember { mutableStateMapOf<Int, Int>() }
+    val noteOwners = remember { ReferenceKeybedNoteOwnership() }
+    // The pure ownership model is not a SnapshotStateMap; an explicit small
+    // revision publishes visual on/off feedback only when a token changes.
+    var ownerRevision by remember { mutableIntStateOf(0) }
+    val activeNotes = remember(ownerRevision) { noteOwners.activeNotes }
     val touchPoints = remember { mutableStateMapOf<PointerId, Offset>() }
     val accessibilityScope = rememberCoroutineScope()
     val chromaticOctave = octave.coerceIn(0, 8)
 
-    fun press(note: Int, velocity: Float) {
-        val prior = heldCounts[note] ?: 0
-        if (prior == 0) {
-            if (expressiveNow != null) expressiveNow?.invoke(note, velocity)
-            else noteOnNow(note)
-        }
-        heldCounts[note] = prior + 1
+    fun press(note: Int, velocity: Float): Long {
+        // Pair note-off with the host callback present when the very first
+        // owner attacked this pitch. Swapping host closures must not strand
+        // a voice in an old synth instance.
+        val offForThisHost = noteOffNow
+        val expressiveForThisHost = expressiveNow
+        val onForThisHost = noteOnNow
+        val owner = noteOwners.acquire(
+            note = note,
+            onAttack = {
+                if (expressiveForThisHost != null)
+                    expressiveForThisHost(note, velocity)
+                else onForThisHost(note)
+            },
+            onRelease = offForThisHost,
+        )
+        ownerRevision++
+        return owner
     }
 
-    fun release(note: Int) {
-        val prior = heldCounts[note] ?: return
-        if (prior == 1) {
-            heldCounts.remove(note)
-            noteOffNow(note)
-        } else heldCounts[note] = prior - 1
+    fun release(owner: Long) {
+        if (noteOwners.release(owner)) ownerRevision++
     }
 
     fun releaseAllOwned() {
-        val notes = heldCounts.keys.toList()
-        heldCounts.clear()
-        notes.forEach { noteOffNow(it) }
+        if (noteOwners.releaseAll() > 0) ownerRevision++
         touchPoints.clear()
     }
 
@@ -108,7 +118,7 @@ fun ReferencePerformanceKeybed(
     }
 
     val label = "Twelve live chromatic liquid-glass keys, octave " +
-        chromaticOctave + ", " + heldCounts.size +
+        chromaticOctave + ", " + activeNotes.size +
         " currently held. Slide fingers between strips; higher touch position " +
         "gives a brighter initial strike velocity. Light rivers preview synth settings, not PCM"
 
@@ -130,10 +140,10 @@ fun ReferencePerformanceKeybed(
                         add(CustomAccessibilityAction(
                             "Play " + ReferenceKeybedUiModel.noteLabel(note),
                         ) {
-                            press(note, .78f)
+                            val owner = press(note, .78f)
                             accessibilityScope.launch {
                                 try { delay(260L) }
-                                finally { release(note) }
+                                finally { release(owner) }
                             }
                             true
                         })
@@ -159,7 +169,9 @@ fun ReferencePerformanceKeybed(
             }
             .pointerInput(chromaticOctave) {
                 awaitPointerEventScope {
-                    val pointerToNote = mutableMapOf<PointerId, Int>()
+                    // Pointer ID owns one unique token, not merely a MIDI
+                    // note integer: cancellation never releases another owner.
+                    val pointerToNote = mutableMapOf<PointerId, Pair<Int, Long>>()
                     try {
                         while (true) {
                             // Initial pass prevents a scrolling ancestor from
@@ -176,16 +188,15 @@ fun ReferencePerformanceKeybed(
                                 val next = keyIndex?.let {
                                     ReferenceKeybedUiModel.noteAt(chromaticOctave, it)
                                 }
-                                if (previous != next) {
-                                    if (previous != null) release(previous)
-                                    if (next != null) {
+                                if (previous?.first != next) {
+                                    if (previous != null) release(previous.second)
+                                    if (next == null) pointerToNote.remove(change.id)
+                                    else {
                                         val velocity = ReferenceKeybedUiModel.verticalStrikeVelocity(
                                             change.position.y, size.height.toFloat(),
                                         )
-                                        press(next, velocity)
+                                        pointerToNote[change.id] = next to press(next, velocity)
                                     }
-                                    if (next == null) pointerToNote.remove(change.id)
-                                    else pointerToNote[change.id] = next
                                 }
                                 if (next == null) touchPoints.remove(change.id)
                                 else touchPoints[change.id] = change.position
@@ -193,7 +204,7 @@ fun ReferencePerformanceKeybed(
                             }
                         }
                     } finally {
-                        pointerToNote.values.toList().forEach { release(it) }
+                        pointerToNote.values.toList().forEach { release(it.second) }
                         pointerToNote.clear()
                         touchPoints.clear()
                     }
@@ -224,7 +235,7 @@ fun ReferencePerformanceKeybed(
         )
         for (index in 0 until count) {
             val note = ReferenceKeybedUiModel.noteAt(chromaticOctave, index) ?: continue
-            val active = heldCounts.containsKey(note)
+            val active = note in activeNotes
             val tint = colors[index]
             val left = padWidth * index + gap
             val keySize = Size((padWidth - 2f * gap).coerceAtLeast(0f), h - 2f * gap)
