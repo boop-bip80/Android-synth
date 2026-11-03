@@ -33,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -58,6 +60,7 @@ internal fun ImmersiveStage(
     onExit: () -> Unit,
 ) {
     val mapper = remember { TouchPerformanceMapper() }
+    val haptics = LocalHapticFeedback.current
     val latestOn = rememberUpdatedState(onNoteOn)
     val latestOff = rememberUpdatedState(onNoteOff)
     val latestParameter = rememberUpdatedState(onParameterChange)
@@ -68,6 +71,7 @@ internal fun ImmersiveStage(
     var touchY by remember { mutableFloatStateOf(.5f) }
     var touchIntensity by remember { mutableFloatStateOf(0f) }
     var pulse by remember { mutableLongStateOf(0L) }
+    var lastHapticAt by remember { mutableLongStateOf(-1000L) }
 
     // Never route an audio event through visual-only state. All updates go to the
     // same callbacks that own the AudioTrack worker and its source-specific notes.
@@ -160,6 +164,12 @@ internal fun ImmersiveStage(
                             touchY = normalizeY(y)
                             touchIntensity = pressure.coerceIn(.15f, 1f)
                             pulse += 1L
+                            // A restrained one-shot tactile accent, never a
+                            // continuous vibration or a high-frequency haptic loop.
+                            if (time - lastHapticAt >= 80L) {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                lastHapticAt = time
+                            }
                             deliver(mapper.touchDown(id, touchX, touchY, pressure, time))
                         }
                         start(
