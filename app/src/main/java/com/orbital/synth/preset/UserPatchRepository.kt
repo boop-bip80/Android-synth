@@ -112,7 +112,7 @@ class UserPatchRepository internal constructor(
             )
         }
         safe(PatchFailureKind.INVALID_DATA) {
-            val used = store.list().map { it.id }.toSet()
+            val used = store.storedIds()
             val base = UserPatchIds.baseForName(cleanName)
             val id = UserPatchIds.uniqueForName(cleanName, used)
             val patch = SynthPatch(
@@ -170,7 +170,7 @@ class UserPatchRepository internal constructor(
     suspend fun importPatchText(text: String): PatchOutcome<SavedUserPatch> = onIo {
         safe(PatchFailureKind.INVALID_FORMAT) {
             val incoming = PatchCodec.decode(text)
-            val used = store.list().map { it.id }.toSet()
+            val used = store.storedIds()
             val base = UserPatchIds.baseForName(incoming.name)
             val id = UserPatchIds.uniqueForName(incoming.name, used)
             val patch = incoming.copy(id = id)
