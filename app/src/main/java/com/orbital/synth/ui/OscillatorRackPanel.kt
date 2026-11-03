@@ -35,9 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -191,18 +189,14 @@ fun OscillatorRackPanel(
                 ) { Text("REMOVE", color = OrbitalPalette.Muted, fontSize = 10.sp) }
             }
 
-            OscillatorWavePreview(
+            LuminousOscillatorWaveEditor(
                 slot = layer,
                 accent = tint,
-                modifier = Modifier.fillMaxWidth().height(96.dp),
-                onTouch = { blend, gain ->
-                    onSlotChange(selected, layer.copy(morph = blend, level = gain))
-                },
-            )
-
-            Text(
-                "DRAG THE WAVE  /  X: BLEND    Y: LEVEL",
-                color = tint.copy(alpha = .8f), fontSize = 8.sp, letterSpacing = .55.sp,
+                modifier = Modifier.fillMaxWidth(),
+                compact = compact,
+                // Full V6 slot forwarding: noise, tuning, wave and enable survive
+                // XY gestures and TalkBack precision rail edits.
+                onSlotChange = { next -> onSlotChange(selected, next) },
             )
             Text(
                 "WAVEFORM  /  TOUCH A HARMONIC FAMILY",
@@ -250,17 +244,6 @@ fun OscillatorRackPanel(
                 }
             }
 
-            RackParameterSlider(
-                "LEVEL", (layer.level * 100f).roundToInt().toString() + "%",
-                layer.level.coerceIn(0f, 1f), 0f..1f, tint,
-                { onSlotChange(selected, layer.copy(level = it)) },
-            )
-            RackParameterSlider(
-                "SPECTRAL BLEND",
-                (layer.morph * 100f).roundToInt().toString() + "%",
-                layer.morph.coerceIn(0f, 1f), 0f..1f, OrbitalPalette.Violet,
-                { onSlotChange(selected, layer.copy(morph = it)) },
-            )
             // A real per-layer noise oscillator, blended before the selected
             // voice filter. Touch the spectrum directly or use accessible
             // white/pink/brown presets and precision sliders.
@@ -494,88 +477,6 @@ private fun RackParameterSlider(
                 .semantics { contentDescription = name + ": " + display }
                 .then(if (testTag == null) Modifier else Modifier.testTag(testTag)),
         )
-    }
-}
-
-/** Parameter-dependent waveform image, rendered directly by Compose (never a bitmap mockup). */
-@Composable
-private fun OscillatorWavePreview(
-    slot: OscillatorSlot,
-    accent: Color,
-    modifier: Modifier = Modifier,
-    onTouch: (morph: Float, level: Float) -> Unit,
-) {
-    val touch by rememberUpdatedState(onTouch)
-    val shape = (slot.waveform.coerceIn(0f, 1f) * 4f).roundToInt()
-    Canvas(
-        modifier
-            .border(1.dp, accent.copy(alpha = .24f), RoundedCornerShape(12.dp))
-            .background(Color(0xFF030814), RoundedCornerShape(12.dp))
-            .testTag("oscillatorWaveCanvas")
-            .pointerInput(Unit) {
-                // One stable Compose gesture owner consumes pointer changes
-                // in the Main pass before the enclosing vertical scroller.
-                // The first finger controls XY; extra fingers cannot steal it.
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val id = down.id
-                    fun publish(position: Offset) {
-                        if (!position.x.isFinite() || !position.y.isFinite()) return
-                        touch(
-                            (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                            (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
-                        )
-                    }
-                    publish(down.position)
-                    down.consume()
-                    // Only the first finger owns X/Y expression, while all
-                    // pointers are consumed until every finger lifts so the
-                    // enclosing editor cannot steal a secondary-pointer drag.
-                    var ownerActive = true
-                    var anyPressed = true
-                    while (anyPressed) {
-                        val event = awaitPointerEvent(PointerEventPass.Main)
-                        val pointer = event.changes.firstOrNull { it.id == id }
-                        if (ownerActive && pointer?.pressed == true) publish(pointer.position)
-                        if (pointer != null && !pointer.pressed) ownerActive = false
-                        event.changes.forEach { change ->
-                            if (change.pressed || change.previousPressed) change.consume()
-                        }
-                        anyPressed = event.changes.any { it.pressed }
-                    }
-                }
-            },
-    ) {
-        val centerY = size.height * .5f
-        val amplitude = size.height * (.14f + slot.level.coerceIn(0f, 1f) * .24f)
-        val count = 180
-        val path = Path()
-        for (i in 0..count) {
-            val t = i.toFloat() / count.toFloat() * 3f
-            val cycle = t % 1f
-            val pure = sin(2.0 * PI * cycle).toFloat()
-            val body = when (shape) {
-                0 -> pure
-                1 -> 1f - 4f * abs(cycle - .5f)
-                2 -> 2f * cycle - 1f
-                3 -> if (cycle < .5f) 1f else -1f
-                else -> (
-                    .68f * pure +
-                        .21f * sin(6.0 * PI * cycle).toFloat() +
-                        .11f * sin(14.0 * PI * cycle).toFloat()
-                    )
-            }
-            val sample = pure * (1f - slot.morph.coerceIn(0f, 1f)) +
-                body * slot.morph.coerceIn(0f, 1f)
-            val x = i.toFloat() / count.toFloat() * size.width
-            val y = centerY - sample * amplitude
-            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-        }
-        drawLine(accent.copy(alpha = .12f), Offset(0f, centerY),
-            Offset(size.width, centerY), 1f)
-        drawPath(path, accent.copy(alpha = .09f), style = Stroke(width = 15f))
-        drawPath(path, accent.copy(alpha = .26f), style = Stroke(width = 6f))
-        drawPath(path, accent, style = Stroke(width = 2.6f, cap = StrokeCap.Round))
     }
 }
 
