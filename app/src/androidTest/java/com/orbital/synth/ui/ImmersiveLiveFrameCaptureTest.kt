@@ -134,7 +134,10 @@ class ImmersiveLiveFrameCaptureTest {
         compose.onNodeWithTag("immersiveModeToggle").performClick()
         compose.onNodeWithTag("immersiveStage").assertIsDisplayed()
         compose.onNodeWithTag("immersiveVisualField").assertExists()
+        compose.onNodeWithTag("stageFocusEnter").assertIsDisplayed().performClick()
         compose.onNodeWithTag("immersiveCanvas").assertExists()
+        compose.onNodeWithTag("immersiveExit").assertDoesNotExist()
+        compose.onNodeWithTag("stageConfigOpen").assertDoesNotExist()
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(0)
 
@@ -142,16 +145,19 @@ class ImmersiveLiveFrameCaptureTest {
         // Force multiple actual UI frames to settle before sampling the idle
         // stage; an immediate UiAutomation frame may still show the SOUND tab.
         compose.waitForIdle()
-        compose.mainClock.advanceTimeBy(180L)
+        // FOCUS removes all stage chrome and fades the live field to actual
+        // black over 950ms before a note begins. Never compare against the
+        // deliberately illuminated idle orbit of ordinary STAGE mode.
+        compose.mainClock.advanceTimeBy(1_250L)
         compose.waitForIdle()
-        Thread.sleep(260L)
+        Thread.sleep(1_150L)
         requireFocusedActivity("before idle stage framebuffer")
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val idleBitmap = checkNotNull(automation.takeScreenshot()) {
             "Android UiAutomation could not capture the real idle stage"
         }
         val idle = try {
-            saveRealFrame(idleBitmap, "orbital-stage-idle-proof.png")
+            saveRealFrame(idleBitmap, "orbital-focus-idle-black.png")
             println("ORBITAL_STAGE_IDLE_PIXEL_CORNERS " +
                 Integer.toHexString(idleBitmap.getPixel(idleBitmap.width / 6, idleBitmap.height / 3)) + " " +
                 Integer.toHexString(idleBitmap.getPixel(idleBitmap.width * 5 / 6, idleBitmap.height * 2 / 3)))
@@ -160,10 +166,9 @@ class ImmersiveLiveFrameCaptureTest {
             idleBitmap.recycle()
         }
 
-        println("ORBITAL_STAGE_IDLE_DRAW_METRICS " + idle)
-        // This first proof exercises the normal immersive STAGE, which retains
-        // ambient orbit artwork while idle. Blank-black FOCUS has its own gate.
-        // Therefore do not classify a colorful idle orbit as stale keyboard UI.
+        println("ORBITAL_FOCUS_IDLE_DRAW_METRICS " + idle)
+        assertTrue("Untouched FOCUS must render a genuinely blank black center: " + idle,
+            idle.visible <= idle.samples / 100 && idle.colorful <= idle.samples / 500)
         val canvas = compose.onNodeWithTag("immersiveCanvas")
         var held = false
         try {
@@ -196,14 +201,14 @@ class ImmersiveLiveFrameCaptureTest {
             }
             try {
                 requireFocusedActivity("after held-note stage framebuffer")
-                saveRealFrame(liveBitmap, "orbital-stage-held-performance.png")
+                saveRealFrame(liveBitmap, "orbital-focus-held-note.png")
                 val live = analyzeStage(liveBitmap)
                 println("ORBITAL_STAGE_LIVE_PIXEL_CORNERS " +
                     Integer.toHexString(liveBitmap.getPixel(liveBitmap.width / 6, liveBitmap.height / 3)) + " " +
                     Integer.toHexString(liveBitmap.getPixel(liveBitmap.width * 5 / 6, liveBitmap.height * 2 / 3)))
                 println("ORBITAL_LIVE_STAGE_METRICS PCM rms=" + pcm.rms + " peak=" + pcm.peak +
                     " idle=" + idle + " live=" + live + " dimensions=" + liveBitmap.width + "x" + liveBitmap.height)
-                File(compose.activity.filesDir, "orbital-stage-live-evidence.txt").writeText(
+                File(compose.activity.filesDir, "orbital-focus-live-evidence.txt").writeText(
                     "audio_running=true\n" +
                     "note_held_during_capture=true\n" +
                     "audio_pcm_rms=" + pcm.rms + "\n" +
@@ -229,7 +234,14 @@ class ImmersiveLiveFrameCaptureTest {
             if (held) canvas.performTouchInput { up() }
         }
 
-        compose.onNodeWithTag("immersiveExit").performClick()
+        // A single Android Back action must restore hidden controls without
+        // escaping the synth; EXIT then returns the normal playable keyboard.
+        compose.activityRule.scenario.onActivity {
+            it.onBackPressedDispatcher.onBackPressed()
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("immersiveStage").assertIsDisplayed()
+        compose.onNodeWithTag("immersiveExit").assertIsDisplayed().performClick()
         compose.onNodeWithTag("immersiveStage").assertDoesNotExist()
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(1)
