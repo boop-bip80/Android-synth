@@ -131,8 +131,14 @@ class LuminousOscillatorWaveEditorTest {
         Log.i("LuminousGestureProbe", "02 content composed; checking visible morph rail")
         compose.onNodeWithTag("luminousMorphControl").assertIsDisplayed()
             .performSemanticsAction(SemanticsActions.SetProgress) { it(.64f) }
-        Log.i("LuminousGestureProbe", "03 morph accessible SetProgress applied")
+        Log.i("LuminousGestureProbe", "03 morph accessible SetProgress returned")
+        compose.waitForIdle()
+        Log.i("LuminousGestureProbe", "03a idle after first semantics mutation")
+        compose.runOnIdle { assertEquals(.64f, state.morph, .005f) }
+        Log.i("LuminousGestureProbe", "03b first semantics committed real slot state")
         compose.onNodeWithTag("luminousLevelControl").assertIsDisplayed()
+        Log.i("LuminousGestureProbe", "03c level rail visible after morph recomposition")
+        compose.onNodeWithTag("luminousLevelControl")
             .performSemanticsAction(SemanticsActions.SetProgress) { it(.91f) }
         Log.i("LuminousGestureProbe", "04 level accessible SetProgress applied")
         compose.waitForIdle()
