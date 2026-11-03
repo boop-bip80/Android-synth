@@ -166,7 +166,7 @@ compact_logcat_pid=$!
 # Every remaining Compose/UI test runs normally on API35. The previous
 # artificial 350dp Box fixtures have been replaced with two stronger real
 # device keyboard/navigation checks in ci-compact-geometry.sh.
-printf 'suite=general\nexpected_at_least=35\n' > artifacts/instrumentation-suite.txt
+printf 'suite=general\nexpected_at_least=38\n' > artifacts/instrumentation-suite.txt
 timeout 30m gradle :app:connectedDebugAndroidTest --stacktrace --no-daemon --console=plain
 python3 - <<'PY'
 import glob
@@ -174,8 +174,8 @@ from xml.etree import ElementTree as ET
 files = glob.glob("app/build/outputs/androidTest-results/connected/debug/*.xml")
 cases = sum(len(ET.parse(path).findall(".//testcase")) for path in files)
 print(f"ORBITAL general instrumentation: {cases} testcases in {len(files)} XML reports")
-if cases < 35:
-    raise SystemExit(f"Expected at least 35 instrumented tests, got {cases}")
+if cases < 38:
+    raise SystemExit(f"Expected at least 38 instrumented tests, got {cases}")
 PY
 
 # Android Gradle Plugin's connected test runner may remove the target APK
