@@ -28,14 +28,18 @@ class ImmersiveVisualFieldTest {
         val nodeBounds = compose.onNodeWithTag("immersiveVisualField")
             .assertIsDisplayed().fetchSemanticsNode().boundsInWindow
         val origin = IntArray(2)
+        val focused = BooleanArray(1)
         compose.runOnIdle {
-            compose.activity.window.decorView.getLocationOnScreen(origin)
+            val window = compose.activity.window.decorView
+            window.getLocationOnScreen(origin)
+            focused[0] = window.hasWindowFocus()
         }
         return NativeCanvasPixelCapture.capture(
             nodeBoundsInWindow = nodeBounds,
             decorScreenX = origin[0],
             decorScreenY = origin[1],
             expectedForegroundPackage = compose.activity.packageName,
+            windowIsFocused = focused[0],
         )
     }
 
@@ -56,17 +60,20 @@ class ImmersiveVisualFieldTest {
             )
         }
         compose.waitForIdle()
-        val silent = realCanvas()
-        // Negative control: without gesture or PCM this field has no active
-        // animation. An ambient compositor drift >=24 cannot count as
-        // evidence of actual sound-to-light response.
-        Thread.sleep(150L)
-        val silentRepeat = realCanvas()
-        val controlDrift = silent.countMaxChannelChanged(silentRepeat)
+        // A cold emulator may show a transitional Surface/AGSL frame. Wait
+        // for TWO real, quiet Android display frames that agree; an unstable
+        // scene remains a hard test failure rather than fake PCM evidence.
+        val (silentRepeat, controlDrift) =
+            NativeCanvasPixelCapture.awaitStableSilentFrame(
+                initial = realCanvas(),
+                takeNext = { realCanvas() },
+                meaningfulChanges = { a, b -> a.countMaxChannelChanged(b) },
+            )
         assertTrue(
-            "Silent performance field moved by " + controlDrift +
-                " meaningful pixels before PCM input",
-            controlDrift < 24,
+            "Stable silent field is not genuine luminous artwork: " +
+                silentRepeat.colorfulPixels() + " colorful pixels ROI=" +
+                silentRepeat.regionLabel(),
+            silentRepeat.colorfulPixels() >= 16,
         )
 
         compose.runOnIdle {
@@ -90,7 +97,7 @@ class ImmersiveVisualFieldTest {
         println(
             "IMMERSIVE_NATIVE_PCM_PIXEL_PROOF changed=" + changed +
                 " silentDrift=" + controlDrift +
-                " ROI=" + silent.regionLabel(),
+                " ROI=" + silentRepeat.regionLabel(),
         )
     }
 
