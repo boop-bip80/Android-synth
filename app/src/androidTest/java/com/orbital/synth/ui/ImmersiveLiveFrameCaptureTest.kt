@@ -151,6 +151,14 @@ class ImmersiveLiveFrameCaptureTest {
         compose.mainClock.advanceTimeBy(1_250L)
         compose.waitForIdle()
         Thread.sleep(1_150L)
+        // Fresh Android devices present a real, focus-owning SystemUI tutorial
+        // the first time system navigation bars disappear. Only its verified
+        // AOSP OK button is acknowledged before our real display capture.
+        // A foreign overlay or an app ANR remains a strict test failure.
+        if (AndroidImmersiveTutorial.acknowledgeOnlyIfSystemOverlayOwnsFocus()) {
+            Thread.sleep(350L)
+            compose.waitForIdle()
+        }
         requireFocusedActivity("before idle stage framebuffer")
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val idleBitmap = checkNotNull(automation.takeScreenshot()) {
