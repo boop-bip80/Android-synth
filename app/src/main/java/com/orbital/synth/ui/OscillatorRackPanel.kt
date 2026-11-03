@@ -1,7 +1,8 @@
 package com.orbital.synth.ui
 
-import android.view.MotionEvent
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,16 +32,15 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.input.pointer.pointerInteropFilter
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -477,7 +477,6 @@ private fun RackParameterSlider(
 }
 
 /** Parameter-dependent waveform image, rendered directly by Compose (never a bitmap mockup). */
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun OscillatorWavePreview(
     slot: OscillatorSlot,
@@ -486,33 +485,43 @@ private fun OscillatorWavePreview(
     onTouch: (morph: Float, level: Float) -> Unit,
 ) {
     val touch by rememberUpdatedState(onTouch)
-    var touchWidthPx by remember { mutableIntStateOf(1) }
-    var touchHeightPx by remember { mutableIntStateOf(1) }
     val shape = (slot.waveform.coerceIn(0f, 1f) * 4f).roundToInt()
     Canvas(
         modifier
             .border(1.dp, accent.copy(alpha = .24f), RoundedCornerShape(12.dp))
             .background(Color(0xFF030814), RoundedCornerShape(12.dp))
             .testTag("oscillatorWaveCanvas")
-            .onSizeChanged {
-                touchWidthPx = it.width.coerceAtLeast(1)
-                touchHeightPx = it.height.coerceAtLeast(1)
-            }
-            .pointerInteropFilter { event ->
-                // Android MotionEvent gives real local pixel coordinates and
-                // consumes DOWN so parent vertical scrolling cannot capture
-                // the sound-design stroke. UP/CANCEL terminates cleanly.
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+            .pointerInput(Unit) {
+                // One stable Compose gesture owner consumes pointer changes
+                // in the Main pass before the enclosing vertical scroller.
+                // The first finger controls XY; extra fingers cannot steal it.
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val id = down.id
+                    fun publish(position: Offset) {
+                        if (!position.x.isFinite() || !position.y.isFinite()) return
                         touch(
-                            (event.x / touchWidthPx).coerceIn(0f, 1f),
-                            (1f - event.y / touchHeightPx).coerceIn(0f, 1f),
+                            (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                            (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
                         )
-                        true
                     }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL,
-                    MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> true
-                    else -> false
+                    publish(down.position)
+                    down.consume()
+                    // Only the first finger owns X/Y expression, while all
+                    // pointers are consumed until every finger lifts so the
+                    // enclosing editor cannot steal a secondary-pointer drag.
+                    var ownerActive = true
+                    var anyPressed = true
+                    while (anyPressed) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        val pointer = event.changes.firstOrNull { it.id == id }
+                        if (ownerActive && pointer?.pressed == true) publish(pointer.position)
+                        if (pointer != null && !pointer.pressed) ownerActive = false
+                        event.changes.forEach { change ->
+                            if (change.pressed || change.previousPressed) change.consume()
+                        }
+                        anyPressed = event.changes.any { it.pressed }
+                    }
                 }
             },
     ) {
@@ -554,7 +563,6 @@ private fun OscillatorWavePreview(
  * spectrum whose tilt and density reflect the selected noise color and blend;
  * they are not mislabeled as a live microphone/FFT analysis.
  */
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun NoiseSpectrumPad(
     slot: OscillatorSlot,
@@ -563,8 +571,6 @@ private fun NoiseSpectrumPad(
     onTouch: (color: Float, blend: Float) -> Unit,
 ) {
     val touch by rememberUpdatedState(onTouch)
-    var touchWidthPx by remember { mutableIntStateOf(1) }
-    var touchHeightPx by remember { mutableIntStateOf(1) }
     Canvas(
         modifier
             .border(1.dp, accent.copy(alpha = .28f), RoundedCornerShape(10.dp))
@@ -574,25 +580,37 @@ private fun NoiseSpectrumPad(
                 contentDescription =
                     "Noise spectrum touch field. Horizontal changes white pink brown color; vertical changes mix."
             }
-            .onSizeChanged {
-                touchWidthPx = it.width.coerceAtLeast(1)
-                touchHeightPx = it.height.coerceAtLeast(1)
-            }
-            .pointerInteropFilter { event ->
-                // Android MotionEvent gives real local pixel coordinates and
-                // consumes DOWN so parent vertical scrolling cannot capture
-                // the sound-design stroke. UP/CANCEL terminates cleanly.
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+            .pointerInput(Unit) {
+                // One stable Compose gesture owner consumes pointer changes
+                // in the Main pass before the enclosing vertical scroller.
+                // The first finger controls XY; extra fingers cannot steal it.
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val id = down.id
+                    fun publish(position: Offset) {
+                        if (!position.x.isFinite() || !position.y.isFinite()) return
                         touch(
-                            (event.x / touchWidthPx).coerceIn(0f, 1f),
-                            (1f - event.y / touchHeightPx).coerceIn(0f, 1f),
+                            (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                            (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
                         )
-                        true
                     }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL,
-                    MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> true
-                    else -> false
+                    publish(down.position)
+                    down.consume()
+                    // Only the first finger owns X/Y expression, while all
+                    // pointers are consumed until every finger lifts so the
+                    // enclosing editor cannot steal a secondary-pointer drag.
+                    var ownerActive = true
+                    var anyPressed = true
+                    while (anyPressed) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        val pointer = event.changes.firstOrNull { it.id == id }
+                        if (ownerActive && pointer?.pressed == true) publish(pointer.position)
+                        if (pointer != null && !pointer.pressed) ownerActive = false
+                        event.changes.forEach { change ->
+                            if (change.pressed || change.previousPressed) change.consume()
+                        }
+                        anyPressed = event.changes.any { it.pressed }
+                    }
                 }
             },
     ) {
