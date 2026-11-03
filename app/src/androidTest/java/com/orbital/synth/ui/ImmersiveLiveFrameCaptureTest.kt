@@ -84,18 +84,35 @@ class ImmersiveLiveFrameCaptureTest {
 
     /** True window focus is an OS/surface state; Compose semantics alone can be
      *  inspected while a launcher/system overlay owns the physical screen.
-     *  An 8-second wait covers transient emulator focus handoff, never an ANR
-     *  or an arbitrary foreign window. Real focus is required on every capture.
+     *  A bounded first-run wait covers Android's genuine immersive tutorial;
+     *  all other captures keep the original 8-second gate. Real foreground
+     *  focus is still required and no foreign dialog is dismissed.
      */
     private fun requireFocusedActivity(phase: String) {
         val decor = compose.activity.window.decorView
-        val deadline = SystemClock.uptimeMillis() + 8_000L
+        val waitMs = if (phase == "before idle stage framebuffer") 15_000L else 8_000L
+        val deadline = SystemClock.uptimeMillis() + waitMs
         var focused = false
+        var confirmedFirstRunTutorial = false
+        var lastTutorialProbeMs = 0L
         do {
             if (compose.activity.hasWindowFocus() && decor.isShown &&
                 decor.width >= 600 && decor.height >= 1000) {
                 focused = true
                 break
+            }
+            // On a fresh device SystemUI's genuine immersive tutorial can
+            // appear AFTER Compose enters FOCUS. A one-shot early check races
+            // its animation. During *only* the first FOCUS idle-frame wait,
+            // inspect that exact OS window every 500ms and click its actual
+            // AOSP confirmation button. Never acknowledge other overlays.
+            val nowMs = SystemClock.uptimeMillis()
+            if (phase == "before idle stage framebuffer" &&
+                !confirmedFirstRunTutorial && nowMs - lastTutorialProbeMs >= 500L) {
+                lastTutorialProbeMs = nowMs
+                confirmedFirstRunTutorial =
+                    AndroidImmersiveTutorial.acknowledgeOnlyIfSystemOverlayOwnsFocus()
+                if (confirmedFirstRunTutorial) Thread.sleep(250L)
             }
             Thread.sleep(125L)
         } while (SystemClock.uptimeMillis() < deadline)
@@ -116,7 +133,7 @@ class ImmersiveLiveFrameCaptureTest {
                 matches.joinToString(" | ").take(1250)
             }.getOrElse { "dumpsys window unavailable: " + it.javaClass.simpleName }
             throw AssertionError(
-                "Stage app Activity did not reacquire real foreground focus within 8s" +
+                "Stage app Activity did not reacquire real foreground focus within ${waitMs}ms" +
                     " during " + phase + "; hasWindowFocus=" + compose.activity.hasWindowFocus() +
                     "; decorShown=" + decor.isShown + "; size=" + decor.width + "x" + decor.height +
                     "; focusedWindows=" + details
@@ -151,6 +168,9 @@ class ImmersiveLiveFrameCaptureTest {
         compose.mainClock.advanceTimeBy(1_250L)
         compose.waitForIdle()
         Thread.sleep(1_150L)
+        // The bounded focused-Activity gate also acknowledges Android's
+        // one-time *real* SystemUI immersive tutorial if it appears late.
+        // The physical framebuffer remains required after focus recovery.
         requireFocusedActivity("before idle stage framebuffer")
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val idleBitmap = checkNotNull(automation.takeScreenshot()) {
