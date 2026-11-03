@@ -12,6 +12,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -88,6 +90,10 @@ fun ImmersiveVisualField(
     } else 0f
     val impact = remember { Animatable(1f) }
     val audioImpact = remember { Animatable(1f) }
+    // A tap is a moment in space. Preserve its origin while the finger releases
+    // and stage defaults recenter; the light ripple must not teleport.
+    var tapX by remember { mutableFloatStateOf(.5f) }
+    var tapY by remember { mutableFloatStateOf(.5f) }
     // Rising-edge threshold avoids restarting/cancelling the 620 ms animation
     // on every 30 Hz meter update (which would leave a stuck transient ring).
     val transientHit = pcm.transient > .30f
@@ -128,6 +134,8 @@ fun ImmersiveVisualField(
     }
     LaunchedEffect(pulse) {
         if (pulse > 0L && animationsEnabled) {
+            tapX = fingerX
+            tapY = fingerY
             impact.snapTo(0f)
             impact.animateTo(1f, tween(durationMillis = 850, easing = LinearEasing))
         } else {
@@ -155,6 +163,7 @@ fun ImmersiveVisualField(
         )
         val radius = shortEdge * (.265f + aperture * .045f) * (1f + pcm.radiusBoost)
         val touch = Offset(width * fingerX, height * fingerY)
+        val tapOrigin = Offset(width * tapX, height * tapY)
         val stroke = (shortEdge / 390f).coerceIn(.6f, 2.2f)
         val conduitEnergy = ImmersiveLightMath.conduitEnergy(pressure, pcm.rms, pcm.peak)
         val petalFlare = ImmersiveLightMath.petalFlare(pressure, pcm.rms, pcm.transient)
@@ -544,7 +553,7 @@ fun ImmersiveVisualField(
                 drawCircle(
                     color = (if (ring == 1) amber else cyan).copy(alpha = opacity * (.6f - ring * .14f)),
                     radius = r,
-                    center = touch,
+                    center = tapOrigin,
                     style = Stroke(width = (3.1f - ring * .7f) * stroke),
                 )
             }
@@ -561,7 +570,7 @@ fun ImmersiveVisualField(
             val useGesture = gestureBurst &&
                 (!pcmBurst || impact.value <= audioImpact.value)
             val progress = if (useGesture) impact.value else audioImpact.value
-            val origin = if (useGesture) touch else c
+            val origin = if (useGesture) tapOrigin else c
             val burstLevel = if (useGesture)
                 ImmersiveLightMath.burstEnergy(.86f, pcm.transient)
             else ImmersiveLightMath.burstEnergy(0f, pcm.transient)
