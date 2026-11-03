@@ -14,6 +14,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
@@ -81,8 +82,8 @@ class ReferenceHolographicControlBusInstrumentedTest {
         compose.onNodeWithTag("referenceKnobWAVE")
             .assertIsDisplayed().performTouchInput {
                 swipe(
-                    start = center + Offset(0f, size.height * .23f),
-                    end = center - Offset(0f, size.height * .23f),
+                    start = center + Offset(0f, height.toFloat() * .23f),
+                    end = center - Offset(0f, height.toFloat() * .23f),
                     durationMillis = 310,
                 )
             }
@@ -110,7 +111,7 @@ class ReferenceHolographicControlBusInstrumentedTest {
         )
     }
 
-    @Test fun 350dpLandscapeNeverMountsDecorativePortraitBusOrDisturbsPinnedPiano() {
+    @Test fun compact350dpLandscapeNeverMountsDecorativePortraitBusOrDisturbsPinnedPiano() {
         compose.setContent {
             Box(Modifier.width(360.dp).height(350.dp)) {
                 OrbitalScreen(
