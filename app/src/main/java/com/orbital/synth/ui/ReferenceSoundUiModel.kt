@@ -62,18 +62,18 @@ internal object ReferenceSoundUiModel {
     fun lfoAt(shape: LfoShape, position: Float): Float {
         val t = normalized(position)
         val cycle = t * 2f
-        return when {
-            shape.name.contains("TRI", ignoreCase = true) ->
-                1f - 4f * abs(t - .5f)
-            shape.name.contains("SAW", ignoreCase = true) -> 2f * t - 1f
-            shape.name.contains("PULSE", ignoreCase = true) ||
-                shape.name.contains("SQUARE", ignoreCase = true) ->
-                if (t < .5f) 1f else -1f
-            shape.name.contains("HOLD", ignoreCase = true) ||
-                shape.name.contains("STEP", ignoreCase = true) ->
-                (intArrayOf(-1, 0, 1, 0, 1, -1, 1, -1)
-                    [(floor(t * 7.9999f)).toInt().coerceIn(0, 7)]).toFloat()
-            else -> sin(cycle * Math.PI.toFloat())
+        return when (shape) {
+            LfoShape.SINE -> sin(cycle * Math.PI.toFloat())
+            LfoShape.TRIANGLE -> 1f - 4f * abs(t - .5f)
+            LfoShape.SAW_UP -> 2f * t - 1f
+            LfoShape.SAW_DOWN -> 1f - 2f * t
+            LfoShape.SQUARE -> if (t < .5f) 1f else -1f
+            // Deliberate fixed, labeled configuration sketch; stochastic
+            // output samples cannot be reconstructed from saved settings.
+            LfoShape.SAMPLE_HOLD -> {
+                val steps = intArrayOf(-1, 0, 1, 0, 1, -1, 1, -1)
+                steps[floor(t * 7.9999f).toInt().coerceIn(0, steps.lastIndex)].toFloat()
+            }
         }.coerceIn(-1f, 1f)
     }
 
