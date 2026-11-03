@@ -94,6 +94,12 @@ class OrbitalSynth(
     // UI edits publish fixed-size immutable route/LFO snapshots. Only the audio
     // worker touches the running modulation clocks and destination slews.
     private val liveModulation = LiveModulationHost(sampleRate)
+    // The rack itself ticks every sample; costly per-voice tan() targets are
+    // refreshed at ~800 Hz, then interpolated by all filters at audio rate.
+    // This cadence is continuous across render block sizes.
+    private val filterControlInterval = max(1, sampleRate / 800)
+    private var filterControlFrame = 0
+    private var wasFilterRoutingActive = false
     private val events = ConcurrentLinkedQueue<Event>()
     // Preallocate every held-key record. Render-thread event handling uses primitive
     // storage only: source IDs never create maps/objects or acquire locks in audio.
@@ -222,8 +228,8 @@ class OrbitalSynth(
 
     /**
      * Freely route any of eight LFOs, touch/pressure expression or other
-     * modulator sources. Current real-time audio targets are MORPH and PITCH;
-     * other typed destinations are reserved for following sound-engine work.
+     * modulator sources. Real audio targets: MORPH, PITCH, CUTOFF,
+     * RESONANCE, AMP and PAN. All other typed targets remain reserved.
      * Edits replace bounded atomic snapshots (no unbounded event queue).
      */
     fun setModulationRoute(
@@ -382,7 +388,13 @@ class OrbitalSynth(
         val lfoIncrement = lfoHz / sampleRate
         val modulationDepth = movement * lfoDepth
         // Bypass the entire new mod clock on legacy patches with zero routes.
-        val modulationEnabled = liveModulation.syncBlock(morph)
+        val modulationEnabled = liveModulation.syncBlock(morph, cutoff, resonance)
+        val filterRoutingActive = modulationEnabled && liveModulation.filterRouteActive
+        if (filterRoutingActive != wasFilterRoutingActive) {
+            // First update happens immediately when the user plugs a new cable.
+            filterControlFrame = 0
+            wasFilterRoutingActive = filterRoutingActive
+        }
 
         for (slot in 0 until oscillatorSlotCount) {
             blockOscillatorSlots[slot] = oscillatorSlots.get(slot)
@@ -391,10 +403,11 @@ class OrbitalSynth(
             for (slot in 0 until oscillatorSlotCount) {
                 voice.configureOscillatorSlot(slot, blockOscillatorSlots[slot])
             }
-            voice.configure(attackSec, decaySec, sustain, releaseSec, cutoffHz, resonance)
+            voice.configure(attackSec, decaySec, sustain, releaseSec,
+                cutoffHz, resonance, updateFilter = !filterRoutingActive)
             voice.configureUnison(unison, detune)
             voice.configureEngine(engineModel, character, cutoffHz.toFloat(),
-                resonance, wave, morph)
+                resonance, wave, morph, updateFilter = !filterRoutingActive)
         }
         drainEvents(glideSec, wave, morph)
         for (slot in 0 until fxSlotCount) {
@@ -455,6 +468,7 @@ class OrbitalSynth(
             }
             // Keep configured free-running LFOs in time without 8x trigonometry.
             if (modulationEnabled) liveModulation.advanceSilence(frames)
+            filterControlFrame = (filterControlFrame + frames) % filterControlInterval
             // Delay/chorus memory can remain audible after all held voices stop.
             // Keep rendering only the modular chain on silence, with no voice or
             // trigonometric voice-LFO work, until its wet/bypass tails retire.
@@ -476,6 +490,17 @@ class OrbitalSynth(
             if (lfoPhase >= 1.0) lfoPhase -= 1.0
 
             if (modulationEnabled) liveModulation.tick()
+            if (filterRoutingActive && filterControlFrame == 0) {
+                // Consume all 64 summed cables and let the real SVF/ladder/SEM
+                // pole slews work continuously between bounded target updates.
+                val hz = (45.0 * 2.0.pow(liveModulation.cutoff * 8.7))
+                    .coerceAtMost(sampleRate * 0.45)
+                for (voice in voices) {
+                    if (voice.active) voice.retargetFilter(hz, liveModulation.resonance)
+                }
+            }
+            filterControlFrame++
+            if (filterControlFrame >= filterControlInterval) filterControlFrame = 0
             val routedMorph = if (modulationEnabled) liveModulation.morph else morph
             val movingMorph = (routedMorph + lfo * modulationDepth * 0.35f).coerceIn(0f, 1f)
             val vibratoSemitones = (lfo * modulationDepth * 0.5).toDouble()
@@ -493,6 +518,15 @@ class OrbitalSynth(
                     left += sample * voice.panLeft
                     right += sample * voice.panRight
                 }
+            }
+            if (modulationEnabled &&
+                (liveModulation.ampRouteActive || liveModulation.panRouteActive)) {
+                val gain = if (liveModulation.ampRouteActive) liveModulation.ampGain else 1f
+                val pan = if (liveModulation.panRouteActive) liveModulation.panOffset else 0f
+                // Neutral exactly equals one, preserving the legacy stereo
+                // balance. Extreme negative/positive gestures mute right/left.
+                left *= gain * (if (pan > 0f) 1f - pan else 1f)
+                right *= gain * (if (pan < 0f) 1f + pan else 1f)
             }
             val dryLeft = softClip(left * smoothedMasterGain)
             val dryRight = softClip(right * smoothedMasterGain)
