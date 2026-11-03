@@ -5,11 +5,13 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -27,6 +29,24 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * A restarted pointer recognizer must ignore pre-existing held fingers; their
+ * movement is NOT a fresh note-down after octave/host audio panic.
+ * A new independent finger remains fully playable.
+ */
+internal class PianoFreshPointerAdmission {
+    private val admitted = HashSet<Long>()
+
+    fun observe(id: Long, pressed: Boolean, previouslyPressed: Boolean): Boolean {
+        if (!pressed) {
+            admitted.remove(id)
+            return false
+        }
+        if (!previouslyPressed) admitted.add(id)
+        return id in admitted
+    }
+}
 
 /** MIDI offsets for a diatonic white-key keyboard. */
 internal fun whiteKeyOffset(index: Int): Int {
@@ -88,31 +108,45 @@ internal fun OrbitalKeyboard(
     onNoteOff: (Int) -> Unit,
     modifier: Modifier = Modifier,
     preferredHeight: androidx.compose.ui.unit.Dp? = null,
+    /** Bump when the audio host invalidates held TOUCH voices without a finger up. */
+    performanceResetEpoch: Long = 0L,
 ) {
-    val noteOn by rememberUpdatedState(onNoteOn)
-    val noteOff by rememberUpdatedState(onNoteOff)
-    val pressedCounts = remember { mutableStateMapOf<Int, Int>() }
+    val noteOnNow by rememberUpdatedState(onNoteOn)
+    val noteOffNow by rememberUpdatedState(onNoteOff)
+    val owners = remember { ReferenceKeybedNoteOwnership() }
+    var ownerRevision by remember { mutableIntStateOf(0) }
+    val activeNotes = remember(ownerRevision) { owners.activeNotes }
     val accessibilityScope = rememberCoroutineScope()
 
-    // Share note ownership between simultaneous fingers and TalkBack actions.
-    // A key is released only after its last owner lets go.
-    fun pressNote(note: Int) {
-        val holders = pressedCounts[note] ?: 0
-        if (holders == 0) noteOn(note)
-        pressedCounts[note] = holders + 1
+    // Every finger and TalkBack action owns one token, not merely a pitch.
+    // The first owner of a note captures the release callback of its host.
+    fun pressNote(note: Int): Long {
+        val onForHost = noteOnNow
+        val offForHost = noteOffNow
+        val token = owners.acquire(
+            note = note,
+            onAttack = { onForHost(note) },
+            onRelease = offForHost,
+        )
+        ownerRevision++
+        return token
     }
-    fun releaseNote(note: Int) {
-        val holders = pressedCounts[note] ?: return
-        if (holders <= 1) {
-            pressedCounts.remove(note)
-            noteOff(note)
-        } else {
-            pressedCounts[note] = holders - 1
-        }
+
+    fun releaseOwner(token: Long) {
+        if (owners.release(token)) ownerRevision++
+    }
+
+    fun releaseAllOwned() {
+        if (owners.releaseAll() > 0) ownerRevision++
     }
 
     BoxWithConstraints(modifier) {
         val whiteCount = if (maxWidth >= 560.dp) 15 else 8
+        // Host panic, octave changes, or 8/15-key width changes must flush
+        // locally held owners; old delayed accessibility jobs become no-ops.
+        DisposableEffect(octave, whiteCount, performanceResetEpoch) {
+            onDispose { releaseAllOwned() }
+        }
         Canvas(
             Modifier
                 .fillMaxWidth()
@@ -121,28 +155,35 @@ internal fun OrbitalKeyboard(
                     contentDescription = "Multitouch piano keyboard. Swipe across keys to play; use OCT buttons to change range."
                     customActions = keyboardAccessibleNotes(whiteCount, octave).map { (note, label) ->
                         CustomAccessibilityAction(label) {
-                            pressNote(note)
+                            val token = pressNote(note)
                             accessibilityScope.launch {
                                 try {
                                     delay(300)
                                 } finally {
-                                    releaseNote(note)
+                                    releaseOwner(token)
                                 }
                             }
                             true
                         }
                     }
                 }
-                .pointerInput(octave, whiteCount) {
+                .pointerInput(octave, whiteCount, performanceResetEpoch) {
                     awaitPointerEventScope {
-                        val pointerToNote = mutableMapOf<PointerId, Int>()
-                        // All owners use the same reference-counted note lifecycle.
+                        val pointerToOwner = mutableMapOf<PointerId, Pair<Int, Long>>()
+                        val freshPointers = PianoFreshPointerAdmission()
                         try {
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
                                 for (change in event.changes) {
-                                    val previous = pointerToNote[change.id]
-                                    val next = if (change.pressed) {
+                                    // Finger movement after host panic/octave
+                                    // restart must NEVER reattack without down.
+                                    val admitted = freshPointers.observe(
+                                        change.id.value,
+                                        change.pressed,
+                                        change.previousPressed,
+                                    )
+                                    val previous = pointerToOwner[change.id]
+                                    val next = if (change.pressed && admitted) {
                                         keyboardHitNote(
                                             change.position.x,
                                             change.position.y,
@@ -152,18 +193,21 @@ internal fun OrbitalKeyboard(
                                             octave,
                                         )
                                     } else null
-                                    if (previous != next) {
-                                        if (previous != null) releaseNote(previous)
-                                        if (next != null) pressNote(next)
-                                        if (next == null) pointerToNote.remove(change.id)
-                                        else pointerToNote[change.id] = next
+                                    if (previous?.first != next) {
+                                        if (previous != null) releaseOwner(previous.second)
+                                        if (next == null) pointerToOwner.remove(change.id)
+                                        else pointerToOwner[change.id] = next to pressNote(next)
                                     }
-                                    if (change.pressed || previous != null) change.consume()
+                                    if ((change.pressed && admitted) || previous != null) {
+                                        change.consume()
+                                    }
                                 }
                             }
                         } finally {
-                            pointerToNote.values.toList().forEach { releaseNote(it) }
-                            pointerToNote.clear()
+                            pointerToOwner.values.toList().forEach {
+                                releaseOwner(it.second)
+                            }
+                            pointerToOwner.clear()
                         }
                     }
                 },
@@ -182,7 +226,7 @@ internal fun OrbitalKeyboard(
             )
             for (i in 0 until whiteCount) {
                 val note = (octave + 1) * 12 + whiteKeyOffset(i)
-                val active = pressedCounts.containsKey(note)
+                val active = note in activeNotes
                 val tint = when (i % 7) {
                     0, 4 -> OrbitalPalette.Cyan
                     2, 5 -> OrbitalPalette.Blue
@@ -234,7 +278,7 @@ internal fun OrbitalKeyboard(
             for (i in 0 until whiteCount - 1) {
                 if (whiteKeyOffset(i) % 12 !in intArrayOf(0, 2, 5, 7, 9)) continue
                 val note = (octave + 1) * 12 + whiteKeyOffset(i) + 1
-                val active = pressedCounts.containsKey(note)
+                val active = note in activeNotes
                 val w = keyWidth * .64f
                 val left = (i + 1) * keyWidth - w / 2f
                 drawRoundRect(
