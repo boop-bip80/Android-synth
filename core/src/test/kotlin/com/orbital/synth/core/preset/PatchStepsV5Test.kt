@@ -52,6 +52,16 @@ class PatchStepsV5Test {
         assertEquals(patch, PatchCodec.decode(text))
         assertEquals(text, PatchCodec.encode(PatchCodec.decode(text)))
         assertEquals(fx, PatchCodec.decode(text).fxSlots)
+        // V4 FX palette is append-only; prove V5 patch recall retains every FX enum
+        // by its stable name, including modules beyond the six live FX slots.
+        for (type in FxModuleType.entries) {
+            val fxOnly = patch.copy(
+                fxSlots = listOf(FxModuleConfig(type = type, enabled = true, wet = .4f)),
+            )
+            val encoded = PatchCodec.encode(fxOnly)
+            assertTrue("Missing FX type ${type.name}", encoded.contains("fx.0=${type.name},"))
+            assertEquals("V5 corrupted FX type ${type.name}", fxOnly, PatchCodec.decode(encoded))
+        }
     }
 
     @Test fun v1V2V3AndV4KeepTheirWireHeadersWithoutStepFields() {
