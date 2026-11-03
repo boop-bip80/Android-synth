@@ -62,6 +62,8 @@ fun ImmersiveVisualField(
     audioHighBand: Float = 0f,
     /** Avoid expensive strokes after the hosting focus layer has fully faded. */
     skipArtwork: Boolean = false,
+    /** Visual-only speed measured from real pointer delta/time; never force touch. */
+    touchFlickEnergy: Float = 0f,
 ) {
     fun normalized(value: Float, fallback: Float): Float =
         if (value.isFinite()) value.coerceIn(0f, 1f) else fallback
@@ -73,6 +75,7 @@ fun ImmersiveVisualField(
     val fingerX = normalized(touchX, .5f)
     val fingerY = normalized(touchY, .5f)
     val pressure = normalized(touchIntensity, 0f)
+    val flick = normalized(touchFlickEnergy, 0f)
     // Actual output-PCM meter; optional args preserve original old-host visuals.
     val pcm = remember(
         audioRms, audioPeak, audioTransient, audioBrightness,
@@ -171,7 +174,8 @@ fun ImmersiveVisualField(
         val amber = Color(0xFFFFD58A)
         val ink = Color(0xFF010207)
         val turn = (2.0 * PI).toFloat()
-        val energy = (.58f + pressure * .42f + pcm.energyBoost).coerceAtMost(1.18f)
+        val energy = (.58f + pressure * .42f + pcm.energyBoost +
+            flick * .15f).coerceAtMost(1.18f)
         // The SAME accepted-PCM loudness can produce different *geometry*:
         // low notes open warm gold apertures; mid bands braid purple volumes;
         // highs tighten fast cyan filaments. Zero telemetry preserves old artwork.
@@ -187,8 +191,10 @@ fun ImmersiveVisualField(
         val touch = Offset(width * fingerX, height * fingerY)
         val tapOrigin = Offset(width * tapX, height * tapY)
         val stroke = (shortEdge / 390f).coerceIn(.6f, 2.2f)
-        val conduitEnergy = ImmersiveLightMath.conduitEnergy(pressure, pcm.rms, pcm.peak)
-        val petalFlare = ImmersiveLightMath.petalFlare(pressure, pcm.rms, pcm.transient)
+        val conduitEnergy = (ImmersiveLightMath.conduitEnergy(pressure, pcm.rms, pcm.peak) *
+            (1f + flick * .45f)).coerceAtMost(1.3f)
+        val petalFlare = (ImmersiveLightMath.petalFlare(pressure, pcm.rms, pcm.transient) +
+            flick * .24f).coerceAtMost(1.25f)
         val chroma = ImmersiveLightMath.chromaBlend(pcm.brightness, aperture)
         val livingHue = androidx.compose.ui.graphics.lerp(
             ultraviolet, cyan, (chroma + pcm.highCyan * .20f - pcm.midViolet * .14f).coerceIn(0f, 1f),
@@ -232,7 +238,8 @@ fun ImmersiveVisualField(
                 val bend = sin(u * turn * (1.25f + timbre + pcm.highCyan * .82f) +
                     animatedPhase * turn + band * .83f + motion * 2.4f)
                 val y = height * (.15f + band * .145f) +
-                    bend * shortEdge * (.035f + band * .003f) * braid
+                    bend * shortEdge * (.035f + band * .003f) * braid *
+                    (1f + flick * .24f)
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
             val tint = when (band % 3) {
@@ -295,14 +302,15 @@ fun ImmersiveVisualField(
         // the orbital shell. Their size responds to REAL PCM level/transient and
         // held-touch intensity; they disappear during idle silence. Each petal
         // draws a wide low-alpha bloom plus two crisp interference filaments.
-        if (pressure > .01f || pcm.rms > .018f || pcm.transient > .04f) {
+        if (pressure > .01f || flick > .012f || pcm.rms > .018f || pcm.transient > .04f) {
             val phase = if (animationsEnabled) animatedPhase * turn * .085f else 0f
             for (petal in 0 until ImmersiveLightMath.PETAL_COUNT) {
                 val a = turn * petal / ImmersiveLightMath.PETAL_COUNT + phase +
                     timbre * .22f
                 val span = .20f + focus * .16f + pcm.midViolet * .065f
                 val inner = radius * (.66f + aperture * .10f)
-                val outer = radius * (1.36f + petalFlare * .28f + pcm.lowGold * .12f)
+                val outer = radius * (1.36f + petalFlare * .28f +
+                    pcm.lowGold * .12f + flick * .10f)
                 val begin = c + Offset(cos(a) * inner, sin(a) * inner * .78f)
                 val tipA = a + span
                 val tip = c + Offset(cos(tipA) * outer, sin(tipA) * outer * .78f)
@@ -388,7 +396,7 @@ fun ImmersiveVisualField(
                 val start = c + tangent * (lane * radius * .08f)
                 val end = touch + tangent * (lane * shortEdge * .009f)
                 val twist = sin(animatedPhase * turn * .62f + strand * .79f + timbre * 3.1f) *
-                    shortEdge * (.022f + motion * .02f)
+                    shortEdge * (.022f + motion * .02f + flick * .014f)
                 val ctrl1 = c + touchToCore * .28f + tangent * (lane * radius * .22f + twist)
                 val ctrl2 = c + touchToCore * .72f -
                     tangent * (lane * radius * .12f + twist * .48f)
@@ -414,7 +422,8 @@ fun ImmersiveVisualField(
         // Live timbre ribbons: phase and fold depend on the controls, not random noise.
         // 8 x 96 points is a bounded amount of geometry even on small/old phones.
         val t = animatedPhase * turn
-        val wobbleFrequency = 2.5f + timbre * 4.5f + pcm.highCyan * 2.8f
+        val wobbleFrequency = 2.5f + timbre * 4.5f +
+            pcm.highCyan * 2.8f + flick * 1.5f
         for (layer in 0 until 8) {
             val line = Path()
             for (i in ImmersiveFieldGeometry.orbit.indices) {
