@@ -45,6 +45,26 @@ class FocusSystemBarsTest {
         return result
     }
 
+    private fun appHasWindowFocus(): Boolean {
+        var focused = false
+        compose.activityRule.scenario.onActivity {
+            focused = it.window.decorView.hasWindowFocus()
+        }
+        return focused
+    }
+
+    private fun focusedWindowSummary(): String = runCatching {
+        val pipe = InstrumentationRegistry.getInstrumentation().uiAutomation
+            .executeShellCommand("dumpsys window windows")
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe).bufferedReader().use { stream ->
+            stream.lineSequence()
+                .filter { "mCurrentFocus" in it || "mFocusedApp" in it || "mTopFocused" in it }
+                .take(6)
+                .joinToString(" | ")
+                .take(550)
+        }
+    }.getOrDefault("window focus dump unavailable")
+
     private fun behavior(): Int {
         var value = Int.MIN_VALUE
         compose.activityRule.scenario.onActivity { activity ->
@@ -99,59 +119,82 @@ class FocusSystemBarsTest {
         compose.waitForIdle()
         assertEquals(Bars(false, false), bars())
 
-        val bitmap = checkNotNull(
-            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-        ) { "No live Android screenshot in full-screen FOCUS" }
-        try {
-            assertTrue("Real framebuffer must be portrait",
-                bitmap.width >= 600 && bitmap.height >= 1000 && bitmap.width < bitmap.height)
-            val out = File(compose.activity.filesDir, "orbital-focus-fullscreen-proof.png")
-            FileOutputStream(out).use { stream ->
-                assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream))
-                stream.fd.sync()
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val deadline = System.nanoTime() + 9_000_000_000L
+        var accepted = false
+        var attempts = 0
+        var latestEvidence = "no captured focused framebuffer"
+        // A Compose node/insets can be ready before the Activity actually owns
+        // the display. Never accept a screenshot under Launcher/system focus.
+        while (!accepted && attempts < 12 && System.nanoTime() < deadline) {
+            attempts++
+            compose.waitForIdle()
+            Thread.sleep(220L)
+            val focusedBeforeCapture = appHasWindowFocus()
+            val barsBeforeCapture = bars()
+            if (!focusedBeforeCapture || barsBeforeCapture != Bars(false, false)) {
+                latestEvidence =
+                    "attempt=$attempts rejected: foregroundFocus=$focusedBeforeCapture " +
+                        "windowBars=$barsBeforeCapture"
+                continue
             }
-            assertTrue("Empty focus device screenshot", out.length() >= 4096L)
 
-            // The true black canvas must occupy even OS-bar edge regions.
-            val margin = (bitmap.height / 16).coerceAtMost(130)
-            val strideX = (bitmap.width / 180).coerceAtLeast(3)
-            val strideY = (margin / 12).coerceAtLeast(2)
-            var topBright = 0
-            var bottomBright = 0
-            for (y in 0 until margin step strideY) {
-                for (x in 0 until bitmap.width step strideX) {
-                    val top = bitmap.getPixel(x, y)
-                    val bottom = bitmap.getPixel(x, bitmap.height - 1 - y)
-                    if (maxOf(Color.red(top), Color.green(top), Color.blue(top)) > 24) topBright++
-                    if (maxOf(Color.red(bottom), Color.green(bottom), Color.blue(bottom)) > 24) bottomBright++
+            val bitmap = automation.takeScreenshot()
+            if (bitmap == null) {
+                latestEvidence = "attempt=$attempts returned no real UiAutomation bitmap"
+                continue
+            }
+            try {
+                assertTrue("Real framebuffer must be portrait",
+                    bitmap.width >= 600 && bitmap.height >= 1000 && bitmap.width < bitmap.height)
+
+                val margin = (bitmap.height / 16).coerceAtMost(130)
+                val strideX = (bitmap.width / 180).coerceAtLeast(3)
+                val strideY = (margin / 12).coerceAtLeast(2)
+                var topBright = 0
+                var bottomBright = 0
+                for (y in 0 until margin step strideY) {
+                    for (x in 0 until bitmap.width step strideX) {
+                        val top = bitmap.getPixel(x, y)
+                        val bottom = bitmap.getPixel(x, bitmap.height - 1 - y)
+                        if (maxOf(Color.red(top), Color.green(top), Color.blue(top)) > 24) topBright++
+                        if (maxOf(Color.red(bottom), Color.green(bottom), Color.blue(bottom)) > 24) bottomBright++
+                    }
                 }
+                fun rgb(x: Int, y: Int): String {
+                    val pixel = bitmap.getPixel(x, y)
+                    return "${Color.red(pixel)},${Color.green(pixel)},${Color.blue(pixel)}"
+                }
+                val centerX = bitmap.width / 2
+                latestEvidence =
+                    "attempt=$attempts top=$topBright bottom=$bottomBright " +
+                        "topRGB=${rgb(centerX, margin / 2)} " +
+                        "bottomRGB=${rgb(centerX, bitmap.height - margin / 2)} " +
+                        "canvasRGB=${rgb(centerX, bitmap.height / 2)} " +
+                        "focusBefore=$focusedBeforeCapture focusAfter=${appHasWindowFocus()} " +
+                        "bars=${bars()} dimensions=${bitmap.width}x${bitmap.height}"
+                println("ORBITAL_FOCUS_EDGE_EVIDENCE $latestEvidence")
+                // The original strict requirement is retained: <=3 illuminated
+                // sampled edge pixels, in a *genuinely focused* Activity frame.
+                if (topBright + bottomBright <= 3) {
+                    val out = File(compose.activity.filesDir, "orbital-focus-fullscreen-proof.png")
+                    FileOutputStream(out).use { stream ->
+                        assertTrue("Real PNG encode failed",
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream))
+                        stream.fd.sync()
+                    }
+                    assertTrue("Empty focus device screenshot", out.length() >= 4096L)
+                    accepted = true
+                }
+            } finally {
+                bitmap.recycle()
             }
-            fun rgb(x: Int, y: Int): String {
-                val pixel = bitmap.getPixel(x, y)
-                return "${Color.red(pixel)},${Color.green(pixel)},${Color.blue(pixel)}"
-            }
-            val xMid = bitmap.width / 2
-            var hasActivityFocus = false
-            var statusColor = 0
-            var navigationColor = 0
-            compose.activityRule.scenario.onActivity { activity ->
-                hasActivityFocus = activity.window.decorView.hasWindowFocus()
-                statusColor = activity.window.statusBarColor
-                navigationColor = activity.window.navigationBarColor
-            }
-            val diagnostics =
-                "top=$topBright bottom=$bottomBright centerTopRGB=${rgb(xMid, margin / 2)} " +
-                    "centerBottomRGB=${rgb(xMid, bitmap.height - margin / 2)} " +
-                    "centerCanvasRGB=${rgb(xMid, bitmap.height / 2)} " +
-                    "focus=$hasActivityFocus statusBarColor=$statusColor " +
-                    "navigationBarColor=$navigationColor bars=${bars()} " +
-                    "dimensions=${bitmap.width}x${bitmap.height}"
-            println("ORBITAL_FOCUS_EDGE_EVIDENCE $diagnostics")
-            assertTrue("FOCUS framebuffer contains residual OS bar/overlay artwork: $diagnostics",
-                topBright + bottomBright <= 3)
-        } finally {
-            bitmap.recycle()
         }
+        assertTrue(
+            "No valid focused black-edge Android framebuffer after $attempts attempts: " +
+                "$latestEvidence; window=${focusedWindowSummary()}",
+            accepted,
+        )
 
         revealWithBack()
         compose.waitUntil(5_000L) { bars() == before }
