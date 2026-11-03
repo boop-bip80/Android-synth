@@ -1,0 +1,70 @@
+name: Diagnostic - luminous wave editor real touch (single API35 method)
+
+on:
+  push:
+    branches:
+      - feature/luminous-wave-editor-20261103
+
+permissions:
+  contents: read
+
+concurrency:
+  group: luminous-wave-single-method
+  cancel-in-progress: true
+
+jobs:
+  isolated-real-touch:
+    name: Fresh API35 oscillator 70dp TalkBack and finger validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Install required Android SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile BOTH Android APKs before starting emulator
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --stacktrace
+          mkdir -p artifacts/luminous-app-apk artifacts/luminous-test-apk
+          cp app/build/outputs/apk/debug/*.apk artifacts/luminous-app-apk/
+          cp app/build/outputs/apk/androidTest/debug/*.apk artifacts/luminous-test-apk/
+          test -n "$(find artifacts/luminous-app-apk -name '*.apk' -print -quit)"
+          test -n "$(find artifacts/luminous-test-apk -name '*.apk' -print -quit)"
+          bash -n .github/workflows/ci-luminous-gesture.sh
+      - name: Enable KVM for fresh Android emulator
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Only this real Compose method on a fresh API35 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 2
+          ram-size: 3072M
+          heap-size: 512M
+          disk-size: 4000M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
+          script: bash .github/workflows/ci-luminous-gesture.sh
+      - name: Preserve untouched Android instrumentation result and logcat
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-luminous-cold-single-method-evidence
+          path: |
+            artifacts/luminous-probe-*.txt
+            artifacts/luminous-probe-logcat.txt
+          if-no-files-found: warn
+          retention-days: 7
