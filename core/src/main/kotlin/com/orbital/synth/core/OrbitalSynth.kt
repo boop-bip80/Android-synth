@@ -221,6 +221,10 @@ class OrbitalSynth(
 
     fun modulationRoute(slot: Int): ModulationRouteConfig = liveModulation.route(slot)
 
+    /** Restore a disabled route without discarding its editable source and depth. */
+    fun setModulationRouteConfig(slot: Int, config: ModulationRouteConfig) =
+        liveModulation.setRouteConfig(slot, config)
+
     fun setModulationLfo(
         slot: Int, enabled: Boolean, shape: LfoShape,
         rateHz: Float = 1f, beatsPerCycle: Float = 0f,
@@ -230,6 +234,8 @@ class OrbitalSynth(
     fun modulationLfo(slot: Int): ModulationLfoConfig = liveModulation.lfo(slot)
 
     fun setModulationTempoBpm(bpm: Float) = liveModulation.setTempoBpm(bpm)
+
+    val modulationTempoBpm: Float get() = liveModulation.tempoBpm()
 
     /** Latest bounded bipolar value for touch X/Y/pressure, macros and MIDI. */
     fun setModulationSource(source: ModSource, bipolarValue: Float) =
