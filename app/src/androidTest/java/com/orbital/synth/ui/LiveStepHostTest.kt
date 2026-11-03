@@ -10,6 +10,7 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
@@ -165,10 +166,16 @@ class MainActivityStepHostTest {
                 .single()
             assertTrue("Actual MainActivity STEP touch did not update live state: " + changed,
                 changed.contains("STEP pad 1") && changed.contains("-0."))
+            // The connected host must also arm the real STEP clock and retain
+            // that source state while the keyboardless performance view owns UI.
+            compose.onNodeWithContentDescription("Toggle STEP modulator")
+                .performScrollTo().performClick()
+            compose.onNodeWithText("STEP CLOCK ARMED", substring = true).assertExists()
             compose.onNodeWithTag("immersiveModeToggle").performClick()
             compose.onNodeWithTag("immersiveStage").assertExists()
             compose.onNodeWithTag("immersiveExit").performClick()
             compose.onNodeWithTag("modStepRhythmPanel").assertExists()
+            compose.onNodeWithText("STEP CLOCK ARMED", substring = true).assertExists()
             val returned = compose.onNodeWithTag("modStepPad0")
                 .fetchSemanticsNode().config[SemanticsProperties.ContentDescription]
                 .single()
