@@ -75,6 +75,8 @@ fun OscillatorRackPanel(
     slots: List<OscillatorSlot>,
     onSlotChange: (index: Int, next: OscillatorSlot) -> Unit,
     modifier: Modifier = Modifier,
+    /** Hide only decorative header/padding in the 350dp landscape editor. */
+    compact: Boolean = false,
 ) {
     if (slots.isEmpty()) return
     var selectedLayer by remember { mutableIntStateOf(0) }
@@ -94,33 +96,37 @@ fun OscillatorRackPanel(
                 ),
                 RoundedCornerShape(19.dp),
             )
-            .padding(horizontal = 11.dp, vertical = 13.dp),
-        verticalArrangement = Arrangement.spacedBy(11.dp),
+            .padding(
+                horizontal = if (compact) 7.dp else 11.dp,
+                vertical = if (compact) 4.dp else 13.dp,
+            ),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 11.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
+        if (!compact) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "OSCILLATOR CONSTELLATION",
+                        color = OrbitalPalette.Cyan,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.25.sp,
+                    )
+                    Text(
+                        "EXPAND THE SOUND / INDEPENDENT LAYERS",
+                        color = OrbitalPalette.Muted,
+                        fontSize = 8.sp,
+                        letterSpacing = .9.sp,
+                    )
+                }
                 Text(
-                    "OSCILLATOR CONSTELLATION",
-                    color = OrbitalPalette.Cyan,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.25.sp,
-                )
-                Text(
-                    "EXPAND THE SOUND / INDEPENDENT LAYERS",
-                    color = OrbitalPalette.Muted,
-                    fontSize = 8.sp,
-                    letterSpacing = .9.sp,
+                    activeCount.toString() + " / " + slots.size,
+                    color = OrbitalPalette.Gold,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
-            Text(
-                activeCount.toString() + " / " + slots.size,
-                color = OrbitalPalette.Gold,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
         }
-
         Row(
             Modifier.fillMaxWidth()
                 .horizontalScroll(rememberScrollState())

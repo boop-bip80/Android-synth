@@ -1,6 +1,13 @@
 package com.orbital.synth.ui
 
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Color as PixelColor
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import kotlin.math.roundToInt
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.assertIsDisplayed
@@ -78,6 +85,61 @@ class ReferenceSoundHostIntegrationTest {
                 "decorFocus=${compose.activity.hasWindowFocus()} observed=$foreground",
             foreground.isRealMainActivityForeground,
         )
+        // Prove this exact ActivityScenario instance owns the *foreground*
+        // window, not merely another MainActivity from an earlier test. A
+        // nonfocusable View adds a tiny unique pixel probe to the existing
+        // production Compose window; no setContent(), no fake audio, no second
+        // synth. After real UiAutomation screenshot verification it is removed
+        // before any SOUND gestures or screenshot assertions run.
+        val marker = View(compose.activity).apply {
+            setBackgroundColor(PixelColor.MAGENTA)
+            isFocusable = false
+            isClickable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val markerPx = (20f * compose.activity.resources.displayMetrics.density)
+            .roundToInt().coerceAtLeast(20)
+        compose.activityRule.scenario.onActivity { activity ->
+            activity.addContentView(
+                marker,
+                FrameLayout.LayoutParams(
+                    markerPx, markerPx, Gravity.END or Gravity.BOTTOM,
+                ),
+            )
+        }
+        var physicalMarkerPixels = 0
+        try {
+            for (attempt in 0 until 6) {
+                val frame: Bitmap? = foregroundAutomation.takeScreenshot()
+                if (frame != null) {
+                    var matched = 0
+                    for (y in (frame.height * .78f).toInt() until frame.height step 2) {
+                        for (x in (frame.width * .82f).toInt() until frame.width step 2) {
+                            val pixel = frame.getPixel(x, y)
+                            if (PixelColor.red(pixel) >= 245 &&
+                                PixelColor.green(pixel) <= 10 &&
+                                PixelColor.blue(pixel) >= 245
+                            ) matched++
+                        }
+                    }
+                    frame.recycle()
+                    physicalMarkerPixels = maxOf(physicalMarkerPixels, matched)
+                    if (physicalMarkerPixels >= 50) break
+                }
+                Thread.sleep(180L)
+            }
+            assertTrue(
+                "A different MainActivity owns SurfaceFlinger: this exact " +
+                    "AudioTrack-backed test Activity marker absent from real " +
+                    "bottom-right pixels; count=$physicalMarkerPixels OS=$foreground",
+                physicalMarkerPixels >= 50,
+            )
+        } finally {
+            compose.activityRule.scenario.onActivity {
+                (marker.parent as? ViewGroup)?.removeView(marker)
+            }
+        }
+        println("REFERENCE_HOST_INSTANCE_PIXEL_PROOF count=$physicalMarkerPixels")
         compose.onNodeWithTag("referenceSoundHero").assertExists()
         compose.onNodeWithTag("referenceSoundHeroOrb").assertIsDisplayed()
         compose.onNodeWithTag("orbitalPlasmaField").assertExists()

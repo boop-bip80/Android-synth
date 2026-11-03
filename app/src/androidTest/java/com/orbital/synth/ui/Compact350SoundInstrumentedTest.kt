@@ -106,7 +106,7 @@ class Compact350SoundInstrumentedTest {
         // is immediately visible, while patch/engine pages temporarily
         // disappear until the permanent OSC toggle collapses the rack.
         compose.onNodeWithTag("compactPatchHeader").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Sound rack ENGINE").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Sound rack ENGINE").assertIsDisplayed()
         Log.i(TAG, "phase=before-visible-osc-selector")
         compose.onNodeWithTag("oscillatorLayerSelectorRow").assertIsDisplayed()
         Log.i(TAG, "phase=after-visible-osc-selector")
@@ -166,7 +166,22 @@ class Compact350SoundInstrumentedTest {
                 )
             }
         }
-        compose.onNodeWithTag("compactOscillatorToggle").assertIsDisplayed()
+        // Five compact controls must each expose true TalkBack/touch targets
+        // at least 48dp high on a real 350dp-constrained Compose screen.
+        val density = compose.activity.resources.displayMetrics.density
+        val toolbarNames = listOf("LIVE", "TONE", "VOICE", "ENGINE")
+        compose.onNodeWithTag("compactOscillatorToggle").assertIsDisplayed().let { chip ->
+            val bounds = chip.fetchSemanticsNode().boundsInRoot
+            assertTrue("OSC touch target must be at least 48dp", bounds.height >= 48f * density)
+        }
+        toolbarNames.forEach { pageName ->
+            val chip = compose.onNodeWithContentDescription("Sound rack $pageName")
+                .assertIsDisplayed()
+            assertTrue(
+                "$pageName toolbar touch target must be at least 48dp",
+                chip.fetchSemanticsNode().boundsInRoot.height >= 48f * density,
+            )
+        }
         compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
         ).assertIsDisplayed()
@@ -178,6 +193,7 @@ class Compact350SoundInstrumentedTest {
         enginePage.assertIsDisplayed().performClick()
         Log.i(TAG, "phase=engine-page-open")
         compose.onNodeWithTag("compactEngineOptionsRow").assertIsDisplayed()
+        compose.onNodeWithTag("compactPatchHeader").assertExists()
         compose.onAllNodesWithContentDescription(
             "Select synthesis architecture", substring = true,
         ).assertCountEquals(5)
