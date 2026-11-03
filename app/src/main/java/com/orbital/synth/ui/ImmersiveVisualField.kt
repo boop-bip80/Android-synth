@@ -340,7 +340,7 @@ fun ImmersiveVisualField(
                 val lane = (strand - 4) * .25f
                 val start = c + tangent * (lane * radius * .08f)
                 val end = touch + tangent * (lane * shortEdge * .009f)
-                val twist = sin(t * .62f + strand * .79f + timbre * 3.1f) *
+                val twist = sin(animatedPhase * turn * .62f + strand * .79f + timbre * 3.1f) *
                     shortEdge * (.022f + motion * .02f)
                 val ctrl1 = c + touchToCore * .28f + tangent * (lane * radius * .22f + twist)
                 val ctrl2 = c + touchToCore * .72f -
