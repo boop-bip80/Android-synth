@@ -88,6 +88,7 @@ internal object AndroidImmersiveTutorial {
                 val isSystemDialogNode = packageName == "com.android.systemui" ||
                     packageName == "android"
                 val exactKnownButtonId = resourceId == "com.android.systemui:id/ok" ||
+                    resourceId == "android:id/ok" ||
                     resourceId == "android:id/button1"
                 val exactKnownButtonLabel =
                     (label == "got it" || label == "ok" ||
