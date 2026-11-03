@@ -218,7 +218,6 @@ fun OrbitalScreen(
     }
 
     val editorScroll = rememberScrollState()
-    LaunchedEffect(selectedTab) { editorScroll.scrollTo(0) }
 
     BoxWithConstraints(
         Modifier
@@ -227,6 +226,11 @@ fun OrbitalScreen(
             .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
         val compactHeight = maxHeight < 500.dp
+        // Avoid concurrent scroll reset while a 350dp performance viewport changes
+        // editor content; preserving scroll still permits deliberate user scrolling.
+        LaunchedEffect(selectedTab, compactHeight) {
+            if (!compactHeight) editorScroll.scrollTo(0)
+        }
         // The short-landscape performance layout has a strict vertical budget.
         // Its waveform panel remains scrollable; the keyboard must retain space.
         // Skip decorative full-screen gradients in that mode to reduce GPU work.
