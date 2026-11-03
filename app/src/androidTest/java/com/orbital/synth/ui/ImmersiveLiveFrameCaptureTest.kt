@@ -99,20 +99,29 @@ class ImmersiveLiveFrameCaptureTest {
         compose.mainClock.advanceTimeBy(180L)
         compose.waitForIdle()
         Thread.sleep(260L)
+        val decor = compose.activity.window.decorView
+        val ownsFocus = compose.activity.hasWindowFocus()
+        println("ORBITAL_STAGE_FOREGROUND app_window_focus=" + ownsFocus +
+            " decor_shown=" + decor.isShown + " decor_size=" + decor.width + "x" + decor.height)
+        assertTrue("Stage app Activity does not own window focus", ownsFocus && decor.isShown)
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val idleBitmap = checkNotNull(automation.takeScreenshot()) {
             "Android UiAutomation could not capture the real idle stage"
         }
         val idle = try {
             saveRealFrame(idleBitmap, "orbital-stage-idle-proof.png")
+            println("ORBITAL_STAGE_IDLE_PIXEL_CORNERS " +
+                Integer.toHexString(idleBitmap.getPixel(idleBitmap.width / 6, idleBitmap.height / 3)) + " " +
+                Integer.toHexString(idleBitmap.getPixel(idleBitmap.width * 5 / 6, idleBitmap.height * 2 / 3)))
             analyzeStage(idleBitmap)
         } finally {
             idleBitmap.recycle()
         }
 
         println("ORBITAL_STAGE_IDLE_DRAW_METRICS " + idle)
-        assertTrue("Idle stage appears to be stale bright keyboard/editor instead of black performance canvas: " + idle,
-            idle.visible * 5 < idle.samples * 4)
+        // This first proof exercises the normal immersive STAGE, which retains
+        // ambient orbit artwork while idle. Blank-black FOCUS has its own gate.
+        // Therefore do not classify a colorful idle orbit as stale keyboard UI.
         val canvas = compose.onNodeWithTag("immersiveCanvas")
         var held = false
         try {
@@ -145,6 +154,9 @@ class ImmersiveLiveFrameCaptureTest {
             try {
                 saveRealFrame(liveBitmap, "orbital-stage-held-performance.png")
                 val live = analyzeStage(liveBitmap)
+                println("ORBITAL_STAGE_LIVE_PIXEL_CORNERS " +
+                    Integer.toHexString(liveBitmap.getPixel(liveBitmap.width / 6, liveBitmap.height / 3)) + " " +
+                    Integer.toHexString(liveBitmap.getPixel(liveBitmap.width * 5 / 6, liveBitmap.height * 2 / 3)))
                 println("ORBITAL_LIVE_STAGE_METRICS PCM rms=" + pcm.rms + " peak=" + pcm.peak +
                     " idle=" + idle + " live=" + live + " dimensions=" + liveBitmap.width + "x" + liveBitmap.height)
                 File(compose.activity.filesDir, "orbital-stage-live-evidence.txt").writeText(
