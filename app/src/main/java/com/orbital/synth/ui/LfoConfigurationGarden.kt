@@ -76,7 +76,7 @@ internal fun LfoConfigurationGarden(
     var routeCursor by remember(selected) { mutableIntStateOf(0) }
     val lane = lanes[selected]
     val config = lane.config
-    val tint = if (lane.enabled) OrbitalPalette.Cyan else OrbitalPalette.Violet
+    val tint = if (lane.config.enabled) OrbitalPalette.Cyan else OrbitalPalette.Violet
     val cursor = routeCursor.coerceIn(0, (lane.liveCables.size - 1).coerceAtLeast(0))
     val cable = lane.liveCables.getOrNull(cursor)
     val actualCable = cable?.let { routes.getOrNull(it.slot) }
