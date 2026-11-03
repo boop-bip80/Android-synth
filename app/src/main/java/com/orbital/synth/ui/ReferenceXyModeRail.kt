@@ -16,11 +16,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -80,6 +82,17 @@ fun ReferenceXyModeRail(
     val currentOnModeSelected by rememberUpdatedState(onModeSelected)
     val currentBeforeSelect by rememberUpdatedState(onBeforeSelect)
     var expanded by remember { mutableStateOf(false) }
+    var menuArmed by remember { mutableStateOf(false) }
+    // The trigger's UP can be re-dispatched to a newly composed menu
+    // within the same UI frame. Defer pointer admission until the next
+    // display frame; older held pointers are still excluded per-ID below.
+    LaunchedEffect(expanded) {
+        menuArmed = false
+        if (expanded) {
+            withFrameNanos { }
+            menuArmed = true
+        }
+    }
     val railShape = RoundedCornerShape(12.dp)
     val menuShape = RoundedCornerShape(15.dp)
 
@@ -101,6 +114,7 @@ fun ReferenceXyModeRail(
                     if (expanded) {
                         expanded = false
                     } else {
+                        menuArmed = false
                         onBeforeOpen()
                         expanded = true
                     }
@@ -194,8 +208,8 @@ fun ReferenceXyModeRail(
                                     // *new* menu. Admit only a real fresh DOWN,
                                     // own that exact PointerId until its UP,
                                     // and never transfer ownership mid-gesture.
-                                    .pointerInput(available) {
-                                        if (available) {
+                                    .pointerInput(available, menuArmed) {
+                                        if (available && menuArmed) {
                                             awaitPointerEventScope {
                                                 var ownerId: PointerId? = null
                                                 while (true) {
@@ -249,7 +263,7 @@ fun ReferenceXyModeRail(
                                         if (!available) {
                                             disabled()
                                             stateDescription = "Unavailable on current engine"
-                                        } else {
+                                        } else if (menuArmed) {
                                             // TalkBack activates this action
                                             // directly; physical touch uses the
                                             // fresh-down pointer owner above.
