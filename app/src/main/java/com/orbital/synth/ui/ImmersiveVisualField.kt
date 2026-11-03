@@ -110,7 +110,11 @@ fun ImmersiveVisualField(
     LaunchedEffect(fingerX, fingerY, pressure, pulse) {
         if (pressure > .01f) {
             val next = Offset(fingerX, fingerY)
-            if (touchTrace.lastOrNull() != next) {
+            val last = touchTrace.lastOrNull()
+            if (last == null || ImmersiveLightMath.shouldRecordTrailPoint(
+                    last.x, last.y, next.x, next.y,
+                )
+            ) {
                 touchTrace.add(next)
                 while (touchTrace.size > 24) touchTrace.removeAt(0)
             }
@@ -152,6 +156,10 @@ fun ImmersiveVisualField(
         val radius = shortEdge * (.265f + aperture * .045f) * (1f + pcm.radiusBoost)
         val touch = Offset(width * fingerX, height * fingerY)
         val stroke = (shortEdge / 390f).coerceIn(.6f, 2.2f)
+        val conduitEnergy = ImmersiveLightMath.conduitEnergy(pressure, pcm.rms, pcm.peak)
+        val petalFlare = ImmersiveLightMath.petalFlare(pressure, pcm.rms, pcm.transient)
+        val chroma = ImmersiveLightMath.chromaBlend(pcm.brightness, aperture)
+        val livingHue = androidx.compose.ui.graphics.lerp(ultraviolet, cyan, chroma)
 
         drawRect(ink)
 
