@@ -56,6 +56,8 @@ fun ImmersiveVisualField(
     audioPeak: Float = 0f,
     audioTransient: Float = 0f,
     audioBrightness: Float = 0f,
+    /** Avoid expensive strokes after the hosting focus layer has fully faded. */
+    skipArtwork: Boolean = false,
 ) {
     fun normalized(value: Float, fallback: Float): Float =
         if (value.isFinite()) value.coerceIn(0f, 1f) else fallback
@@ -144,6 +146,9 @@ fun ImmersiveVisualField(
     }
 
     Canvas(modifier.testTag("immersiveVisualField")) {
+        // Caller keeps a black backdrop. Save GPU/CPU draw work only after
+        // the actual touch/PCM afterglow has become sub-pixel invisible.
+        if (skipArtwork) return@Canvas
         val width = size.width
         val height = size.height
         val shortEdge = min(width, height)
