@@ -120,6 +120,24 @@ fun PatchGraphPanel(
         }
     }
 
+    fun toggleOscillator(index: Int) {
+        if (index !in 0..7) return
+        val config = oscillators.getOrNull(index) ?: OscillatorSlot()
+        if (onOscillatorSlotChange != null) {
+            onOscillatorSlotChange(
+                index,
+                config.copy(
+                    enabled = !config.enabled,
+                    level = if (!config.enabled && config.level <= 0f) .45f else config.level,
+                ),
+            )
+            notice = "OSC " + (index + 1) + " " +
+                if (config.enabled) "bypassed." else "engaged in the real voice mixer."
+        } else {
+            notice = "OSC " + (index + 1) + " requires a host edit callback."
+        }
+    }
+
     fun tapNode(node: PatchGraphNode?) {
         when (node?.kind) {
             PatchNodeKind.LFO -> {
@@ -131,24 +149,7 @@ fun PatchGraphPanel(
                 selectedFx = node.slot
                 notice = "Selected real FX stage " + (node.slot + 1) + ". Drag to reorder."
             }
-            PatchNodeKind.OSC_LAYER -> {
-                val index = node.slot
-                val config = oscillators.getOrNull(index) ?: OscillatorSlot()
-                if (onOscillatorSlotChange != null && index >= 0) {
-                    onOscillatorSlotChange(
-                        index,
-                        config.copy(
-                            enabled = !config.enabled,
-                            level = if (!config.enabled && config.level <= 0f) .45f else config.level,
-                        ),
-                    )
-                    notice = "OSC " + (index + 1) + " " +
-                        if (config.enabled) "bypassed." else "engaged in the real voice mixer."
-                } else {
-                    notice = "OSC " + (index + 1) + " is " +
-                        if (node.active) "engaged." else "bypassed. Editing requires host callback."
-                }
-            }
+            PatchNodeKind.OSC_LAYER -> toggleOscillator(node.slot)
             PatchNodeKind.CORE_OSC, PatchNodeKind.VOICE_MIX, PatchNodeKind.FILTER,
             PatchNodeKind.VOICE_AMP_PAN, PatchNodeKind.MASTER_FX, PatchNodeKind.AUDIO_OUT -> {
                 notice = "This " + node.label + " node is fixed in the live audio topology."
@@ -468,6 +469,27 @@ fun PatchGraphPanel(
             fontSize = 9.sp,
             modifier = Modifier.testTag("patchGraphTruthStatus"),
         )
+
+        Text("CORE VOICE + EIGHT OPTIONAL OSCILLATOR LAYERS",
+            color = OrbitalPalette.Text, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                .testTag("patchGraphOscillatorChoices"),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            repeat(8) { index ->
+                val config = oscillators.getOrNull(index) ?: OscillatorSlot()
+                PatchChip(
+                    label = "OSC " + (index + 1),
+                    selected = config.enabled,
+                    tint = if (config.enabled) OrbitalPalette.Cyan else OrbitalPalette.Muted,
+                    description = "Toggle live oscillator layer " + (index + 1) +
+                        if (config.enabled) ", engaged" else ", bypassed",
+                    tag = "patchOscillator" + index,
+                    enabled = onOscillatorSlotChange != null,
+                ) { toggleOscillator(index) }
+            }
+        }
 
         Text("PATCH A SOURCE INTO REAL MODULATION BUS", color = OrbitalPalette.Text,
             fontSize = 11.sp, fontWeight = FontWeight.Bold)
