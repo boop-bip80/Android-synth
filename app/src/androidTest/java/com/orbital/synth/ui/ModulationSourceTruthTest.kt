@@ -139,6 +139,9 @@ class ModulationSourceTruthTest {
                 }
             }
         }
+        assertTrue("Unwired route 1 must not falsely claim audible grid status",
+            accessible("modRouteSlot0").contains("UNWIRED SOURCE"))
+        assertTrue(accessible("modRouteSlot63").contains("empty"))
         val graph = compose.onNodeWithTag("modulationConstellationVisual")
         val stepPx = 3
         var firstWidth = 0
@@ -158,9 +161,22 @@ class ModulationSourceTruthTest {
                         frame.argbAt(x, y)
         }
 
+        // Control: screenshot the identical UNWIRED/STATIC route twice. Comparing
+        // against this same-source animation drift prevents a moving background
+        // from falsely proving a route-editor graphic changed.
+        var sameSourceDrift = 0
+        realFrames.capture(graph, "unchanged ENV1 constellation control").use { frame ->
+            assertTrue(frame.width >= 800 && frame.height >= 300)
+            for (y in 0 until min(firstHeight, frame.height) step stepPx)
+                for (x in 0 until min(firstWidth, frame.width) step stepPx)
+                    if (firstSamples[(y / stepPx) * firstStride + x / stepPx] !=
+                        frame.argbAt(x, y)) sameSourceDrift++
+        }
+
         // A real immutable route change alters this genuine Android framebuffer:
         // CONFIG cable artwork only, never an invented PCM/FFT measurement.
         compose.runOnIdle { route = route.copy(source = ModSource.LFO1) }
+        assertTrue(accessible("modRouteSlot0").contains("DSP GENERATOR CONNECTED"))
         realFrames.capture(graph, "enabled LFO1 constellation").use { frame ->
             assertTrue("physical graph must remain visible after route edit",
                 frame.width >= 800 && frame.height >= 300)
@@ -169,7 +185,11 @@ class ModulationSourceTruthTest {
                 for (x in 0 until min(firstWidth, frame.width) step stepPx)
                     if (firstSamples[(y / stepPx) * firstStride + x / stepPx] !=
                         frame.argbAt(x, y)) changed++
-            assertTrue("actual route source changed but graph stayed identical", changed > 50)
+            assertTrue(
+                "Real source edit must change more config pixels than untouched animated drift: " +
+                    "changed=$changed drift=$sameSourceDrift",
+                changed > sameSourceDrift + 50,
+            )
         }
 
         requirePhysicallyVisible("modulationRouteEditor")
@@ -178,14 +198,17 @@ class ModulationSourceTruthTest {
         compose.runOnIdle { route = route.copy(source = ModSource.ENV1) }
         compose.onNodeWithTag("modulationConnectionState")
             .assertTextContains("UNWIRED SOURCE", substring = true)
+        assertTrue(accessible("modRouteSlot0").contains("UNWIRED SOURCE"))
         compose.onNodeWithTag("modulationSourceAvailability")
             .assertTextContains("CONFIG ONLY IN THIS APP", substring = true)
         compose.runOnIdle { route = route.copy(source = ModSource.TOUCH_X) }
         compose.onNodeWithTag("modulationConnectionState")
             .assertTextContains("GESTURE-DRIVEN", substring = true)
+        assertTrue(accessible("modRouteSlot0").contains("GESTURE-DRIVEN"))
         compose.runOnIdle { route = route.copy(source = ModSource.LFO1, depth = 0f) }
         compose.onNodeWithTag("modulationConnectionState")
             .assertTextContains("ZERO DEPTH / NO MODULATION", substring = true)
+        assertTrue(accessible("modRouteSlot0").contains("ZERO DEPTH / NO MODULATION"))
 
         // TalkBack's actual SetProgress action must invoke the same real host
         // route callback as a finger sliding this bipolar depth fader.
