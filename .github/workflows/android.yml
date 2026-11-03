@@ -13,7 +13,10 @@ permissions:
 concurrency:
   # A merged PR close event has github.ref=refs/heads/main. Normalize every
   # PR event to its original PR merge ref so closing a PR cannot cancel main.
-  group: android-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.number) || github.ref }}
+  # One-time v2 namespace for non-PR validation avoids reusing the legacy main
+  # lock. This is an unproven scheduler workaround, not extra runner capacity.
+  # Keep PR groups unchanged so existing PR attempts can still be superseded.
+  group: android-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.number) || format('v2-{0}', github.ref) }}
   # Latest main push wins: obsolete validations must not indefinitely block
   # the exact head SHA needed for the gated APK release. PRs continue to cancel
   # only stale runs of their own pull-request ref. Manual dispatch is noncancelling.
