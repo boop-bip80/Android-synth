@@ -4,20 +4,22 @@ package com.orbital.synth.ui
  * Stable, small UTF-8 persistence contract for the immersive stage's touch map.
  * This does not contain user patches, MIDI notes, engine state, or personal data.
  *
- * All seven V1 fields are mandatory. Unknown versions or fields are rejected
- * rather than silently misinterpreted. A deliberately narrow, documented V0
- * alias format remains readable for previous key/value configurations.
+ * V2 adds an explicit OFF-by-default tactile option. Strict V1 (seven fields)
+ * and V0 alias files remain readable and are migrated only after a user edit.
+ * Unknown future versions or fields are rejected without deleting source data.
  */
 object StageTouchSettingsCodec {
+    const val V2_HEADER = "ORBITAL-STAGE-TOUCH-V2"
     const val V1_HEADER = "ORBITAL-STAGE-TOUCH-V1"
     private const val V0_HEADER = "ORBITAL-STAGE-TOUCH-V0"
     const val MAX_BYTES = 4096
 
-    private val currentFields = setOf(
+    private val v1Fields = setOf(
         "tonic", "baseOctave", "octaveRange", "scale",
         "pressureSensitivity", "pitchAxis", "glissando",
     )
-    private val legacyFields = currentFields + setOf(
+    private val v2Fields = v1Fields + "hapticsEnabled"
+    private val legacyFields = v1Fields + setOf(
         "octave", "span", "pressure", "axis", "glide", "hold",
     )
 
@@ -28,7 +30,7 @@ object StageTouchSettingsCodec {
     fun encode(settings: StageTouchSettings): String {
         validate(settings)
         return buildString {
-            append(V1_HEADER).append('\n')
+            append(V2_HEADER).append('\n')
             append("tonic=").append(settings.tonic).append('\n')
             append("baseOctave=").append(settings.baseOctave).append('\n')
             append("octaveRange=").append(settings.octaveRange).append('\n')
@@ -36,6 +38,7 @@ object StageTouchSettingsCodec {
             append("pressureSensitivity=").append(settings.pressureSensitivity).append('\n')
             append("pitchAxis=").append(settings.pitchAxis.name).append('\n')
             append("glissando=").append(settings.glissando).append('\n')
+            append("hapticsEnabled=").append(settings.hapticsEnabled).append('\n')
         }
     }
 
@@ -50,6 +53,7 @@ object StageTouchSettingsCodec {
         val mode: Int
         val data: List<String>
         when {
+            version == V2_HEADER -> { mode = 2; data = lines.drop(1) }
             version == V1_HEADER -> { mode = 1; data = lines.drop(1) }
             version == V0_HEADER -> { mode = 0; data = lines.drop(1) }
             version.startsWith("ORBITAL-STAGE-TOUCH-") ->
@@ -69,12 +73,16 @@ object StageTouchSettingsCodec {
             }
             require(values.putIfAbsent(key, value) == null) { "Duplicate settings field" }
         }
-        val validFields = if (mode == 1) currentFields else legacyFields
+        val validFields = when (mode) {
+            2 -> v2Fields
+            1 -> v1Fields
+            else -> legacyFields
+        }
         require(values.keys.all { it in validFields }) { "Unknown settings field" }
-        if (mode == 1) {
-            require(values.keys == currentFields) { "Incomplete stage settings" }
-        } else {
-            require(values.isNotEmpty()) { "Empty legacy stage settings" }
+        when (mode) {
+            2 -> require(values.keys == v2Fields) { "Incomplete V2 stage settings" }
+            1 -> require(values.keys == v1Fields) { "Incomplete V1 stage settings" }
+            else -> require(values.isNotEmpty()) { "Empty legacy stage settings" }
         }
 
         fun field(primary: String, vararg legacyNames: String): String? {
@@ -130,9 +138,10 @@ object StageTouchSettingsCodec {
             ),
             pitchAxis = axis,
             glissando = glissando,
+            hapticsEnabled = flag(field("hapticsEnabled"), defaults.hapticsEnabled),
         )
         validate(settings)
-        return Decoded(settings, legacy = mode == 0)
+        return Decoded(settings, legacy = mode != 2)
     }
 
     fun validate(settings: StageTouchSettings) {
