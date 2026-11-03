@@ -45,6 +45,13 @@ internal class LiveModulationHost(sampleRate: Int) {
         const val LFO_COUNT = 8
     }
 
+    private val oscillatorModulation = OscillatorLayerModulation(sampleRate)
+    /** Worker-only frames: callers must not publish or mutate these primitive arrays. */
+    val oscillatorGainMultipliers: FloatArray get() = oscillatorModulation.gainMultipliers
+    val oscillatorPitchMultipliers: DoubleArray get() = oscillatorModulation.pitchMultipliers
+    val oscillatorModulationActive: Boolean get() = oscillatorModulation.active
+    val oscillatorPitchMipMask: Int get() = oscillatorModulation.mipSafetyMask
+
     private val rack = ModulationRack(sampleRate, LFO_COUNT, ROUTE_COUNT).apply {
         setDestinationSlewMs(ModDestination.MORPH, 8f)
         setDestinationSlewMs(ModDestination.PITCH, 8f)
@@ -187,6 +194,8 @@ internal class LiveModulationHost(sampleRate: Int) {
             var filterCount = 0
             var ampCount = 0
             var panCount = 0
+            var oscillatorGainMask = 0
+            var oscillatorPitchMask = 0
             for (i in 0 until ROUTE_COUNT) {
                 val next = publishedRoutes.get(i)
                 if (next !== appliedRoutes[i]) {
@@ -204,7 +213,18 @@ internal class LiveModulationHost(sampleRate: Int) {
                         ModDestination.CUTOFF, ModDestination.RESONANCE -> filterCount++
                         ModDestination.AMP -> ampCount++
                         ModDestination.PAN -> panCount++
-                        else -> Unit // All other typed targets remain explicitly reserved.
+                        else -> {
+                            val ordinal = next.destination.ordinal
+                            if (ordinal in ModDestination.OSC1_GAIN.ordinal..
+                                    ModDestination.OSC8_GAIN.ordinal) {
+                                oscillatorGainMask = oscillatorGainMask or
+                                    (1 shl (ordinal - ModDestination.OSC1_GAIN.ordinal))
+                            } else if (ordinal in ModDestination.OSC1_PITCH.ordinal..
+                                    ModDestination.OSC8_PITCH.ordinal) {
+                                oscillatorPitchMask = oscillatorPitchMask or
+                                    (1 shl (ordinal - ModDestination.OSC1_PITCH.ordinal))
+                            }
+                        }
                     }
                 }
             }
@@ -213,6 +233,7 @@ internal class LiveModulationHost(sampleRate: Int) {
             filterRouteActive = filterCount > 0
             ampRouteActive = ampCount > 0
             panRouteActive = panCount > 0
+            oscillatorModulation.configureMasks(oscillatorGainMask, oscillatorPitchMask)
             appliedRouteRevision = latestRouteRevision
             if (!active) rack.resetSmoothing()
         }
@@ -280,6 +301,7 @@ internal class LiveModulationHost(sampleRate: Int) {
         // User-programmed AMP route is a 0..2 linear multiplier, neutral at 1.
         ampGain = frameValues[ModDestination.AMP.ordinal] * 2f
         panOffset = (frameValues[ModDestination.PAN.ordinal] - 0.5f) * 2f
+        if (oscillatorModulation.active) oscillatorModulation.next(frameValues)
         if (rack.stepEnabled && visibleStepPlayhead != rack.stepPlayhead) {
             visibleStepPlayhead = rack.stepPlayhead
         }
@@ -294,6 +316,9 @@ internal class LiveModulationHost(sampleRate: Int) {
 
     /** Advance just the visual STEP clock if no cable is consuming it yet. */
     fun tickStepOnly() {
+        // When the last cable disappears, all eight buses still return to exact
+        // neutral over 8 ms while the voices continue playing.
+        if (oscillatorModulation.active) oscillatorModulation.next(null)
         if (rack.stepEnabled) {
             rack.advanceStepOnly(1)
             if (visibleStepPlayhead != rack.stepPlayhead) {
@@ -307,5 +332,7 @@ internal class LiveModulationHost(sampleRate: Int) {
         if (active) rack.advance(frames)
         else if (rack.stepEnabled) rack.advanceStepOnly(frames)
         if (rack.stepEnabled) visibleStepPlayhead = rack.stepPlayhead
+        // Only called after the voice/FX-tail silence check in OrbitalSynth.
+        oscillatorModulation.resetWhileSilent()
     }
 }

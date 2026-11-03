@@ -1,6 +1,7 @@
 package com.orbital.synth.core.dsp.oscillator
 
 import com.orbital.synth.core.OscillatorSlot
+import com.orbital.synth.core.OscillatorLayerModulation
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.floor
@@ -72,11 +73,16 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
      * Called once per block. Reserve harmonic headroom for the highest pitch
      * reached during portamento, detune changes, bend and vibrato.
      */
-    fun preparePitch(highestBaseHz: Double) {
+    fun preparePitch(highestBaseHz: Double, pitchModulationMask: Int = 0) {
         if (!hasLayers) return
         for (i in 0 until SLOT_COUNT) {
             if (targetGain[i] <= 0f && currentGain[i] <= 0f) continue
-            val highestHz = highestBaseHz * mipCeilingRatio[i]
+            val unmappedHighestHz = highestBaseHz * mipCeilingRatio[i]
+            val highestHz = if ((pitchModulationMask and (1 shl i)) != 0) {
+                // OSCn_PITCH can rise by at most +6 semitones; reserve its
+                // harmonic ceiling for the whole block, separately per lane.
+                unmappedHighestHz * OscillatorLayerModulation.MAX_UPWARD_PITCH_RATIO
+            } else unmappedHighestHz
             mipLevel[i] = WavetableBank.levelForFrequency(highestHz, sampleRate)
             mipFade[i] = WavetableBank.fadeToLowerLevel(highestHz, sampleRate, mipLevel[i])
         }
@@ -112,7 +118,11 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
      * sum of its layer gains. Caller blends (base + extra) / (1 + totalGain)
      * to prevent a full rack from multiplying the nominal voice output by nine.
      */
-    fun nextSample(fundamentalHz: Double): Float {
+    fun nextSample(
+        fundamentalHz: Double,
+        gainMultipliers: FloatArray? = null,
+        pitchMultipliers: DoubleArray? = null,
+    ): Float {
         if (!hasLayers) {
             totalGain = 0f
             return 0f
@@ -142,8 +152,12 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
             val colorDiff = targetNoiseColor[i] - noiseColor[i]
             noiseColor[i] = if (abs(colorDiff) <= 0.00001f) targetNoiseColor[i]
                 else (noiseColor[i] + colorDiff * slew).coerceIn(0f, 1f)
-            val frequency = (fundamentalHz * ratio)
-                .coerceIn(0.0, sampleRate * 0.45)
+            val frequency = if (pitchMultipliers == null) {
+                (fundamentalHz * ratio).coerceIn(0.0, sampleRate * 0.45)
+            } else {
+                (fundamentalHz * ratio * pitchMultipliers[i])
+                    .coerceIn(0.0, sampleRate * 0.45)
+            }
             // Exactly the previous wavetable PCM when noiseMix==0. No RNG
             // advances (or noise work runs) for a legacy/disabled noise layer.
             val oscillator = if (noiseMix[i] >= 0.999999f) 0f else
@@ -153,8 +167,16 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
             val source = if (noiseMix[i] > 0f) {
                 oscillator + (noiseBank.next(i, noiseColor[i]) - oscillator) * noiseMix[i]
             } else oscillator
-            extra += source * gain
-            gains += gain
+            if (gainMultipliers == null) {
+                // Untouched literal legacy arithmetic: no new route means
+                // frame-by-frame, bit-for-bit identical additive PCM.
+                extra += source * gain
+                gains += gain
+            } else {
+                val routedGain = gain * gainMultipliers[i]
+                extra += source * routedGain
+                gains += routedGain
+            }
             phases[i] += frequency / sampleRate
             if (phases[i] >= 1.0) phases[i] -= floor(phases[i])
         }
@@ -162,4 +184,5 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
         totalGain = gains
         return extra
     }
+
 }

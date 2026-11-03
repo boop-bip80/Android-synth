@@ -306,7 +306,8 @@ class OrbitalSynth(
     /**
      * Freely route any of eight LFOs, touch/pressure expression or other
      * modulator sources. Real audio targets: MORPH, PITCH, CUTOFF,
-     * RESONANCE, AMP and PAN. All other typed targets remain reserved.
+     * RESONANCE, AMP, PAN, OSC1..OSC8_GAIN and OSC1..OSC8_PITCH.
+     * Remaining typed targets are reserved until their DSP engines exist.
      * Edits replace bounded atomic snapshots (no unbounded event queue).
      */
     fun setModulationRoute(
@@ -582,7 +583,10 @@ class OrbitalSynth(
         // Reserve room for upward bend and vibrato when selecting anti-alias mip levels.
         val highestPitchMultiplier = 2.0.pow((max(0.0, pitchBend) +
             modulationDepth * 0.5 + (if (liveModulation.pitchRouteActive) 6.0 else 0.0)) / 12.0)
-        for (voice in voices) voice.preparePitch(highestPitchMultiplier)
+        // Headroom is per routed oscillator, so an OSC1 pitch cable cannot
+        // dull OSC2..OSC8's unrelated wavetable/mip selection.
+        val oscillatorPitchMipMask = liveModulation.oscillatorPitchMipMask
+        for (voice in voices) voice.preparePitch(highestPitchMultiplier, oscillatorPitchMipMask)
 
         var active = 0
         for (voice in voices) if (voice.active) active++
@@ -677,11 +681,22 @@ class OrbitalSynth(
                 (pitchBend + vibratoSemitones + routedPitchSemitones) / 12.0
             )
 
+            // These arrays are constructed once per synthesizer. The worker
+            // updates them once per sample, then all sixteen voices consume
+            // the same eight immutable-for-this-frame bus values.
+            val oscillatorRouteActive = liveModulation.oscillatorModulationActive
+            val oscillatorGains = if (oscillatorRouteActive)
+                liveModulation.oscillatorGainMultipliers else null
+            val oscillatorPitches = if (oscillatorRouteActive)
+                liveModulation.oscillatorPitchMultipliers else null
             var left = 0f
             var right = 0f
             for (voice in voices) {
                 if (voice.active || voice.hasTail) {
-                    val sample = voice.nextSample(wave, movingMorph, pitchMultiplier)
+                    val sample = voice.nextSample(
+                        wave, movingMorph, pitchMultiplier,
+                        oscillatorGains, oscillatorPitches,
+                    )
                     left += sample * voice.panLeft
                     right += sample * voice.panRight
                 }
