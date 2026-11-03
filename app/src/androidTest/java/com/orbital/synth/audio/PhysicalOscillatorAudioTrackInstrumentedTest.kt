@@ -79,12 +79,14 @@ class PhysicalOscillatorAudioTrackInstrumentedTest {
         val editor = compose.onNodeWithTag("soundEditorScroll").assertIsDisplayed()
         val density = compose.activity.resources.displayMetrics.density
 
-        // The initial OSC enable control sits BELOW the SOUND editor fold.
-        // After tapping it, the new luminous rail is inserted ABOVE the enable
-        // button, while the noise XY pad lies BELOW the luminous rail. A fully
-        // clipped Compose node reports Rect(0,0,0,0), not its true direction.
-        // Remember the last physical edge instead of treating zero as 'above'.
-        var lastKnownAbove = tag == "luminousLevelControl"
+        // The ADVANCED disclosure and initial OSC enable button are below
+        // the SOUND hero. Enabling OSC1 replaces the small empty-source card
+        // with a larger waveform+rail section: the luminous level rail moves
+        // farther DOWN the same document, followed by the noise XY pad.
+        // Thus all four first probes begin below. Once any clipped real bounds
+        // appear, remember their physical top/bottom edge even if subsequent
+        // Compose semantics reports Rect(0,0,0,0).
+        var lastKnownAbove = false
         for (attempt in 0 until 36) {
             val targetRect = target.fetchSemanticsNode().boundsInRoot
             val editorRect = editor.fetchSemanticsNode().boundsInRoot
