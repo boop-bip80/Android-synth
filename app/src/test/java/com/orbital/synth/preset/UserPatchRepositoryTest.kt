@@ -7,6 +7,8 @@ import com.orbital.synth.core.dsp.processing.ModSource
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModCurve
 import com.orbital.synth.core.dsp.processing.LfoShape
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
+import com.orbital.synth.core.dsp.processing.StepDirection
 
 import com.orbital.synth.core.preset.FactoryPresets
 import com.orbital.synth.core.preset.PatchCodec
@@ -255,6 +257,38 @@ class UserPatchRepositoryTest {
         assertEquals(first.patch.modulationRoutes, second.patch.modulationRoutes)
         assertEquals(first.patch.modulationLfos, second.patch.modulationLfos)
         assertEquals(first.patch.modulationTempoBpm, second.patch.modulationTempoBpm, 0f)
+    }
+
+    @Test fun v5UserPatchSaveOverwriteImportSnapshotActualSixteenSteps() = runBlocking {
+        val folder = temp.newFolder("step-patches").toPath()
+        val mutablePads = MutableList(16) { if (it % 2 == 0) 1f else -1f }
+        var steps = ModulationStepConfig(
+            enabled = true, values = mutablePads,
+            length = 12, beatsPerStep = .25f, glide = .3f,
+            direction = StepDirection.PING_PONG,
+        )
+        val repository = UserPatchRepository(
+            PatchDirectoryStore(folder), { mapOf("CUTOFF" to .65f) }, {},
+            Dispatchers.Unconfined,
+            snapshotModulationSteps = { steps },
+        )
+        val first = success(repository.saveCurrentAs("Pulse Steps"))
+        val export = success(repository.exportPatchText(first.patch.id))
+        assertTrue(export.startsWith("ORBITAL-PATCH/5\n"))
+        assertEquals(steps, PatchCodec.decode(export).modulationSteps)
+
+        // The user's editable list must not mutate a previously saved patch.
+        mutablePads[0] = -1f
+        assertEquals(1f, first.patch.modulationSteps!!.values[0], 0f)
+        steps = ModulationStepConfig(
+            enabled = true, values = List(16) { 0.5f }, length = 16,
+            beatsPerStep = .5f, glide = 0f,
+        )
+        val replaced = success(repository.overwriteCurrent(first.patch.id))
+        assertEquals(steps, replaced.modulationSteps)
+        assertEquals(replaced, success(repository.load(first.patch.id)))
+        val imported = success(repository.importPatchText(export))
+        assertEquals(first.patch.modulationSteps, imported.patch.modulationSteps)
     }
 
 }
