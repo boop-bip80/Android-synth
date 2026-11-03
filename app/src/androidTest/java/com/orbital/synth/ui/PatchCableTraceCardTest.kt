@@ -108,7 +108,7 @@ class PatchCableTraceCardTest {
                 }
             }
         }
-        assertTrue(accessibleText(3).contains("dormant source"))
+        assertTrue(accessibleText(3).contains("source paused / not generating"))
         assertTrue(accessibleText(4).contains("reserved / no audio"))
     }
 
