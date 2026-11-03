@@ -4,6 +4,7 @@ import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.dsp.processing.FxModuleConfig
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 
 /** Stable engine parameter keys, matching com.orbital.synth.core.ParameterId names. */
 object PatchParameters {
@@ -36,6 +37,8 @@ data class SynthPatch(
     val modulationTempoBpm: Float = 120f,
     /** Ordered, independently editable six-slot stereo FX chain; empty is V1/V2/V3. */
     val fxSlots: List<FxModuleConfig> = emptyList(),
+    /** V5 programmed STEP rhythm; null preserves V1–V4 semantics and wire format. */
+    val modulationSteps: ModulationStepConfig? = null,
 ) {
     init {
         require(validId(id)) { "Invalid patch identifier" }
