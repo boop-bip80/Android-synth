@@ -247,11 +247,15 @@ class PatchFxV4Test {
         val recalled1 = FxModuleConfig(FxModuleType.SATURATION, false, .44f, .9f)
         synth.setFxSlot(0, former0)
         synth.setFxSlot(1, former1)
-        synth.moveFxSlot(0, 1) // queued, not yet drained
+        val canceledTicket = synth.requestFxSlotMove(0, 1) // queued, not yet drained
+        assertTrue(canceledTicket > 0L)
         synth.loadPatch(FactoryPatches.DEFAULT.copy(
             fxSlots = listOf(recalled0, recalled1),
         ))
+        assertTrue("Patch recall must explicitly cancel old move tickets",
+            synth.lastCanceledFxMoveTicket >= canceledTicket)
         synth.renderStereo(FloatArray(0), 0)
+        assertTrue(synth.lastAppliedFxMoveTicket < canceledTicket)
         assertEquals("The new patch must win over an obsolete queued move",
             recalled0, synth.fxSlot(0))
         assertEquals(recalled1, synth.fxSlot(1))
@@ -259,10 +263,42 @@ class PatchFxV4Test {
             assertEquals(FxModuleConfig(), synth.fxSlot(index))
         }
 
-        synth.moveFxSlot(0, 1)
+        val nextTicket = synth.requestFxSlotMove(0, 1)
+        assertTrue(nextTicket > canceledTicket)
         synth.renderStereo(FloatArray(0), 0)
+        assertEquals(nextTicket, synth.lastAppliedFxMoveTicket)
         assertEquals(recalled1, synth.fxSlot(0))
         assertEquals(recalled0, synth.fxSlot(1))
+    }
+
+    @Test fun moveTicketsAckEvenDuplicateProcessorsAndOrderRapidPostMoveEdits() {
+        val synth = OrbitalSynth()
+        val matching = FxModuleConfig(
+            FxModuleType.SATURATION, enabled = true, wet = .55f, depth = .77f,
+        )
+        synth.setFxSlot(0, matching)
+        synth.setFxSlot(1, matching)
+        assertEquals(0L, synth.requestFxSlotMove(0, 0))
+        val first = synth.requestFxSlotMove(0, 1)
+        val second = synth.requestFxSlotMove(1, 2)
+        assertTrue("Worker move tickets must be positive and ordered",
+            first > 0L && second > first)
+        assertEquals("Queued moves must not pretend to be completed", 0L,
+            synth.lastAppliedFxMoveTicket)
+        synth.renderStereo(FloatArray(0), 0)
+        assertEquals("Ticket acknowledges completion despite duplicate-identical slots",
+            second, synth.lastAppliedFxMoveTicket)
+        assertEquals(0L, synth.lastCanceledFxMoveTicket)
+        assertEquals(matching, synth.fxSlot(0))
+        assertEquals(FxModuleConfig(), synth.fxSlot(1))
+        assertEquals(matching, synth.fxSlot(2))
+
+        // A touch UI waits for the acknowledgment before retargeting knobs.
+        val edited = matching.copy(wet = .91f)
+        synth.setFxSlot(2, edited)
+        synth.renderStereo(FloatArray(0), 0)
+        assertEquals(edited, synth.fxSlot(2))
+        assertEquals(matching, synth.fxSlot(0))
     }
 
 }
