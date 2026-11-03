@@ -174,28 +174,56 @@ PY
 tap_accessible_tab() {
   local label="$1"
   local next_tab="$2"
-  local xy
-  xy="$(python3 - "artifacts/compact-350-${label}.xml" "$next_tab" <<'PY'
+  local hierarchy="artifacts/compact-350-$label.xml"
+  local attempt xy tap_x tap_y
+
+  # Emulator windows occasionally drop a single adb tap despite a clickable
+  # accessible target. After every physical attempt, re-read REAL UIAutomator
+  # bounds and selected state; an input exit code never counts as success.
+  # The strict final selected=true and keyboard-geometry assertions remain.
+  for attempt in 1 2 3; do
+    xy="$(python3 - "$hierarchy" "$next_tab" <<'PY'
 import re
 import sys
 import xml.etree.ElementTree as ET
 path, name = sys.argv[1], sys.argv[2]
-nodes = [n for n in ET.parse(path).iter("node") if n.attrib.get("content-desc") == f"Tab {name}"]
+nodes = [n for n in ET.parse(path).iter("node")
+         if n.attrib.get("content-desc") == f"Tab {name}"]
 if len(nodes) != 1:
     raise SystemExit(f"Cannot find exactly one Tab {name}: {len(nodes)}")
-if nodes[0].attrib.get("selected") != "false" or nodes[0].attrib.get("clickable") != "true":
-    raise SystemExit(f"Inactive Tab {name} must expose selected=false AND clickable=true: {nodes[0].attrib}")
-match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", nodes[0].attrib.get("bounds", ""))
-if not match:
-    raise SystemExit(f"Invalid Tab {name} bounds")
-left, top, right, bottom = (int(v) for v in match.groups())
-print(f"{(left + right) // 2} {(top + bottom) // 2}")
+node = nodes[0]
+if node.attrib.get("selected") == "true":
+    print("ALREADY_SELECTED")
+elif node.attrib.get("selected") == "false" and node.attrib.get("clickable") == "true":
+    match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.attrib.get("bounds", ""))
+    if not match:
+        raise SystemExit(f"Invalid Tab {name} bounds")
+    left, top, right, bottom = (int(v) for v in match.groups())
+    print(f"{(left + right) // 2} {(top + bottom) // 2}")
+else:
+    raise SystemExit(f"Inactive Tab {name} must expose selected=false AND clickable=true: {node.attrib}")
 PY
 )"
-  read -r tap_x tap_y <<< "$xy"
-  printf 'Tap %s at (%s,%s)\n' "$next_tab" "$tap_x" "$tap_y"
-  timeout 10s adb shell input tap "$tap_x" "$tap_y"
-  sleep 2
+    if [[ "$xy" == "ALREADY_SELECTED" ]]; then
+      printf 'Tab %s selected after %s physical tap attempt(s)\n' "$next_tab" "$((attempt - 1))"
+      return 0
+    fi
+    read -r tap_x tap_y <<< "$xy"
+    printf 'Tap %s at (%s,%s), attempt %s/3\n' "$next_tab" "$tap_x" "$tap_y" "$attempt"
+    timeout 10s adb shell input tap "$tap_x" "$tap_y"
+    sleep 2
+    # Preserve each post-tap hierarchy as evidence; retry only when the
+    # accessible state STILL says the click was not delivered.
+    printf 'tap-%s-%s\n' "$next_tab" "$attempt" > "$stage_file"
+    timeout 35s adb shell uiautomator dump /sdcard/orbital-350-hierarchy.xml \
+      > "artifacts/compact-350-$label-$next_tab-tap-$attempt-dump.txt" 2>&1
+    hierarchy="artifacts/compact-350-$label-$next_tab-tap-$attempt.xml"
+    timeout 15s adb exec-out cat /sdcard/orbital-350-hierarchy.xml > "$hierarchy"
+    test -s "$hierarchy"
+  done
+  # A failed final state is still photographed, then rejected by the original
+  # strict check. Never silently pass a lost tap.
+  printf 'Tab %s unconfirmed after three real touch attempts; recording screenshot before strict failure\n' "$next_tab" >&2
 }
 
 # E2E case 1: initial SOUND keyboard remains actually visible at 360x350dp.
