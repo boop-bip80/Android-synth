@@ -466,53 +466,88 @@ fun OrbitalScreen(
                     val canEditOscillators =
                         state.oscillatorSlots.isNotEmpty() &&
                             onOscillatorSlotChange != null
-                    if (canEditOscillators) {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .testTag("compactOscillatorToggle")
-                                .border(1.dp, OrbitalPalette.PanelEdge, RoundedCornerShape(12.dp))
-                                .background(OrbitalPalette.Panel.copy(alpha = .65f),
-                                    RoundedCornerShape(12.dp))
-                                .clickable(role = Role.Button) {
-                                    compactOscillatorExpanded = !compactOscillatorExpanded
-                                }
-                                .semantics {
-                                    contentDescription = if (compactOscillatorExpanded)
-                                        "Hide eight-layer oscillator editor"
-                                    else "Show eight-layer oscillator editor"
-                                }
-                                .heightIn(min = 48.dp)
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Label("EIGHT-LAYER OSC EDITOR")
-                            Text(if (compactOscillatorExpanded) "−" else "+",
-                                color = OrbitalPalette.Cyan, fontSize = 18.sp)
-                        }
-                    }
                     if (canEditOscillators && compactOscillatorExpanded) {
-                        // Showing the rack alone bounds the tiny viewport's
-                        // active composable tree. Closing restores patch and
-                        // ENGINE controls without affecting any DSP values.
+                        // A single first-row OSC rail includes its own pinned
+                        // Back control; the eight real selectors cannot fall
+                        // below the tiny weighted editor viewport.
                         OscillatorRackPanel(
                             slots = state.oscillatorSlots,
                             onSlotChange = onOscillatorSlotChange!!,
+                            onExitCompact = { compactOscillatorExpanded = false },
                         )
                     } else {
-                        // A physical performer can reach ENGINE/VOICE pages
-                        // without scrolling a previously taller patch card.
+                        // Five actions share ONE 48dp top rail. At 350dp high
+                        // a second stacked tab row was genuinely offscreen.
+                        Row(
+                            Modifier.fillMaxWidth().testTag("compactSoundTopRail"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            if (canEditOscillators) {
+                                Box(
+                                    Modifier
+                                        .width(60.dp)
+                                        .heightIn(min = 48.dp)
+                                        .testTag("compactOscillatorToggle")
+                                        .border(1.dp, OrbitalPalette.Cyan.copy(alpha = .5f),
+                                            RoundedCornerShape(11.dp))
+                                        .background(OrbitalPalette.Panel.copy(alpha = .7f),
+                                            RoundedCornerShape(11.dp))
+                                        .clickable(role = Role.Button) {
+                                            compactOscillatorExpanded = true
+                                        }
+                                        .semantics {
+                                            contentDescription = "Show eight-layer oscillator editor"
+                                        },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text("OSC +", color = OrbitalPalette.Cyan,
+                                        fontSize = 10.sp, letterSpacing = .3.sp)
+                                }
+                            }
+                            Row(
+                                Modifier.weight(1f)
+                                    .horizontalScroll(rememberScrollState())
+                                    .testTag(if (compactSoundPage == CompactSoundPage.ENGINE)
+                                        "compactEngineOptionsRow" else "compactSoundPagesRow"),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CompactSoundPage.entries.forEach { choice ->
+                                    Pill(
+                                        label = choice.caption,
+                                        active = compactSoundPage == choice,
+                                        onClick = { compactSoundPage = choice },
+                                        description = "Sound rack " + choice.name,
+                                        role = Role.RadioButton,
+                                    )
+                                }
+                                // ENGINE choices are on the SAME visible rail,
+                                // reached with real horizontal finger swipes.
+                                if (compactSoundPage == CompactSoundPage.ENGINE) {
+                                    EngineArchitectures.forEachIndexed { index, choice ->
+                                        Pill(
+                                            label = choice.name,
+                                            active = engineArchitectureIndex(engineValue) == index,
+                                            onClick = {
+                                                engineId?.let { onParameterChange(it, choice.value) }
+                                            },
+                                            description = "Select synthesis architecture " + choice.name,
+                                            role = Role.RadioButton,
+                                            enabled = engineId != null,
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         CompactSoundPanel(
                             page = compactSoundPage,
-                            onPageChange = { compactSoundPage = it },
                             parameter = parameter,
-                            engineId = engineId,
                             engineValue = engineValue,
                             onParameterChange = onParameterChange,
                         )
-                        // Patch navigation remains present below the paged
-                        // control rail, reachable on collapse.
+                        // Preset arrows remain below the compact page's controls
+                        // in the vertical editor; a real scroll must reach them.
                         CompactPatchHeader(
                             state = state,
                             onPreviousPatch = onPreviousPatch,
@@ -2409,31 +2444,11 @@ private enum class CompactSoundPage(val caption: String) {
 @Composable
 private fun CompactSoundPanel(
     page: CompactSoundPage,
-    onPageChange: (CompactSoundPage) -> Unit,
     parameter: (ParameterId) -> Float,
-    engineId: ParameterId?,
     engineValue: Float,
     onParameterChange: (ParameterId, Float) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text(
-            "SONIC RACK  /  STAGE VIEW",
-            color = OrbitalPalette.Cyan, fontSize = 11.sp, letterSpacing = 1.5.sp,
-        )
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            CompactSoundPage.entries.forEach { choice ->
-                Pill(
-                    label = choice.caption,
-                    active = page == choice,
-                    onClick = { onPageChange(choice) },
-                    description = "Sound rack " + choice.name,
-                    role = Role.RadioButton,
-                )
-            }
-        }
         when (page) {
             CompactSoundPage.LIVE -> {
                 CompactFxControl("MORPH", parameter(ParameterId.MORPH), ParameterId.MORPH,
@@ -2473,23 +2488,6 @@ private fun CompactSoundPanel(
             }
             CompactSoundPage.ENGINE -> {
                 Label("SYNTHESIS ARCHITECTURE  /  MODELED + INSPIRED")
-                Row(
-                    Modifier.fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .testTag("compactEngineOptionsRow"),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    EngineArchitectures.forEachIndexed { index, choice ->
-                        Pill(
-                            label = choice.name,
-                            active = engineArchitectureIndex(engineValue) == index,
-                            onClick = { engineId?.let { onParameterChange(it, choice.value) } },
-                            description = "Select synthesis architecture " + choice.name,
-                            role = Role.RadioButton,
-                            enabled = engineId != null,
-                        )
-                    }
-                }
                 ParameterId.entries.firstOrNull { it.name == "CHARACTER" }?.let { id ->
                     CompactFxControl("CHARACTER", parameter(id), id, onParameterChange,
                         "Engine timbre and model character")
