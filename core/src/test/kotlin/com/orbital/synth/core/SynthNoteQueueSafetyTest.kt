@@ -138,6 +138,58 @@ class SynthNoteQueueSafetyTest {
         assertEquals(0, heldNotes(s))
     }
 
+    @Test fun activeRendererAndFourMpscProducersCannotUnderflowCapacityOrLosePanic() {
+        val s = synth()
+        val begin = CountDownLatch(1)
+        val producersDone = CountDownLatch(4)
+        val failure = AtomicReference<Throwable?>()
+        val renderer = thread(isDaemon = true, name = "core-audio-safety-render") {
+            try {
+                assertTrue(begin.await(10, TimeUnit.SECONDS))
+                val pcm = FloatArray(128 * 2)
+                var blocks = 0
+                while ((producersDone.count > 0L || s.pendingNoteEventCount > 0) &&
+                    blocks++ < 4_000
+                ) {
+                    s.renderStereo(pcm, 128)
+                    val count = s.pendingNoteEventCount
+                    if (count !in 0..2_048) throw AssertionError(
+                        "Note reservations outside [0,2048] while rendering: $count")
+                }
+            } catch (problem: Throwable) {
+                failure.compareAndSet(null, problem)
+            }
+        }
+        val producers = List(4) { index ->
+            thread(isDaemon = true) {
+                try {
+                    assertTrue(begin.await(10, TimeUnit.SECONDS))
+                    repeat(12_500) { tick ->
+                        val note = 48 + ((tick + index) % 24)
+                        val source = (100 + index).toLong()
+                        if ((tick and 1) == 0) s.noteOn(source, index, note)
+                        else s.noteOff(source, index, note)
+                        if (tick % 331 == 0) s.allNotesOff()
+                    }
+                } catch (problem: Throwable) {
+                    failure.compareAndSet(null, problem)
+                } finally {
+                    producersDone.countDown()
+                }
+            }
+        }
+        begin.countDown()
+        for (producer in producers) producer.join(20_000)
+        renderer.join(20_000)
+        failure.get()?.let { throw AssertionError("Live core queue race failed", it) }
+        assertTrue("Timed-out producer", producers.none { it.isAlive })
+        assertFalse("Timed-out single audio render worker", renderer.isAlive)
+        s.allNotesOff()
+        repeat(8) { block(s) }
+        assertEquals("Every CAS reservation must be discharged", 0, s.pendingNoteEventCount)
+        assertEquals("Final global panic must release every source", 0, heldNotes(s))
+    }
+
     @Test fun normalSourceSpecificReleaseDoesNotAdvanceGlobalPanicEpoch() {
         val s = synth()
         s.noteOn(7L, 0, 60)
