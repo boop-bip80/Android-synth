@@ -61,9 +61,9 @@ class OscillatorNoiseActivityHostTest {
         compose.waitForIdle()
         compose.runOnIdle {
             val slot = synth.oscillatorSlot(0)
-            assertTrue("Touch X must reach the worker noise color",
+            assertTrue("Touch X must reach the worker noise color, actual ${slot.noiseColor}",
                 slot.noiseColor in 0.35f..0.45f)
-            assertTrue("Touch Y must reach the worker noise mix",
+            assertTrue("Touch Y must reach the worker noise mix, actual ${slot.noiseLevel}",
                 slot.noiseLevel in 0.65f..0.75f)
             assertEquals("Oscillator edit must not synthesize an unowned note",
                 0, synth.activeVoiceCount)
