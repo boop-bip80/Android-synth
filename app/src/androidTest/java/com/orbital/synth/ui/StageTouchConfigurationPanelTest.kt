@@ -30,9 +30,9 @@ class StageTouchConfigurationPanelTest {
         }
         compose.onNodeWithTag("stageHapticsOff").assertIsSelected()
         compose.runOnIdle { assertTrue(!settings.value.hapticsEnabled) }
-        compose.onNodeWithTag("stageHapticsOn").performScrollTo().performClick()
+        compose.onNodeWithTag("stageHapticsOn").performClick()
+        compose.runOnIdle { assertTrue("ON chip must update the actual host settings model", settings.value.hapticsEnabled) }
         compose.onNodeWithTag("stageHapticsOn").assertIsSelected()
-        compose.runOnIdle { assertTrue(settings.value.hapticsEnabled) }
         compose.onNodeWithTag("stageHapticsOff").performClick()
         compose.onNodeWithTag("stageHapticsOff").assertIsSelected()
         compose.runOnIdle { assertTrue(!settings.value.hapticsEnabled) }
