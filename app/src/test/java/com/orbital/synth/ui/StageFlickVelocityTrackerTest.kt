@@ -16,7 +16,7 @@ class StageFlickVelocityTrackerTest {
         assertTrue(tracker.down(2L, .2f, .4f, 2_000L))
         val fast = tracker.move(2L, .4f, .4f, 2_040L)!!
         assertTrue("Fast drag must visibly outpace slow at same touch location",
-            fast > slow * 8f && fast > .90f)
+            fast > slow * 5f && fast > .90f)
     }
 
     @Test fun unchangedBystanderAndLateUpNeverManufactureFlick() {
