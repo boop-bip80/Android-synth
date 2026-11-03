@@ -1,11 +1,15 @@
 package com.orbital.synth.ui
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertTextContains
@@ -14,7 +18,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
@@ -38,11 +41,21 @@ import org.junit.runner.RunWith
 class PatchGraphPanelTest {
     @get:Rule val compose = createComposeRule()
 
+    /** Real finger scrolls until the existing 360dp live editor is visible. */
+    private fun reveal(tag: String, scroll: ScrollState): SemanticsNodeInteraction {
+        val node = compose.onNodeWithTag(tag)
+        revealByRealFingerSwipes(
+            compose, scroll, "patchGraphTestViewport", node, tag,
+        )
+        return node
+    }
+
     @Test fun talkBackAccessibleLfoButtonsPatchActualTypedLiveRouteCallbacks() {
         val routes = mutableStateOf(List(64) { ModulationRouteConfig() })
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
                     PatchGraphPanel(
                         oscillators = List(8) { OscillatorSlot() },
                         lfos = List(8) { ModulationLfoConfig(enabled = true) },
@@ -64,8 +77,8 @@ class PatchGraphPanelTest {
         compose.onNodeWithTag("patchGraphPanel").assertExists()
         compose.onNodeWithTag("patchGraphCanvas").assertExists()
         compose.onNodeWithTag("patchGraphTruthStatus").assertExists()
-        compose.onNodeWithTag("patchLfo2").performScrollTo().performClick()
-        compose.onNodeWithTag("patchBusCUTOFF").performScrollTo().performClick()
+        reveal("patchLfo2", scroll).performClick()
+        reveal("patchBusCUTOFF", scroll).performClick()
         compose.runOnIdle {
             val route = routes.value.first()
             assertTrue(route.enabled)
@@ -73,13 +86,13 @@ class PatchGraphPanelTest {
             assertEquals(ModDestination.CUTOFF, route.destination)
             assertTrue(route.depth > 0f)
         }
-        compose.onNodeWithTag("patchGraphRouteEditor").performScrollTo()
+        reveal("patchGraphDepthSlider", scroll)
         compose.onNodeWithTag("patchGraphDepthSlider")
             .performSemanticsAction(SemanticsActions.SetProgress) { it(-1.5f) }
         compose.runOnIdle { assertTrue(routes.value[0].depth < -1f) }
-        compose.onNodeWithTag("patchGraphToggleRoute").performScrollTo().performClick()
+        reveal("patchGraphToggleRoute", scroll).performClick()
         compose.runOnIdle { assertFalse(routes.value[0].enabled) }
-        compose.onNodeWithTag("patchGraphClearRoute").performScrollTo().performClick()
+        reveal("patchGraphClearRoute", scroll).performClick()
         compose.runOnIdle { assertEquals(ModulationRouteConfig(), routes.value[0]) }
     }
 
@@ -89,9 +102,10 @@ class PatchGraphPanelTest {
             FxModuleConfig(FxModuleType.DELAY, enabled = true, wet = .5f),
             FxModuleConfig(),
         ))
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
                     PatchGraphPanel(
                         oscillators = emptyList(),
                         lfos = List(8) { ModulationLfoConfig() },
@@ -108,13 +122,12 @@ class PatchGraphPanelTest {
                 }
             }
         }
-        compose.onNodeWithTag("patchGraphFxChoices").performScrollTo()
-        compose.onNodeWithTag("patchFxMoveRight").performScrollTo().performClick()
+        reveal("patchFxMoveRight", scroll).performClick()
         compose.runOnIdle {
             assertEquals(FxModuleType.DELAY, stages.value[0].type)
             assertEquals(FxModuleType.CHORUS, stages.value[1].type)
         }
-        compose.onNodeWithTag("patchFxMoveLeft").performScrollTo().performClick()
+        reveal("patchFxMoveLeft", scroll).performClick()
         compose.runOnIdle {
             assertEquals(FxModuleType.CHORUS, stages.value[0].type)
         }
@@ -122,9 +135,10 @@ class PatchGraphPanelTest {
 
     @Test fun tappingRealOscillatorCanvasNodeTogglesHostOwnedLayerOnly() {
         val layers = mutableStateOf(List(8) { OscillatorSlot() })
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
                     PatchGraphPanel(
                         oscillators = layers.value,
                         lfos = List(8) { ModulationLfoConfig() },
@@ -150,7 +164,7 @@ class PatchGraphPanelTest {
         }
         compose.onNodeWithTag("patchGraphNotice")
             .assertTextContains("engaged in the real voice mixer", substring = true)
-        compose.onNodeWithTag("patchOscillator0").performScrollTo().performClick()
+        reveal("patchOscillator0", scroll).performClick()
         compose.runOnIdle { assertFalse(layers.value[0].enabled) }
     }
 
@@ -160,9 +174,10 @@ class PatchGraphPanelTest {
             FxModuleConfig(FxModuleType.DELAY, true, .5f),
             FxModuleConfig(FxModuleType.SATURATION, true, .4f),
         ))
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
                     PatchGraphPanel(
                         oscillators = emptyList(),
                         lfos = List(8) { ModulationLfoConfig() },
@@ -203,9 +218,10 @@ class PatchGraphPanelTest {
                 depth = .6f,
             ) else ModulationRouteConfig()
         })
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
                     PatchGraphPanel(
                         oscillators = emptyList(),
                         lfos = List(8) { ModulationLfoConfig(enabled = true) },
@@ -222,8 +238,7 @@ class PatchGraphPanelTest {
                 }
             }
         }
-        compose.onNodeWithTag("patchGraphRouteEditor").performScrollTo()
-        compose.onNodeWithTag("patchGraphRouteSource").performScrollTo().performClick()
+        reveal("patchGraphRouteSource", scroll).performClick()
         compose.onNodeWithTag("patchGraphRouteSourceOptionENV1").performClick()
         compose.runOnIdle {
             assertEquals(ModSource.ENV1, routes.value[0].source)
@@ -235,12 +250,12 @@ class PatchGraphPanelTest {
             .assertExists()
         compose.onNodeWithText(" LIVE BUSES", substring = true)
             .assertDoesNotExist()
-        compose.onNodeWithTag("patchGraphRouteDestination").performScrollTo().performClick()
+        reveal("patchGraphRouteDestination", scroll).performClick()
         compose.onNodeWithTag("patchGraphRouteDestinationOptionRESONANCE").performClick()
         compose.runOnIdle {
             assertEquals(ModDestination.RESONANCE, routes.value[0].destination)
         }
-        compose.onNodeWithTag("patchGraphRouteCurve").performScrollTo().performClick()
+        reveal("patchGraphRouteCurve", scroll).performClick()
         compose.onNodeWithTag("patchGraphRouteCurveOption" +
             com.orbital.synth.core.dsp.processing.ModCurve.entries.last().name).performClick()
         compose.runOnIdle {
@@ -256,9 +271,10 @@ class PatchGraphPanelTest {
     @Test fun audioClockedStepSourceCreatesAudibleRouteOnlyWhileSourceEnabled() {
         val step = mutableStateOf(ModulationStepConfig(enabled = true))
         val routes = mutableStateOf(List(64) { ModulationRouteConfig() })
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
                     PatchGraphPanel(
                         oscillators = emptyList(),
                         lfos = List(8) { ModulationLfoConfig() },
@@ -274,8 +290,8 @@ class PatchGraphPanelTest {
                 }
             }
         }
-        compose.onNodeWithTag("patchStepSource").performScrollTo().performClick()
-        compose.onNodeWithTag("patchBusAMP").performScrollTo().performClick()
+        reveal("patchStepSource", scroll).performClick()
+        reveal("patchBusAMP", scroll).performClick()
         compose.runOnIdle {
             assertEquals(ModSource.STEP, routes.value[0].source)
             assertEquals(ModDestination.AMP, routes.value[0].destination)
@@ -300,9 +316,10 @@ class PatchGraphPanelTest {
             FxModuleConfig(FxModuleType.BITCRUSH, true, .7f),
             FxModuleConfig(FxModuleType.TREMOLO, true, .4f),
         ))
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
                     PatchGraphPanel(
                         oscillators = List(8) { OscillatorSlot() },
                         lfos = List(8) { ModulationLfoConfig() },
@@ -320,12 +337,12 @@ class PatchGraphPanelTest {
             }
         }
         repeat(7) {
-            compose.onNodeWithTag("patchRoutePageNext").performScrollTo().performClick()
+            reveal("patchRoutePageNext", scroll).performClick()
         }
         compose.onNodeWithTag("patchRoutePageStatus")
             .assertTextContains("BANK 8 / 8", substring = true)
-        compose.onNodeWithTag("patchRoute63").performScrollTo().performClick()
-        compose.onNodeWithTag("patchGraphRouteEditor").performScrollTo()
+        reveal("patchRoute63", scroll).performClick()
+        reveal("patchGraphDepthSlider", scroll)
         compose.onNodeWithTag("patchGraphDepthSlider")
             .performSemanticsAction(SemanticsActions.SetProgress) { it(1.25f) }
         compose.runOnIdle {
@@ -333,8 +350,8 @@ class PatchGraphPanelTest {
             assertTrue(routes.value[63].depth > 1f)
             assertTrue(routes.value.take(63).all { it == ModulationRouteConfig() })
         }
-        compose.onNodeWithTag("patchFx4").performScrollTo().performClick()
-        compose.onNodeWithTag("patchFxMoveLeft").performScrollTo().performClick()
+        reveal("patchFx4", scroll).performClick()
+        reveal("patchFxMoveLeft", scroll).performClick()
         compose.runOnIdle {
             assertEquals(FxModuleType.BITCRUSH, fx.value[3].type)
             assertEquals(FxModuleType.PHASER, fx.value[4].type)

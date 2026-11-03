@@ -2,19 +2,22 @@ package com.orbital.synth.ui
 
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -34,6 +37,14 @@ import kotlin.math.min
 class PatchCableTraceCardTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private val lfos = List(8) { ModulationLfoConfig(enabled = true) }
+
+    private fun reveal(tag: String, scroll: ScrollState): SemanticsNodeInteraction {
+        val node = compose.onNodeWithTag(tag)
+        revealByRealFingerSwipes(
+            compose, scroll, "patchCableTestViewport", node, tag,
+        )
+        return node
+    }
 
     /** Real OS frame pixels, promptly recycled before the next route capture. */
     private data class CardPixels(
@@ -150,9 +161,10 @@ class PatchCableTraceCardTest {
                 destination = ModDestination.PAN, depth = -2.5f,
             ) else ModulationRouteConfig()
         })
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchCableTestViewport")) {
                     PatchGraphPanel(
                         oscillators = emptyList(),
                         lfos = lfos,
@@ -172,13 +184,13 @@ class PatchCableTraceCardTest {
             }
         }
         repeat(7) {
-            compose.onNodeWithTag("patchRoutePageNext").performScrollTo().performClick()
+            reveal("patchRoutePageNext", scroll).performClick()
         }
-        compose.onNodeWithTag("patchRoute63").performScrollTo()
+        reveal("patchRoute63", scroll)
         assertTrue(accessibleText(63).contains("LFO8 to PAN"))
         assertTrue(accessibleText(63).contains("depth -2.50×"))
         compose.onNodeWithTag("patchRoute63").performClick()
-        compose.onNodeWithTag("patchGraphRouteEditor").performScrollTo()
+        reveal("patchGraphDepthSlider", scroll)
         compose.onNodeWithTag("patchGraphDepthSlider")
             .performSemanticsAction(SemanticsActions.SetProgress) { it(-1.5f) }
         compose.runOnIdle {

@@ -1,18 +1,20 @@
 package com.orbital.synth.ui
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
 import androidx.compose.ui.geometry.Offset
@@ -33,9 +35,10 @@ class ModulationConstellationPanelTest {
 
     @Test fun everyRouteSlotIsAccessibleAndCanEnableRealCallback() {
         var first by mutableStateOf(ModulationRouteConfig())
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("modulationTestViewport")) {
                     ModulationConstellationPanel(
                         lfos = List(8) { ModulationLfoConfig(enabled = it == 0) },
                         routes = List(64) { if (it == 0) first else ModulationRouteConfig() },
@@ -53,7 +56,10 @@ class ModulationConstellationPanelTest {
         compose.onNodeWithTag("modulationConstellationPanel").assertExists()
         compose.onNodeWithTag("modRouteSlot0").assertExists()
         compose.onNodeWithTag("modRouteSlot63").assertExists()
-        compose.onNodeWithTag("modulationRouteEditor").performScrollTo()
+        revealByRealFingerSwipes(
+            compose, scroll, "modulationTestViewport",
+            compose.onNodeWithText("ENABLE"), "real route-enable button",
+        )
         compose.onNodeWithText("ENABLE").performClick()
         compose.runOnIdle { assertTrue("enable callback reached real state owner", first.enabled) }
     }
@@ -63,9 +69,10 @@ class ModulationConstellationPanelTest {
             enabled = true, source = ModSource.TOUCH_X,
             destination = ModDestination.CUTOFF, depth = 0.5f,
         ))
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("modulationTestViewport")) {
                     ModulationConstellationPanel(
                         lfos = List(8) { ModulationLfoConfig(enabled = it == 0) },
                         routes = List(64) { if (it == 0) selected else ModulationRouteConfig() },
@@ -78,7 +85,10 @@ class ModulationConstellationPanelTest {
                 }
             }
         }
-        compose.onNodeWithTag("modulationRouteEditor").performScrollTo()
+        revealByRealFingerSwipes(
+            compose, scroll, "modulationTestViewport",
+            compose.onNodeWithTag("modulationConnectionState"), "real route-state editor",
+        )
         compose.onNodeWithText("GESTURE-DRIVEN / TOUCH TO MODULATE").assertExists()
         compose.onNodeWithText(
             "TOUCH_X · GESTURE-DRIVEN / TOUCH REQUIRED"
@@ -97,9 +107,10 @@ class ModulationConstellationPanelTest {
 
     @Test fun actualStepPadTouchPublishesBipolarAudioConfigViaHostCallback() {
         var livePattern by mutableStateOf(ModulationStepConfig(enabled = true))
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("modulationTestViewport")) {
                     ModulationConstellationPanel(
                         lfos = List(8) { ModulationLfoConfig() },
                         routes = List(64) { ModulationRouteConfig() },
@@ -116,7 +127,10 @@ class ModulationConstellationPanelTest {
             }
         }
         compose.onNodeWithTag("modStepRhythmPanel").assertExists()
-        compose.onNodeWithTag("modStepRhythmPanel").performScrollTo()
+        revealByRealFingerSwipes(
+            compose, scroll, "modulationTestViewport",
+            compose.onNodeWithTag("modStepPad0"), "live STEP pad 1",
+        )
         compose.onNodeWithTag("modStepPad0").performTouchInput {
             click(Offset(center.x, center.y * 1.8f))
         }
@@ -130,9 +144,10 @@ class ModulationConstellationPanelTest {
     }
 
     @Test fun screenExposesActualLfoParametersAndTopologicalGraph() {
+        val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("modulationTestViewport")) {
                     ModulationConstellationPanel(
                         lfos = List(8) { ModulationLfoConfig() },
                         routes = List(64) { ModulationRouteConfig() },
