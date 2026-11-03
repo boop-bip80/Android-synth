@@ -90,6 +90,59 @@ class LiveModulationResidualTailTest {
         }
     }
 
+    @Test fun everyDepartedGlobalBusStillDeclicksWithAnotherLiveRoute() {
+        for (d in globals) {
+            val m = host()
+            m.setSource(ModSource.TOUCH_X, 1f)
+            val otherDestination = when (d) {
+                ModDestination.MORPH, ModDestination.AMP, ModDestination.PAN ->
+                    ModDestination.OSC1_GAIN
+                else -> ModDestination.MORPH
+            }
+            val otherSource = if (d == ModDestination.CUTOFF ||
+                d == ModDestination.RESONANCE) ModSource.LFO1 else ModSource.TOUCH_X
+            m.setRoute(0, ModSource.TOUCH_X, d, .3f, ModCurve.LINEAR)
+            m.setRoute(1, otherSource, otherDestination, .15f, ModCurve.LINEAR)
+            assertTrue(sync(m))
+            repeat(1_000) { m.tick() }
+            val before = normalizedOutput(m, d)
+            assertTrue(abs(before - dry(d)) > .23f)
+
+            m.setRoute(0, ModSource.TOUCH_X, d, 0f, ModCurve.LINEAR)
+            assertTrue("The unrelated route must remain connected", sync(m))
+            if (d == ModDestination.PITCH) {
+                assertTrue("Pitch multiplier must remain audio-rate during residual", m.pitchRouteActive)
+            }
+            if (d == ModDestination.CUTOFF || d == ModDestination.RESONANCE) {
+                assertTrue("SVF control must continue for residual filter movement", m.filterRouteActive)
+            }
+            if (d == ModDestination.AMP) {
+                assertTrue("Mixer may not bypass a still-slewing AMP", m.ampRouteActive)
+            }
+            if (d == ModDestination.PAN) {
+                assertTrue("Mixer may not bypass a still-slewing PAN", m.panRouteActive)
+            }
+
+            m.tick()
+            val first = normalizedOutput(m, d)
+            assertTrue("Live second route must not hard-snap removed " + d,
+                abs(first - before) < abs(before - dry(d)) * .04f)
+            repeat(1_100) {
+                assertTrue("Unrelated live cable stays active during/after residual", sync(m))
+                m.tick()
+            }
+            assertTrue("Departed bus must reach neutral while other cable continues " + d,
+                abs(normalizedOutput(m, d) - dry(d)) < .0002f)
+            if (d == ModDestination.PITCH) assertFalse(m.pitchRouteActive)
+            if (d == ModDestination.CUTOFF || d == ModDestination.RESONANCE) {
+                assertFalse(m.filterRouteActive)
+            }
+            if (d == ModDestination.AMP) assertFalse(m.ampRouteActive)
+            if (d == ModDestination.PAN) assertFalse(m.panRouteActive)
+            assertTrue(m.active)
+        }
+    }
+
     @Test fun quickOffOnReversalResumesFromExistingSlewWithoutStepDiscontinuity() {
         val m = host()
         m.setSource(ModSource.TOUCH_X, 1f)
@@ -175,6 +228,14 @@ class LiveModulationResidualTailTest {
         for (d in globals) {
             val small = soundingSynth(d)
             val large = soundingSynth(d)
+            // Stress removal of a bus while another effective cable keeps
+            // matrix/voices live; PITCH, filter, AMP and PAN flags must not
+            // bypass their residual output just because one cable departed.
+            val other = if (d == ModDestination.MORPH || d == ModDestination.AMP ||
+                d == ModDestination.PAN) ModDestination.OSC1_GAIN else ModDestination.MORPH
+            for (machine in arrayOf(small, large)) {
+                machine.setModulationRoute(1, ModSource.TOUCH_X, other, .12f)
+            }
             small.noteOn(61)
             large.noteOn(61)
             val beforeSmall = renderInChunks(small, 1_536, 192)
