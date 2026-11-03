@@ -394,6 +394,19 @@ internal class LiveModulationHost(sampleRate: Int) {
 
     /** Audio-thread only: advances clock exactly once and reads the live buses. */
     fun tick() {
+        // The caller latches modulationEnabled once per audio block. A tail may
+        // retire halfway through that block: cease all expensive matrix/LFO
+        // waveform math on the exact capped sample, not at next block edge.
+        if (liveRouteCount == 0 && residualFrames == 0) {
+            tickStepOnly()
+            morph = baseValues[ModDestination.MORPH.ordinal]
+            pitchSemitones = 0f
+            cutoff = baseValues[ModDestination.CUTOFF.ordinal]
+            resonance = baseValues[ModDestination.RESONANCE.ordinal]
+            ampGain = 1f
+            panOffset = 0f
+            return
+        }
         rack.next(baseValues, frameValues)
         morph = frameValues[ModDestination.MORPH.ordinal]
         // 0.5 is neutral, +/-6 semitones is the programmed full pitch range.
