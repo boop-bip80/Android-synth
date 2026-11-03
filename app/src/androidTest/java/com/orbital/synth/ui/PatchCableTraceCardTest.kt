@@ -1,5 +1,6 @@
 package com.orbital.synth.ui
 
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -7,12 +8,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertHasClickAction
-import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -33,8 +32,38 @@ import kotlin.math.min
 
 @RunWith(AndroidJUnit4::class)
 class PatchCableTraceCardTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private val lfos = List(8) { ModulationLfoConfig(enabled = true) }
+
+    /** Real OS frame pixels, promptly recycled before the next route capture. */
+    private data class CardPixels(
+        val width: Int,
+        val height: Int,
+        val columns: Int,
+        val everyThirdPixel: IntArray,
+    ) {
+        fun at(x: Int, y: Int): Int =
+            everyThirdPixel[(y / 3) * columns + (x / 3)]
+    }
+
+    private fun samplePhysicalCard(
+        capture: RealAndroidFrameCapture,
+        slot: Int,
+    ): CardPixels {
+        val node = compose.onNodeWithTag("patchRoute" + slot)
+        return capture.capture(node, "patch-cable-route-" + slot).use { frame ->
+            val columns = (frame.width + 2) / 3
+            val rows = (frame.height + 2) / 3
+            CardPixels(
+                width = frame.width,
+                height = frame.height,
+                columns = columns,
+                everyThirdPixel = IntArray(columns * rows) { index ->
+                    frame.argbAt((index % columns) * 3, (index / columns) * 3)
+                },
+            )
+        }
+    }
 
     private fun accessibleText(slot: Int): String =
         compose.onNodeWithTag("patchRoute" + slot).fetchSemanticsNode()
@@ -77,17 +106,19 @@ class PatchCableTraceCardTest {
         compose.onNodeWithTag("patchRoute1").performClick()
         compose.runOnIdle { assertEquals(1, selected.intValue) }
 
-        // Pixel evidence comes from Android's actual Compose framebuffer. The
-        // configuration-derived positive cyan and inverted violet traces must
-        // render as two genuinely distinct bitmaps, not just semantics text.
-        val forward = compose.onNodeWithTag("patchRoute0").captureToImage().toPixelMap()
-        val reversed = compose.onNodeWithTag("patchRoute1").captureToImage().toPixelMap()
+        // Physical Android SurfaceFlinger evidence from this exact foreground
+        // Activity. Sample every third actual pixel, then promptly recycle the
+        // full screenshot before capturing the second route; no PixelCopy.
+        // Opposite polarity must remain visibly distinct, not just semantic.
+        val realFrames = RealAndroidFrameCapture(compose, compose.activity)
+        val forward = samplePhysicalCard(realFrames, 0)
+        val reversed = samplePhysicalCard(realFrames, 1)
         val width = min(forward.width, reversed.width)
         val height = min(forward.height, reversed.height)
         assertTrue("Screenshot captured no actual card pixels", width > 48 && height > 48)
         var differentPixels = 0
         for (y in 0 until height step 3) for (x in 0 until width step 3) {
-            if (forward[x, y] != reversed[x, y]) differentPixels++
+            if (forward.at(x, y) != reversed.at(x, y)) differentPixels++
         }
         assertTrue("Two opposite-polarity cables rendered indistinguishably",
             differentPixels > 30)
