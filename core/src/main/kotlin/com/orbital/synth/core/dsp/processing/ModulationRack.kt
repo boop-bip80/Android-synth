@@ -141,6 +141,15 @@ class ModulationRack(
         }
     }
 
+    /** Preserve free-running LFO phase through an audio engine's silent fast path. */
+    fun advance(samples: Int) {
+        require(samples >= 0)
+        if (samples == 0) return
+        for (i in lfos.indices) {
+            if (lfoEnabled[i]) lfos[i].advance(samples)
+        }
+    }
+
     /** Useful when loading a new preset: avoids old glide targets leaking in. */
     fun resetSmoothing() {
         smoothingReady.fill(false)

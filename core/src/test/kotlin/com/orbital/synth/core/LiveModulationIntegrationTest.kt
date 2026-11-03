@@ -1,0 +1,185 @@
+package com.orbital.synth.core
+
+import com.orbital.synth.core.dsp.processing.LfoShape
+import com.orbital.synth.core.dsp.processing.ModCurve
+import com.orbital.synth.core.dsp.processing.ModDestination
+import com.orbital.synth.core.dsp.processing.ModSource
+import org.junit.Assert.*
+import org.junit.Test
+import kotlin.math.abs
+
+class LiveModulationIntegrationTest {
+    private fun synth(): OrbitalSynth = OrbitalSynth(sampleRate = 8_000, maxVoices = 4).apply {
+        setParameter(ParameterId.WAVE, 0.43f)
+        setParameter(ParameterId.MORPH, 0.15f)
+        setParameter(ParameterId.CUTOFF, 0.98f)
+        setParameter(ParameterId.RESONANCE, 0.1f)
+        setParameter(ParameterId.MOVEMENT, 0f)
+        setParameter(ParameterId.LFO_DEPTH, 0f)
+        setParameter(ParameterId.FX_AMOUNT, 0f)
+        setParameter(ParameterId.ATTACK, 0f)
+        setParameter(ParameterId.SUSTAIN, 1f)
+        setParameter(ParameterId.RELEASE, 0f)
+    }
+
+    @Test fun noRouteAndClearedRoutePreserveLegacySamplesExactly() {
+        val baseline = synth()
+        val edited = synth()
+        edited.setModulationRoute(0, ModSource.TOUCH_X, ModDestination.MORPH, 0.75f)
+        edited.clearModulationRoute(0)
+        edited.setModulationSource(ModSource.TOUCH_X, 1f)
+        edited.setModulationLfo(0, true, LfoShape.SQUARE, rateHz = 12f)
+        edited.setModulationTempoBpm(133f)
+        assertFalse(edited.modulationRoute(0).enabled)
+        assertEquals(64, edited.modulationRouteCount)
+        assertEquals(8, edited.modulationLfoCount)
+        baseline.noteOn(61)
+        edited.noteOn(61)
+        val one = FloatArray(16_384)
+        val two = FloatArray(one.size)
+        baseline.renderStereo(one, one.size / 2)
+        edited.renderStereo(two, two.size / 2)
+        assertArrayEquals("No new route must preserve the previous synth sound",
+            one, two, 0f)
+    }
+
+    @Test fun touchMacroToMorphAudiblyChangesLivePcm() {
+        val plain = synth()
+        val modded = synth().apply {
+            setModulationRoute(0, ModSource.MACRO1, ModDestination.MORPH, 0.8f)
+            setModulationSource(ModSource.MACRO1, 1f)
+        }
+        plain.noteOn(60)
+        modded.noteOn(60)
+        val one = FloatArray(8_192 * 2)
+        val two = FloatArray(one.size)
+        plain.renderStereo(one, one.size / 2)
+        modded.renderStereo(two, two.size / 2)
+        var difference = 0.0
+        for (i in one.indices) difference += abs((one[i] - two[i]).toDouble())
+        assertTrue("Touch-driven morph must affect real PCM output", difference > 5.0)
+        assertBounded(two)
+    }
+
+    @Test fun routedPitchChangesActualZeroCrossingRate() {
+        val plain = synth().apply {
+            setParameter(ParameterId.WAVE, 0f)
+            setParameter(ParameterId.MORPH, 0f)
+        }
+        val modded = synth().apply {
+            setParameter(ParameterId.WAVE, 0f)
+            setParameter(ParameterId.MORPH, 0f)
+            setModulationRoute(0, ModSource.TOUCH_Y, ModDestination.PITCH, 0.25f)
+            setModulationSource(ModSource.TOUCH_Y, 1f)
+        }
+        plain.noteOn(69)
+        modded.noteOn(69)
+        val one = FloatArray(8_000 * 2)
+        val two = FloatArray(one.size)
+        plain.renderStereo(one, 8_000)
+        modded.renderStereo(two, 8_000)
+        val a = upwardCrossings(one, 2_000, 7_800)
+        val b = upwardCrossings(two, 2_000, 7_800)
+        assertTrue("Positive pitch modulation must raise the sounding note: $a -> $b",
+            b > a * 1.12)
+        assertBounded(two)
+    }
+
+    @Test fun disabledLfoIsSilentAndClearingRestoresDryParityOnNextBlock() {
+        val dry = synth()
+        val routed = synth()
+        routed.setModulationRoute(0, ModSource.LFO2, ModDestination.MORPH, 0.8f)
+        routed.setModulationLfo(1, enabled = false, shape = LfoShape.SINE, rateHz = 14f)
+        dry.noteOn(64)
+        routed.noteOn(64)
+        val one = FloatArray(8_192)
+        val two = FloatArray(one.size)
+        dry.renderStereo(one, 4_096)
+        routed.renderStereo(two, 4_096)
+        assertArrayEquals("Disabled LFO must be neutral", one, two, 0f)
+        routed.clearModulationRoute(0)
+        dry.renderStereo(one, 4_096)
+        routed.renderStereo(two, 4_096)
+        assertArrayEquals("After clear, default render path must be sample-identical", one, two, 0f)
+    }
+
+    @Test fun routedSineIsContinuousAcrossBufferSizes() {
+        val one = synth()
+        val chunks = synth()
+        for (synth in arrayOf(one, chunks)) {
+            synth.setModulationRoute(0, ModSource.LFO1, ModDestination.MORPH,
+                0.25f, ModCurve.EXPONENTIAL)
+            synth.setModulationLfo(0, true, LfoShape.SINE, rateHz = 3f)
+            synth.noteOn(65)
+        }
+        val large = FloatArray(4_800 * 2)
+        val small = FloatArray(480 * 2)
+        val combined = FloatArray(large.size)
+        one.renderStereo(large, 4_800)
+        repeat(10) { block ->
+            chunks.renderStereo(small, 480)
+            System.arraycopy(small, 0, combined, block * small.size, small.size)
+        }
+        assertArrayEquals(large, combined, 1e-6f)
+    }
+
+    @Test fun rapidEditorAutomationDoesNotLeaveStuckNotesOrEmitInvalidSamples() {
+        val machine = synth()
+        val audio = FloatArray(256 * 2)
+        machine.noteOn(60)
+        machine.noteOn(67)
+        for (block in 0 until 160) {
+            machine.setModulationRoute(0, ModSource.TOUCH_PRESSURE,
+                ModDestination.PITCH, if (block % 2 == 0) 0.4f else -0.4f)
+            machine.setModulationSource(ModSource.TOUCH_PRESSURE, if (block % 2 == 0) 1f else -1f)
+            machine.setModulationLfo(0, true,
+                if (block % 3 == 0) LfoShape.SAMPLE_HOLD else LfoShape.TRIANGLE,
+                rateHz = (block % 32 + 1).toFloat(), retriggerOnNote = true)
+            machine.renderStereo(audio, 256)
+            assertBounded(audio)
+        }
+        machine.clearModulationRoute(0)
+        machine.allNotesOff()
+        machine.renderStereo(audio, 256)
+        machine.renderStereo(audio, 256)
+        assertEquals(0, machine.activeVoiceCount)
+    }
+
+    @Test fun idleAudioFastPathAdvancesLiveLfoClock() {
+        val one = synth()
+        val chunks = synth()
+        for (machine in arrayOf(one, chunks)) {
+            machine.setModulationRoute(0, ModSource.LFO1, ModDestination.MORPH, 0.35f)
+            machine.setModulationLfo(0, true, LfoShape.SINE, rateHz = 4f)
+        }
+        val bigSilent = FloatArray(8_000 * 2)
+        val smallSilent = FloatArray(80 * 2)
+        one.renderStereo(bigSilent, 8_000)
+        repeat(100) { chunks.renderStereo(smallSilent, 80) }
+        assertTrue(bigSilent.all { it == 0f })
+        one.noteOn(69)
+        chunks.noteOn(69)
+        val a = FloatArray(2_048)
+        val b = FloatArray(a.size)
+        one.renderStereo(a, a.size / 2)
+        chunks.renderStereo(b, b.size / 2)
+        assertArrayEquals("Silent LFO clock must not depend on block size", a, b, 0.0001f)
+    }
+
+    private fun upwardCrossings(buffer: FloatArray, startFrame: Int, endFrame: Int): Int {
+        var count = 0
+        for (i in startFrame + 1 until endFrame) {
+            val before = buffer[(i - 1) * 2]
+            val after = buffer[i * 2]
+            if (before <= 0f && after > 0f) count++
+        }
+        return count
+    }
+
+    private fun assertBounded(audio: FloatArray) {
+        for (sample in audio) {
+            assertTrue("Non-finite audio sample", sample.isFinite())
+            assertTrue("Audio escaped stereo bounds", abs(sample) <= 1.0001f)
+        }
+    }
+}

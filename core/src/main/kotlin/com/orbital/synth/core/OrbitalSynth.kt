@@ -3,6 +3,10 @@ package com.orbital.synth.core
 import com.orbital.synth.core.dsp.oscillator.LayeredOscillatorRack
 import com.orbital.synth.core.dsp.oscillator.Voice
 import com.orbital.synth.core.dsp.oscillator.WavetableBank
+import com.orbital.synth.core.dsp.processing.LfoShape
+import com.orbital.synth.core.dsp.processing.ModCurve
+import com.orbital.synth.core.dsp.processing.ModDestination
+import com.orbital.synth.core.dsp.processing.ModSource
 import com.orbital.synth.core.dsp.processing.Drive
 import com.orbital.synth.core.dsp.processing.FxBypassCrossfade
 import com.orbital.synth.core.dsp.processing.StereoChorus
@@ -84,6 +88,9 @@ class OrbitalSynth(
         }
     }
     private val bendBits = AtomicInteger(java.lang.Float.floatToRawIntBits(0f))
+    // UI edits publish fixed-size immutable route/LFO snapshots. Only the audio
+    // worker touches the running modulation clocks and destination slews.
+    private val liveModulation = LiveModulationHost(sampleRate)
     private val events = ConcurrentLinkedQueue<Event>()
     // Preallocate every held-key record. Render-thread event handling uses primitive
     // storage only: source IDs never create maps/objects or acquire locks in audio.
@@ -196,6 +203,38 @@ class OrbitalSynth(
     fun parameter(id: ParameterId): Float =
         java.lang.Float.intBitsToFloat(controls.get(id.ordinal))
 
+    val modulationRouteCount: Int get() = LiveModulationHost.ROUTE_COUNT
+    val modulationLfoCount: Int get() = LiveModulationHost.LFO_COUNT
+
+    /**
+     * Freely route any of eight LFOs, touch/pressure expression or other
+     * modulator sources. Current real-time audio targets are MORPH and PITCH;
+     * other typed destinations are reserved for following sound-engine work.
+     * Edits replace bounded atomic snapshots (no unbounded event queue).
+     */
+    fun setModulationRoute(
+        slot: Int, source: ModSource, destination: ModDestination,
+        depth: Float, curve: ModCurve = ModCurve.LINEAR,
+    ) = liveModulation.setRoute(slot, source, destination, depth, curve)
+
+    fun clearModulationRoute(slot: Int) = liveModulation.clearRoute(slot)
+
+    fun modulationRoute(slot: Int): ModulationRouteConfig = liveModulation.route(slot)
+
+    fun setModulationLfo(
+        slot: Int, enabled: Boolean, shape: LfoShape,
+        rateHz: Float = 1f, beatsPerCycle: Float = 0f,
+        retriggerOnNote: Boolean = false,
+    ) = liveModulation.setLfo(slot, enabled, shape, rateHz, beatsPerCycle, retriggerOnNote)
+
+    fun modulationLfo(slot: Int): ModulationLfoConfig = liveModulation.lfo(slot)
+
+    fun setModulationTempoBpm(bpm: Float) = liveModulation.setTempoBpm(bpm)
+
+    /** Latest bounded bipolar value for touch X/Y/pressure, macros and MIDI. */
+    fun setModulationSource(source: ModSource, bipolarValue: Float) =
+        liveModulation.setSource(source, bipolarValue)
+
     /**
      * Program one of eight *real* wavetable oscillators, available alongside all
      * five existing sound engines. No lock or audio-thread allocation is required:
@@ -279,6 +318,8 @@ class OrbitalSynth(
         val lfoHz = 0.05 * 2.0.pow(lfoRate * 8.0)
         val lfoIncrement = lfoHz / sampleRate
         val modulationDepth = movement * lfoDepth
+        // Bypass the entire new mod clock on legacy patches with zero routes.
+        val modulationEnabled = liveModulation.syncBlock(morph)
 
         for (slot in 0 until oscillatorSlotCount) {
             blockOscillatorSlots[slot] = oscillatorSlots.get(slot)
@@ -296,7 +337,7 @@ class OrbitalSynth(
 
         // Reserve room for upward bend and vibrato when selecting anti-alias mip levels.
         val highestPitchMultiplier = 2.0.pow((max(0.0, pitchBend) +
-            modulationDepth * 0.5) / 12.0)
+            modulationDepth * 0.5 + (if (liveModulation.pitchRouteActive) 6.0 else 0.0)) / 12.0)
         for (voice in voices) voice.preparePitch(highestPitchMultiplier)
 
         var active = 0
@@ -344,6 +385,8 @@ class OrbitalSynth(
                 lfoPhase += lfoIncrement
                 if (lfoPhase >= 1.0) lfoPhase -= 1.0
             }
+            // Keep configured free-running LFOs in time without 8x trigonometry.
+            if (modulationEnabled) liveModulation.advanceSilence(frames)
             return
         }
 
@@ -356,9 +399,15 @@ class OrbitalSynth(
             lfoPhase += lfoIncrement
             if (lfoPhase >= 1.0) lfoPhase -= 1.0
 
-            val movingMorph = (morph + lfo * modulationDepth * 0.35f).coerceIn(0f, 1f)
+            if (modulationEnabled) liveModulation.tick()
+            val routedMorph = if (modulationEnabled) liveModulation.morph else morph
+            val movingMorph = (routedMorph + lfo * modulationDepth * 0.35f).coerceIn(0f, 1f)
             val vibratoSemitones = (lfo * modulationDepth * 0.5).toDouble()
-            val pitchMultiplier = 2.0.pow((pitchBend + vibratoSemitones) / 12.0)
+            val routedPitchSemitones = if (modulationEnabled)
+                liveModulation.pitchSemitones.toDouble() else 0.0
+            val pitchMultiplier = 2.0.pow(
+                (pitchBend + vibratoSemitones + routedPitchSemitones) / 12.0
+            )
 
             var left = 0f
             var right = 0f
@@ -417,10 +466,13 @@ class OrbitalSynth(
         // Bound callback work under hostile MIDI event floods; defer overflow to next block.
         for (index in 0 until 512) {
             when (val event = events.poll() ?: break) {
-                is Event.NoteOn -> handleNoteOn(
-                    event.note, event.velocity, event.sourceId, event.channel, event.tagged,
-                    glideSec, wave, morph
-                )
+                is Event.NoteOn -> {
+                    liveModulation.onNoteOn()
+                    handleNoteOn(
+                        event.note, event.velocity, event.sourceId, event.channel, event.tagged,
+                        glideSec, wave, morph
+                    )
+                }
                 is Event.NoteOff -> handleNoteOff(
                     event.note, event.sourceId, event.channel, event.tagged, glideSec, wave, morph
                 )
