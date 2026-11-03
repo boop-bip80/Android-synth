@@ -247,6 +247,7 @@ class Compact350SoundInstrumentedTest {
             waveBounds.height in (95f * density)..(99f * density),
         )
         Log.i(TAG, "phase=compact-luminous-wave-visible bounds=$waveBounds")
+        val wave = compose.onNodeWithTag("oscillatorWaveCanvas").assertIsDisplayed()
 
         // Finger taps modify BOTH oscillator axes and forward ALL V6 fields,
         // preserving noise color/level, tuning, waveform and enabled state.
