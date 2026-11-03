@@ -7,6 +7,7 @@ import com.orbital.synth.core.dsp.processing.LfoShape
 import com.orbital.synth.core.dsp.processing.ModCurve
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import com.orbital.synth.core.dsp.processing.Drive
 import com.orbital.synth.core.dsp.processing.FxBypassCrossfade
 import com.orbital.synth.core.dsp.processing.FxModuleConfig
@@ -271,6 +272,14 @@ class OrbitalSynth(
 
     val modulationTempoBpm: Float get() = liveModulation.tempoBpm()
 
+    /** Program sixteen bipolar STEP pads from the UI without audio-thread locks. */
+    fun setModulationSteps(config: ModulationStepConfig) = liveModulation.setSteps(config)
+
+    val modulationSteps: ModulationStepConfig get() = liveModulation.steps()
+
+    /** Actual audio-clock STEP index, not a UI animation counter. */
+    val modulationStepPlayhead: Int get() = liveModulation.stepPlayhead()
+
     /** Latest bounded bipolar value for touch X/Y/pressure, macros and MIDI. */
     fun setModulationSource(source: ModSource, bipolarValue: Float) =
         liveModulation.setSource(source, bipolarValue)
@@ -510,7 +519,7 @@ class OrbitalSynth(
                 if (lfoPhase >= 1.0) lfoPhase -= 1.0
             }
             // Keep configured free-running LFOs in time without 8x trigonometry.
-            if (modulationEnabled) liveModulation.advanceSilence(frames)
+            liveModulation.advanceSilence(frames)
             filterControlFrame = (filterControlFrame + frames) % filterControlInterval
             // Delay/chorus memory can remain audible after all held voices stop.
             // Keep rendering only the modular chain on silence, with no voice or
@@ -533,6 +542,7 @@ class OrbitalSynth(
             if (lfoPhase >= 1.0) lfoPhase -= 1.0
 
             if (modulationEnabled) liveModulation.tick()
+            else liveModulation.tickStepOnly()
             if (filterRoutingActive && filterControlFrame == 0) {
                 // Consume all 64 summed cables and let the real SVF/ladder/SEM
                 // pole slews work continuously between bounded target updates.
