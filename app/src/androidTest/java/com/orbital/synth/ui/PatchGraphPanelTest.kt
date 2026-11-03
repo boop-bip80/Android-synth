@@ -1,6 +1,7 @@
 package com.orbital.synth.ui
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -8,6 +9,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.test.assertDoesNotExist
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -340,6 +345,77 @@ class PatchGraphPanelTest {
             assertEquals(FxModuleType.PHASER, fx.value[4].type)
             assertEquals(6, fx.value.size)
         }
+    }
+
+    @Test fun compact350BankedTwentyTwoDspPortsRemainPhysicalAndActuallyPatchOsc8Pitch() {
+        val routes = mutableStateOf(List(64) { ModulationRouteConfig() })
+        compose.setContent {
+            MaterialTheme {
+                Column(Modifier.width(350.dp).verticalScroll(rememberScrollState())) {
+                    PatchGraphPanel(
+                        oscillators = List(8) { OscillatorSlot(enabled = true, level = .5f) },
+                        lfos = List(8) { ModulationLfoConfig(enabled = true) },
+                        routes = routes.value,
+                        fxSlots = List(8) { FxModuleConfig() },
+                        onRouteChange = { index, next ->
+                            routes.value = routes.value.toMutableList().apply { set(index, next) }
+                        },
+                        onRouteClear = { index ->
+                            routes.value = routes.value.toMutableList().apply {
+                                set(index, ModulationRouteConfig())
+                            }
+                        },
+                        onMoveFxSlot = { _, _ -> },
+                    )
+                }
+            }
+        }
+        // These controls have physical >=48dp semantic touch corridors in
+        // a real 350dp-wide screen, no 22-node overlapping atlas fiction.
+        compose.onNodeWithTag("patchLfo7")
+            .performScrollTo().assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
+            .performTouchInput { click(center) }
+        compose.onNodeWithTag("patchGraphBankOSC8")
+            .performScrollTo().assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
+            .performTouchInput { click(center) }
+        compose.onNodeWithTag("patchGraphTargetBankStatus")
+            .assertTextContains("OSC 8", substring = true)
+        compose.onNodeWithTag("patchBusOSC7_GAIN").assertDoesNotExist()
+        compose.onNodeWithTag("patchBusOSC8_GAIN")
+            .performScrollTo().assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithTag("patchBusOSC8_PITCH")
+            .performScrollTo().assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+            .performTouchInput { click(center) }
+        compose.runOnIdle {
+            assertEquals(ModSource.LFO8, routes.value[0].source)
+            assertEquals(ModDestination.OSC8_PITCH, routes.value[0].destination)
+            assertTrue(routes.value[0].enabled)
+            assertTrue(routes.value[0].depth > 0f)
+            assertTrue(routes.value.drop(1).all { it == ModulationRouteConfig() })
+        }
+        compose.onNodeWithTag("patchGraphTruthStatus")
+            .assertTextContains("1 LFO/STEP CABLES DRAWN IN OSC 8", substring = true)
+
+        // Switching banks never changes/erases the saved OSC8 cable. A global
+        // tap creates a second real, different route through the SAME host API.
+        compose.onNodeWithTag("patchGraphBankGLOBAL")
+            .performScrollTo().assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
+            .performTouchInput { click(center) }
+        compose.onNodeWithTag("patchBusOSC8_PITCH").assertDoesNotExist()
+        compose.onNodeWithTag("patchBusCUTOFF")
+            .performScrollTo().assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
+            .performTouchInput { click(center) }
+        compose.runOnIdle {
+            assertEquals(ModDestination.OSC8_PITCH, routes.value[0].destination)
+            assertEquals(ModSource.LFO8, routes.value[1].source)
+            assertEquals(ModDestination.CUTOFF, routes.value[1].destination)
+        }
+        compose.onNodeWithTag("patchGraphTruthStatus")
+            .assertTextContains("1 LIVE ROUTES IN OTHER BANKS", substring = true)
     }
 
 }
