@@ -99,6 +99,10 @@ class Compact350SoundInstrumentedTest {
                 targetRect.bottom <= editorRect.bottom + 1f
             if (fullyInView) break
             val travel = when {
+                // Fully clipped offscreen semantics report a zero-area Rect(0,0,0,0).
+                // The OSC8 canvas is below the selector: physically swipe UP to reveal it.
+                targetRect.width <= 1f || targetRect.height <= 1f ->
+                    -editorRect.height * .38f
                 targetRect.bottom > editorRect.bottom ->
                     -(targetRect.bottom - editorRect.bottom + 6f)
                 targetRect.top < editorRect.top ->
