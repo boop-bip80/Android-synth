@@ -202,23 +202,57 @@ jobs:
             exit 1
           fi
           tag="orbital-debug-$SOURCE_SHORT"
-          digest="$(sha256sum "$RUNNER_TEMP/ORBITAL-$SOURCE_SHORT-debug.apk" | cut -d' ' -f1)"
+          asset="ORBITAL-$SOURCE_SHORT-debug.apk"
+          asset_path="$RUNNER_TEMP/$asset"
+          digest="$(sha256sum "$asset_path" | cut -d' ' -f1)"
+          asset_bytes="$(stat -c%s "$asset_path")"
+          # A SHA in the release body alone is not proof the downloadable
+          # binary exists or has those bytes. GitHub reports a server-computed
+          # sha256:... digest per uploaded Release asset.
+          verify_release_asset() {
+            local required_run="${1:-}"
+            local release_json
+            release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")" || return 1
+            jq -e \
+              --arg tag "$tag" \
+              --arg source "$SOURCE_SHA" \
+              --arg run "$required_run" \
+              --arg checksum "$digest" \
+              --arg asset "$asset" \
+              --arg asset_digest "sha256:$digest" \
+              --argjson asset_bytes "$asset_bytes" '
+                .tag_name == $tag and
+                .draft == false and
+                .prerelease == true and
+                (.body | contains($source) and contains($run) and contains($checksum)) and
+                (.assets | length) == 1 and
+                any(.assets[];
+                  .name == $asset and
+                  .state == "uploaded" and
+                  .size == $asset_bytes and
+                  .digest == $asset_digest)
+              ' <<< "$release_json" >/dev/null
+          }
+          verify_tag_and_asset() {
+            local actual_tag_sha
+            actual_tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha')" || return 1
+            [[ "$actual_tag_sha" == "$SOURCE_SHA" ]] && verify_release_asset "${1:-}"
+          }
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # Idempotence only when the existing immutable release still
-            # names exactly the expected source SHA and APK checksum.
-            tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha')"
-            release_body="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
-            if [[ "$tag_sha" != "$SOURCE_SHA" || "$release_body" != *"$digest"* ]]; then
-              echo "Existing tag/release provenance disagrees with verified APK; refusing overwrite." >&2
+            # Strict idempotence: existing tag AND actual one uploaded asset
+            # must match this verified source APK byte-for-byte by SHA-256.
+            if ! verify_tag_and_asset; then
+              echo "Existing release lacks the matching APK asset, digest, run or tag; refusing overwrite." >&2
               exit 1
             fi
-            echo "Matching immutable debug prerelease $tag already exists; no overwrite."
+            echo "Verified existing SHA-addressed debug prerelease $tag and its exact APK digest."
             exit 0
           fi
           if git ls-remote origin "refs/tags/$tag" | grep -q .; then
             echo "Tag exists without a verified matching release; refusing retag." >&2
             exit 1
           fi
+
           notes="$RUNNER_TEMP/orbital-debug-release-notes.md"
           {
             echo "ORBITAL developer debug snapshot (NOT production signed)."
@@ -239,3 +273,19 @@ jobs:
             --title "ORBITAL debug $SOURCE_SHORT — developer-only APK" \
             --prerelease \
             --notes-file "$notes"
+          # Verify the server-side uploaded APK after publication, not only
+          # the local download or release notes. A transient API delay is
+          # bounded; any digest, size, tag or provenance mismatch fails red.
+          published_verified=false
+          for attempt in 1 2 3 4 5; do
+            if verify_tag_and_asset "actions/runs/$VERIFIED_RUN_ID"; then
+              published_verified=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$published_verified" != true ]]; then
+            echo "Published release did not verify to the exact source and APK bytes." >&2
+            exit 1
+          fi
+          echo "Published and verified SHA-addressed APK asset $asset sha256:$digest"
