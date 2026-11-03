@@ -1,6 +1,7 @@
 package com.orbital.synth.ui
 
 import androidx.compose.foundation.layout.Column
+import android.util.Log
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -118,6 +119,7 @@ class LuminousOscillatorWaveEditorTest {
     }
 
     @Test fun accessibleSeventyDpRailsUseTalkBackProgressAndRealFingerTaps() {
+        Log.i("LuminousGestureProbe", "01 begin isolated accessibility+pointer test")
         var state by mutableStateOf(originalSlot())
         compose.setContent {
             MaterialTheme {
@@ -126,21 +128,28 @@ class LuminousOscillatorWaveEditorTest {
                 }
             }
         }
+        Log.i("LuminousGestureProbe", "02 content composed; checking visible morph rail")
         compose.onNodeWithTag("luminousMorphControl").assertIsDisplayed()
             .performSemanticsAction(SemanticsActions.SetProgress) { it(.64f) }
+        Log.i("LuminousGestureProbe", "03 morph accessible SetProgress applied")
         compose.onNodeWithTag("luminousLevelControl").assertIsDisplayed()
             .performSemanticsAction(SemanticsActions.SetProgress) { it(.91f) }
+        Log.i("LuminousGestureProbe", "04 level accessible SetProgress applied")
         compose.waitForIdle()
+        Log.i("LuminousGestureProbe", "05 idle before semantics assertions")
         compose.runOnIdle {
             assertEquals(.64f, state.morph, .005f)
             assertEquals(.91f, state.level, .005f)
             assertEquals(.76f, state.noiseLevel, 0f)
         }
 
-        compose.onNodeWithTag("luminousLevelControl").performTouchInput {
+        Log.i("LuminousGestureProbe", "06 semantics passed; starting real finger on level rail")
+        compose.onNodeWithTag("luminousLevelControl").assertIsDisplayed().performTouchInput {
             click(Offset((center.x * 2f) * .25f, (center.y * 2f) * .75f))
         }
+        Log.i("LuminousGestureProbe", "07 real finger gesture returned")
         compose.waitForIdle()
+        Log.i("LuminousGestureProbe", "08 idle before final pointer assertions")
         compose.runOnIdle {
             assertEquals("Rail must accept genuine touch X as normalized level",
                 .25f, state.level, .06f)
