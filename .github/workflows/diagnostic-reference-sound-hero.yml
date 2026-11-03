@@ -57,6 +57,32 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           script: bash .github/workflows/ci-reference-hero-preview.sh
+      - name: Emit bounded genuine hero JPEG preview for code review
+        if: success()
+        run: |
+          set -euo pipefail
+          # Only the test-produced renderer pixels enter these logs. No
+          # tokens, environment variables, personal data or private inputs.
+          python3 -m pip install --quiet --user Pillow
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          from io import BytesIO
+          import base64
+          p = Path('artifacts/reference-sound-hero-standalone.png')
+          assert p.is_file() and p.stat().st_size > 4096
+          with Image.open(p) as image:
+              assert image.width >= 600 and image.height >= 1000
+              image.thumbnail((700, 1440), Image.Resampling.LANCZOS)
+              out = BytesIO()
+              image.convert('RGB').save(out, format='JPEG', quality=61, optimize=True)
+          encoded = base64.b64encode(out.getvalue()).decode('ascii')
+          assert len(encoded) < 360_000, 'Bound the diagnostic log size'
+          print(f'HERO_PROOF_JPEG_BYTES:{len(out.getvalue())}')
+          print(f'HERO_PROOF_IMAGE_SIZE:{image.width}x{image.height}')
+          for index in range(0, len(encoded), 512):
+              print(f'HERO_B64_{index // 512:04d}:{encoded[index:index + 512]}')
+          PY
       - name: Upload real 1080x2400 standalone reference hero pixels
         if: always()
         uses: actions/upload-artifact@v4

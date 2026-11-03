@@ -65,10 +65,18 @@ class ReferenceSoundHeroCaptureTest {
             }
         }
         compose.onNodeWithTag("orbitalPlasmaField").assertExists()
-        compose.onNodeWithTag("referenceExpressionRibbon").assertExists()
+        val stageBounds = compose.onNodeWithTag("referenceSoundHeroOrb",
+            useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val ribbonBounds = compose.onNodeWithTag("referenceExpressionRibbon",
+            useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertTrue("Real XY overlay must be inside the plasma hero",
+            ribbonBounds.top > stageBounds.top &&
+                ribbonBounds.bottom <= stageBounds.bottom + 2f &&
+                ribbonBounds.height > 48f)
         compose.onNodeWithTag("referenceKnobFX_AMOUNT").assertExists()
         compose.onNodeWithTag("referenceMiniMod").assertExists()
         compose.waitForIdle()
+        compose.waitUntil(15_000L) { compose.activity.hasWindowFocus() }
 
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.waitForIdleSync()

@@ -48,6 +48,7 @@ fun OrbitalPlasmaField(
     touchY: Float = .5f,
     pressed: Boolean = false,
     modifier: Modifier = Modifier,
+    decorative: Boolean = false,
 ) {
     val signal = remember(morph, movement, audioRms, audioPeak, touchX, touchY, pressed) {
         OrbitalPlasmaSignal.sanitize(
@@ -73,12 +74,14 @@ fun OrbitalPlasmaField(
             }
         }
     }
-    val visualModifier = modifier
-        .testTag("orbitalPlasmaField")
-        .semantics {
+    // A hero may put a *real interactive* overlay above this canvas. Keep
+    // canvas test tagging, but suppress the duplicate inert TalkBack node.
+    val visualModifier = modifier.testTag("orbitalPlasmaField").let { tagged ->
+        if (decorative) tagged else tagged.semantics {
             contentDescription =
                 "Fluid cyan violet and gold sound orb reacts to synthesis controls and performed sound"
         }
+    }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         PlasmaGpuField(signal, elapsed, visualModifier)
     } else {

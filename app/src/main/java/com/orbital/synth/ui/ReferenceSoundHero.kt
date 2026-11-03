@@ -3,8 +3,8 @@ package com.orbital.synth.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -30,8 +32,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,6 +50,33 @@ import kotlin.math.roundToInt
 
 private val HeroObsidian = Color(0xFF01050F)
 private val HeroGlass = Color(0xA507142C)
+
+/**
+ * The visible plasma and overlaid XY ribbon form a continuous, folded Y
+ * gesture surface. Both zones cover the full 0..1 MOVEMENT range: the orb
+ * rises toward the XY seam and the ribbon falls away from it. Crossing the
+ * seam never jumps or disconnects an ongoing finger gesture.
+ */
+internal class ReferenceHeroGestureGate {
+    private var revision = 0L
+    fun ticket(): Long = revision
+    fun invalidate() { revision++ }
+    fun allows(ticket: Long): Boolean = ticket == revision
+}
+
+internal object ReferenceHeroTouch {
+    fun movementAt(y: Float, stageHeight: Float, ribbonHeight: Float): Float {
+        val safeHeight = stageHeight.takeIf { it.isFinite() && it > 0f } ?: 1f
+        val safeRibbon = ribbonHeight.takeIf { it.isFinite() && it > 0f }
+            ?.coerceAtMost(safeHeight) ?: (safeHeight * .38f)
+        val seam = (safeHeight - safeRibbon).coerceAtLeast(.001f)
+        return if (y <= seam) {
+            ReferenceSoundUiModel.normalized(y / seam)
+        } else {
+            ReferenceSoundUiModel.normalized(1f - (y - seam) / safeRibbon)
+        }
+    }
+}
 
 /**
  * Portrait SOUND composition, reconstructed from the *actual original* PNG.
@@ -69,6 +101,10 @@ fun ReferenceSoundHero(
     compact: Boolean = true,
     patchName: String = "AURORA",
     engineName: String = "ORBITAL WT",
+    /** Repository patch ID: distinct patches may share the visible name. */
+    patchId: String? = null,
+    /** Optional recall epoch for replacing the same selected patch. */
+    patchEpoch: Long = 0L,
     onOpenPatchLibrary: (() -> Unit)? = null,
     onPreviousPatch: (() -> Unit)? = null,
     onNextPatch: (() -> Unit)? = null,
@@ -77,10 +113,20 @@ fun ReferenceSoundHero(
     val safeMorph = ReferenceSoundUiModel.normalized(parameters[ParameterId.MORPH] ?: .5f)
     val safeMovement = ReferenceSoundUiModel.normalized(parameters[ParameterId.MOVEMENT] ?: .5f)
     val latestChange by rememberUpdatedState(onParameterChange)
+    val gate = remember { ReferenceHeroGestureGate() }
+    var navigationEpoch by remember { mutableIntStateOf(0) }
     var fingerPressed by remember { mutableStateOf(false) }
     var touchX by remember { mutableFloatStateOf(.5f) }
     var touchY by remember { mutableFloatStateOf(.5f) }
     val height: Dp = if (compact) 230.dp else 278.dp
+    val ribbonHeight: Dp = if (compact) 88.dp else 110.dp
+
+    fun haltGestureAndNavigate(action: () -> Unit) {
+        gate.invalidate() // Suppress held-finger moves before patch mutation.
+        navigationEpoch++
+        fingerPressed = false
+        action()
+    }
 
     fun update(x: Float, y: Float) {
         touchX = ReferenceSoundUiModel.normalized(x)
@@ -111,6 +157,7 @@ fun ReferenceSoundHero(
                 touchY = touchY,
                 pressed = fingerPressed,
                 modifier = Modifier.fillMaxSize(),
+                decorative = true, // Render once, expose only one actionable orb TalkBack target.
             )
             // Above plasma, below real clickable HUD and real interactive XY:
             // any finger on the orb edits the same audible normalized parameters.
@@ -119,46 +166,63 @@ fun ReferenceSoundHero(
                     .fillMaxSize()
                     .testTag("referenceHeroOrbInput")
                     .semantics {
-                        contentDescription = "Touch glowing synth orb to edit morph " +
+                        stateDescription = if (fingerPressed) "Touch engaged" else "Touch ready"
+                        contentDescription = "Touch glowing synth orb, morph " +
                             (safeMorph * 100f).roundToInt() +
-                            " percent and movement " + (safeMovement * 100f).roundToInt() +
-                            " percent. Swipe horizontally and vertically"
+                            " percent, movement " + (safeMovement * 100f).roundToInt() +
+                            " percent. Swipe or use the four edit actions"
+                        customActions = listOf(
+                            CustomAccessibilityAction("Increase morph") {
+                                latestChange(ParameterId.MORPH, (safeMorph + .05f).coerceAtMost(1f))
+                                true
+                            },
+                            CustomAccessibilityAction("Decrease morph") {
+                                latestChange(ParameterId.MORPH, (safeMorph - .05f).coerceAtLeast(0f))
+                                true
+                            },
+                            CustomAccessibilityAction("Increase movement") {
+                                latestChange(ParameterId.MOVEMENT, (safeMovement + .05f).coerceAtMost(1f))
+                                true
+                            },
+                            CustomAccessibilityAction("Decrease movement") {
+                                latestChange(ParameterId.MOVEMENT, (safeMovement - .05f).coerceAtLeast(0f))
+                                true
+                            },
+                        )
                     }
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onPress = { position ->
-                                fingerPressed = true
-                                update(
-                                    (position.x / size.width).coerceIn(0f, 1f),
-                                    (1f - position.y / size.height).coerceIn(0f, 1f),
+                    .pointerInput(compact, patchId ?: patchName, patchEpoch, engineName, navigationEpoch) {
+                        // One original-down pointer owns the visual glow; a drag
+                        // cannot race a canceled, unrelated tap recognizer.
+                        val ribbonPixels = ribbonHeight.toPx()
+                        awaitEachGesture {
+                            val first = awaitFirstDown(requireUnconsumed = false)
+                            val ownerTicket = gate.ticket()
+                            fingerPressed = true
+                            try {
+                                if (gate.allows(ownerTicket)) update(
+                                    first.position.x / size.width,
+                                    ReferenceHeroTouch.movementAt(
+                                        first.position.y, size.height.toFloat(), ribbonPixels,
+                                    ),
                                 )
-                                try {
-                                    tryAwaitRelease()
-                                } finally {
-                                    fingerPressed = false
+                                first.consume()
+                                while (true) {
+                                    val frame = awaitPointerEvent()
+                                    val owner = frame.changes.firstOrNull { it.id == first.id }
+                                    if (owner == null || !owner.pressed ||
+                                        !gate.allows(ownerTicket)) break
+                                    update(
+                                        owner.position.x / size.width,
+                                        ReferenceHeroTouch.movementAt(
+                                            owner.position.y, size.height.toFloat(), ribbonPixels,
+                                        ),
+                                    )
+                                    owner.consume()
                                 }
-                            },
-                        )
-                    }
-                    .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragStart = { position ->
-                                fingerPressed = true
-                                update(
-                                    (position.x / size.width).coerceIn(0f, 1f),
-                                    (1f - position.y / size.height).coerceIn(0f, 1f),
-                                )
-                            },
-                            onDragEnd = { fingerPressed = false },
-                            onDragCancel = { fingerPressed = false },
-                            onDrag = { change, _ ->
-                                update(
-                                    (change.position.x / size.width).coerceIn(0f, 1f),
-                                    (1f - change.position.y / size.height).coerceIn(0f, 1f),
-                                )
-                                change.consume()
-                            },
-                        )
+                            } finally {
+                                fingerPressed = false
+                            }
+                        }
                     },
             )
             Row(
@@ -171,44 +235,76 @@ fun ReferenceSoundHero(
                 verticalAlignment = Alignment.Top,
             ) {
                 Column(
-                    Modifier
-                        .weight(1f)
-                        .padding(end = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                    Modifier.weight(1f).padding(end = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    Text(
-                        "WAVETABLE / PATCH",
-                        color = OrbitalPalette.Muted,
-                        fontSize = 8.sp,
-                        letterSpacing = 1.1.sp,
-                    )
-                    Text(
-                        patchName,
-                        modifier = (if (onOpenPatchLibrary != null) Modifier.clickable(
-                            role = Role.Button, onClick = onOpenPatchLibrary,
-                        ) else Modifier).testTag("referenceHeroPatchName"),
-                        color = OrbitalPalette.Text,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .then(
+                                if (onOpenPatchLibrary != null) Modifier.clickable(
+                                    role = Role.Button, onClick = { haltGestureAndNavigate(onOpenPatchLibrary) },
+                                ) else Modifier,
+                            )
+                            .semantics {
+                                contentDescription = if (onOpenPatchLibrary != null) {
+                                    "Open patch library: $patchName"
+                                } else {
+                                    "Current patch: $patchName"
+                                }
+                            }
+                            .testTag("referenceHeroPatchName"),
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            "WAVETABLE / PATCH",
+                            color = OrbitalPalette.Muted,
+                            fontSize = 8.sp,
+                            letterSpacing = 1.1.sp,
+                        )
+                        Text(
+                            patchName,
+                            color = OrbitalPalette.Text,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         if (onPreviousPatch != null) {
                             ReferenceHeroArrow("‹", "Previous patch",
-                                onPreviousPatch, "referenceHeroPreviousPatch")
+                                { haltGestureAndNavigate(onPreviousPatch) },
+                                "referenceHeroPreviousPatch")
                         }
                         if (onNextPatch != null) {
                             ReferenceHeroArrow("›", "Next patch",
-                                onNextPatch, "referenceHeroNextPatch")
+                                { haltGestureAndNavigate(onNextPatch) },
+                                "referenceHeroNextPatch")
                         }
                     }
                 }
                 Column(
                     Modifier
                         .weight(1f)
-                        .padding(start = 6.dp),
+                        .padding(start = 6.dp)
+                        .heightIn(min = 48.dp)
+                        .then(
+                            if (onOpenEngine != null) Modifier.clickable(
+                                role = Role.Button, onClick = { haltGestureAndNavigate(onOpenEngine) },
+                            ) else Modifier,
+                        )
+                        .semantics {
+                            contentDescription = if (onOpenEngine != null) {
+                                "Open synth engine: $engineName"
+                            } else {
+                                "Current synth engine: $engineName"
+                            }
+                        }
+                        .testTag("referenceHeroEngineName"),
                     horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.Center,
                 ) {
                     Text(
                         "ENGINE",
@@ -218,9 +314,6 @@ fun ReferenceSoundHero(
                     )
                     Text(
                         engineName,
-                        modifier = (if (onOpenEngine != null) Modifier.clickable(
-                            role = Role.Button, onClick = onOpenEngine,
-                        ) else Modifier).testTag("referenceHeroEngineName"),
                         color = OrbitalPalette.Cyan,
                         fontSize = 10.sp,
                         maxLines = 1,
@@ -234,7 +327,7 @@ fun ReferenceSoundHero(
                 onChange = { x, y -> update(x, y) },
                 audioRms = audioRms,
                 transparentBackground = true,
-                height = if (compact) 88.dp else 110.dp,
+                height = ribbonHeight,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(horizontal = 7.dp)
