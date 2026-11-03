@@ -124,11 +124,11 @@ class Compact350SoundInstrumentedTest {
         var rackSwipes = 0
         while (!eighthLayer.isDisplayed() && rackSwipes < 5) {
             rack.performTouchInput {
-                val y = rowTouchY.coerceIn(2f, size.height - 2f)
-                down(Offset(size.width * .85f, y))
-                moveTo(Offset(size.width * .65f, y))
-                moveTo(Offset(size.width * .4f, y))
-                moveTo(Offset(size.width * .15f, y))
+                val y = rowTouchY.coerceIn(2f, center.y * 2f - 2f)
+                down(Offset(center.x * 1.70f, y))
+                moveTo(Offset(center.x * 1.30f, y))
+                moveTo(Offset(center.x * .80f, y))
+                moveTo(Offset(center.x * .30f, y))
                 up()
             }
             rackSwipes += 1
@@ -228,11 +228,11 @@ class Compact350SoundInstrumentedTest {
             var architectureSwipes = 0
             while (!choice.isDisplayed() && architectureSwipes < 5) {
                 editor.performTouchInput {
-                    val y = archRowTouchY.coerceIn(2f, size.height - 2f)
-                    down(Offset(size.width * .85f, y))
-                    moveTo(Offset(size.width * .65f, y))
-                    moveTo(Offset(size.width * .4f, y))
-                    moveTo(Offset(size.width * .15f, y))
+                    val y = archRowTouchY.coerceIn(2f, center.y * 2f - 2f)
+                    down(Offset(center.x * 1.70f, y))
+                    moveTo(Offset(center.x * 1.30f, y))
+                    moveTo(Offset(center.x * .80f, y))
+                    moveTo(Offset(center.x * .30f, y))
                     up()
                 }
                 architectureSwipes += 1
