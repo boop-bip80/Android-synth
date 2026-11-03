@@ -146,6 +146,8 @@ class PatchGraphPanelTest {
         }
         compose.onNodeWithTag("patchGraphNotice")
             .assertTextContains("engaged in the real voice mixer", substring = true)
+        compose.onNodeWithTag("patchOscillator0").performScrollTo().performClick()
+        compose.runOnIdle { assertFalse(layers.value[0].enabled) }
     }
 
     @Test fun draggingFxNodeAcrossCanvasReordersActualHostStages() {
