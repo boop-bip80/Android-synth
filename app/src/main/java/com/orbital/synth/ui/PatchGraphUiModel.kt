@@ -273,7 +273,12 @@ internal object PatchGraphUiModel {
         heightPx: Float,
         touchDiameterPx: Float,
     ): PatchGraphNode? {
+        // Reject off-canvas or malformed pointer geometry before nearest
+        // node matching, even with unusually large accessibility hit zones.
         if (!normalizedX.isFinite() || !normalizedY.isFinite() ||
+            normalizedX !in 0f..1f || normalizedY !in 0f..1f ||
+            !widthPx.isFinite() || !heightPx.isFinite() ||
+            !touchDiameterPx.isFinite() ||
             widthPx <= 0f || heightPx <= 0f || touchDiameterPx <= 0f) return null
         val x = normalizedX * widthPx
         val y = normalizedY * heightPx
