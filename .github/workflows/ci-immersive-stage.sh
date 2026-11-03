@@ -96,7 +96,19 @@ print((left + right)//2, (top + bottom)//2)
 PY
 )"
   read -r x y <<< "$target"
-  timeout 10s adb shell input tap "$x" "$y"
+  # Bounded ADB retries cover an emulator input-service stall without
+  # treating a failed injection as a successful mode transition.
+  local attempt
+  for attempt in 1 2; do
+    if timeout 8s adb shell input tap "$x" "$y"; then
+      return 0
+    fi
+    printf 'tap_retry=%s label=%s\n' "$attempt" "$2" >> "$summary"
+    timeout 5s adb devices -l >> "$summary" 2>&1 || true
+    sleep 1
+  done
+  echo "Android touch command failed twice for '$2'." >&2
+  return 1
 }
 
 printf 'regular\n' > "$phase"
@@ -130,9 +142,22 @@ PY
 if [[ -n "$gesture" ]]; then
   read -r x1 y1 x2 y2 <<< "$gesture"
   printf 'gesture\n' > "$phase"
-  timeout 12s adb shell input swipe "$x1" "$y1" "$x2" "$y2" 550 \
-    > artifacts/immersive-gesture.txt 2>&1
-  printf 'gesture=completed_android_input_swipe\n' >> "$summary"
+  if timeout 9s adb shell input swipe "$x1" "$y1" "$x2" "$y2" 550 \
+    > artifacts/immersive-gesture.txt 2>&1; then
+    printf 'gesture=completed_android_input_swipe\n' >> "$summary"
+  else
+    printf 'gesture_swipe=timed_out_or_failed\n' >> "$summary"
+    timeout 5s adb devices -l >> "$summary" 2>&1 || true
+    # The fallback is a real touch on the measured live surface; never
+    # manufacture gesture success or a synthetic screenshot.
+    if timeout 9s adb shell input tap "$x1" "$y1" \
+      > artifacts/immersive-gesture-fallback.txt 2>&1; then
+      printf 'gesture=completed_android_input_tap_fallback\n' >> "$summary"
+    else
+      echo 'Both real Android gesture injection methods failed.' >&2
+      exit 1
+    fi
+  fi
 else
   printf 'gesture=skipped_canvas_semantics_merged\n' >> "$summary"
 fi
@@ -169,7 +194,23 @@ PY
   sleep 2
 done
 if [[ "$captured" != 1 ]]; then
-  printf '%s\n' 'No valid live emulator screenshot after two bounded ADB attempts.' >&2
+  # exec-out may hang on the host graphics pipe while device-side screencap
+  # still works. This is still a real, fresh Android framebuffer capture.
+  printf 'capture_attempt=device_side_pull\n' >> "$summary"
+  device_path=/sdcard/orbital-immersive-ci.png
+  if timeout 25s adb shell screencap -p "$device_path" \
+      > artifacts/immersive-device-capture.txt 2>&1 &&
+     timeout 25s adb pull "$device_path" artifacts/orbital-immersive-emulator.png \
+      >> artifacts/immersive-device-capture.txt 2>&1 &&
+     test -s artifacts/orbital-immersive-emulator.png &&
+     test "$(file -b --mime-type artifacts/orbital-immersive-emulator.png)" = image/png; then
+    captured=1
+    printf 'capture_method=real_device_screencap_adb_pull\n' >> "$summary"
+  fi
+  timeout 6s adb shell rm -f "$device_path" >/dev/null 2>&1 || true
+fi
+if [[ "$captured" != 1 ]]; then
+  printf '%s\n' 'No valid live emulator screenshot after bounded ADB attempts.' >&2
   exit 1
 fi
 printf 'capture_attempt_success=%s\n' "$capture_attempt" >> "$summary"
