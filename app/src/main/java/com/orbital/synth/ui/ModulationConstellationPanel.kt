@@ -693,13 +693,21 @@ private fun ConstellationGraph(
     stepConfig: ModulationStepConfig?,
 ) {
     val motionAllowed = remember { ValueAnimator.areAnimatorsEnabled() }
-    val clock = rememberInfiniteTransition(label = "modulation-clock")
-    val phase by clock.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(9_000, easing = LinearEasing), RepeatMode.Restart),
-        label = "modulation-route-particles",
+    val eligibleForPhoton = ModulationSourceAvailability.hasAnimatedPeriodicRoute(
+        routes, lfos, stepConfig,
     )
-    val animate = if (motionAllowed) phase else 0f
+    // An unconditional infinite transition spins 60Hz Compose frames even if
+    // all 64 cables are empty/paused/unwired/zero. Keep the entire visual
+    // constellation still when there is nothing genuine to illustrate.
+    val animate = if (motionAllowed && eligibleForPhoton) {
+        val clock = rememberInfiniteTransition(label = "modulation-clock")
+        val phase by clock.animateFloat(
+            0f, 1f,
+            infiniteRepeatable(tween(9_000, easing = LinearEasing), RepeatMode.Restart),
+            label = "modulation-route-particles",
+        )
+        phase
+    } else 0f
     Canvas(
         Modifier.fillMaxWidth().height(212.dp)
             .border(1.dp, OrbitalPalette.PanelEdge, RoundedCornerShape(14.dp))
