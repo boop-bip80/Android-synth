@@ -225,16 +225,17 @@ jobs:
                 exit 1
               }
             done
-            git show FETCH_HEAD:docs/screenshots/PROVENANCE.md |
-              grep -Fq "$SOURCE_SHA" || {
-                echo "New screenshot child lacks exact source provenance." >&2
-                exit 1
-              }
-            git show FETCH_HEAD:docs/screenshots/PROVENANCE.md |
-              grep -Fq "actions/runs/$VERIFIED_RUN_ID" || {
-                echo "New screenshot child lacks exact CI run provenance." >&2
-                exit 1
-              }
+            # Read once: a grep -q pipeline under pipefail can fail with
+            # SIGPIPE even on valid matches when its producer is still writing.
+            provenance="$(git show FETCH_HEAD:docs/screenshots/PROVENANCE.md)" || {
+              echo "New screenshot child has no readable provenance file." >&2
+              exit 1
+            }
+            [[ "$provenance" == *"$SOURCE_SHA"* &&
+               "$provenance" == *"actions/runs/$VERIFIED_RUN_ID"* ]] || {
+              echo "New screenshot child lacks exact source SHA or CI run provenance." >&2
+              exit 1
+            }
             echo "Accepted one newly published screenshot-only bot child of $SOURCE_SHA."
           fi
           tag="orbital-debug-$SOURCE_SHORT"
