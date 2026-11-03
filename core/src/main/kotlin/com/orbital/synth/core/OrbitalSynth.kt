@@ -1,5 +1,6 @@
 package com.orbital.synth.core
 
+import com.orbital.synth.core.dsp.oscillator.LayeredOscillatorRack
 import com.orbital.synth.core.dsp.oscillator.Voice
 import com.orbital.synth.core.dsp.oscillator.WavetableBank
 import com.orbital.synth.core.dsp.processing.Drive
@@ -10,6 +11,7 @@ import com.orbital.synth.core.dsp.processing.StereoReverb
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicIntegerArray
+import java.util.concurrent.atomic.AtomicReferenceArray
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.max
@@ -35,6 +37,24 @@ enum class ParameterId {
 
 enum class VoiceMode { POLY, MONO, LEGATO }
 
+/**
+ * One additive oscillator lane in the 8-slot rack.
+ *
+ * Waveform: 0 sine, 0.25 triangle, 0.5 saw, 0.75 pulse, 1 glass;
+ * intermediate values continuously interpolate the band-limited families.
+ * Coarse is +/-48 semitones, fine is +/-100 cents. Slots are independent
+ * of the legacy UNISON control and disabled by default for compatibility.
+ * These immutable snapshots may be safely passed across UI/audio threads.
+ */
+data class OscillatorSlot(
+    val enabled: Boolean = false,
+    val waveform: Float = 0f,
+    val morph: Float = 1f,
+    val level: Float = 0f,
+    val coarseSemitones: Int = 0,
+    val fineCents: Float = 0f,
+)
+
 class OrbitalSynth(
     val sampleRate: Int = 48_000,
     val maxVoices: Int = 16
@@ -47,6 +67,17 @@ class OrbitalSynth(
     }
 
     private val voices = Array(maxVoices) { Voice(sampleRate) }
+    /** A rack is global patch state; every note gets its own eight oscillator phases. */
+    val oscillatorSlotCount: Int get() = LayeredOscillatorRack.SLOT_COUNT
+    private val oscillatorSlots =
+        AtomicReferenceArray<OscillatorSlot>(LayeredOscillatorRack.SLOT_COUNT).apply {
+            for (i in 0 until length()) set(i, OscillatorSlot())
+        }
+    // Preallocated, render-worker-owned snapshot makes each audio block internally
+    // consistent even when an editing finger changes a slot halfway through.
+    private val blockOscillatorSlots = Array(LayeredOscillatorRack.SLOT_COUNT) {
+        OscillatorSlot()
+    }
     private val controls = AtomicIntegerArray(ParameterId.entries.size).also { array ->
         for (id in ParameterId.entries) {
             array.set(id.ordinal, java.lang.Float.floatToRawIntBits(defaultValue(id)))
@@ -166,6 +197,49 @@ class OrbitalSynth(
         java.lang.Float.intBitsToFloat(controls.get(id.ordinal))
 
     /**
+     * Program one of eight *real* wavetable oscillators, available alongside all
+     * five existing sound engines. No lock or audio-thread allocation is required:
+     * an immutable, validated snapshot is published atomically and picked up at
+     * the start of the next audio block. Gain is de-clicked over 8 ms in each voice.
+     *
+     * Invalid non-finite values are ignored (the previous slot remains unchanged).
+     * No slot is active by default, preserving existing patches sample-for-sample.
+     */
+    fun setOscillatorSlot(
+        index: Int,
+        enabled: Boolean,
+        waveform: Float,
+        level: Float,
+        coarseSemitones: Int = 0,
+        fineCents: Float = 0f,
+        morph: Float = 1f,
+    ) {
+        require(index in 0 until oscillatorSlotCount) { "oscillator slot must be 0..7" }
+        if (!waveform.isFinite() || !morph.isFinite() ||
+            !level.isFinite() || !fineCents.isFinite()) return
+        oscillatorSlots.set(index, OscillatorSlot(
+            enabled = enabled,
+            waveform = waveform.coerceIn(0f, 1f),
+            morph = morph.coerceIn(0f, 1f),
+            level = level.coerceIn(0f, 1f),
+            coarseSemitones = coarseSemitones.coerceIn(-48, 48),
+            fineCents = fineCents.coerceIn(-100f, 100f),
+        ))
+    }
+
+    /** Current UI-side snapshot. This is not the render worker's mutable state. */
+    fun oscillatorSlot(index: Int): OscillatorSlot {
+        require(index in 0 until oscillatorSlotCount) { "oscillator slot must be 0..7" }
+        return oscillatorSlots.get(index)
+    }
+
+    fun clearOscillatorRack() {
+        for (slot in 0 until oscillatorSlotCount) {
+            oscillatorSlots.set(slot, OscillatorSlot())
+        }
+    }
+
+    /**
      * Render [frames] interleaved float stereo frames into an already allocated buffer.
      * Only the first 2*frames entries are written. No Android dependency is required.
      */
@@ -206,7 +280,13 @@ class OrbitalSynth(
         val lfoIncrement = lfoHz / sampleRate
         val modulationDepth = movement * lfoDepth
 
+        for (slot in 0 until oscillatorSlotCount) {
+            blockOscillatorSlots[slot] = oscillatorSlots.get(slot)
+        }
         for (voice in voices) {
+            for (slot in 0 until oscillatorSlotCount) {
+                voice.configureOscillatorSlot(slot, blockOscillatorSlots[slot])
+            }
             voice.configure(attackSec, decaySec, sustain, releaseSec, cutoffHz, resonance)
             voice.configureUnison(unison, detune)
             voice.configureEngine(engineModel, character, cutoffHz.toFloat(),
