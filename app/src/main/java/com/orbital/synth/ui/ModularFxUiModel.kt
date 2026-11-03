@@ -39,6 +39,9 @@ internal object ModularFxUiModel {
         FxModuleType.TREMOLO -> "PULSE TREMOLO"
         FxModuleType.CHORUS -> "PRISM CHORUS"
         FxModuleType.DELAY -> "SPACE DELAY"
+        FxModuleType.REVERB -> "HALO REVERB"
+        FxModuleType.PHASER -> "SPECTRAL PHASER"
+        FxModuleType.BITCRUSH -> "PIXEL CRUSH"
     }
 
     fun shortName(type: FxModuleType): String = when (type) {
@@ -46,6 +49,9 @@ internal object ModularFxUiModel {
         FxModuleType.TREMOLO -> "TREMOLO"
         FxModuleType.CHORUS -> "CHORUS"
         FxModuleType.DELAY -> "DELAY"
+        FxModuleType.REVERB -> "REVERB"
+        FxModuleType.PHASER -> "PHASER"
+        FxModuleType.BITCRUSH -> "CRUSH"
     }
 
     fun description(type: FxModuleType): String = when (type) {
@@ -53,6 +59,9 @@ internal object ModularFxUiModel {
         FxModuleType.TREMOLO -> "Amplitude pulses with stereo phase offset"
         FxModuleType.CHORUS -> "Independent modulated stereo delay voices"
         FxModuleType.DELAY -> "Wide tap echoes with feedback and ping-pong"
+        FxModuleType.REVERB -> "Bounded eight-line stereo FDN room and decay"
+        FxModuleType.PHASER -> "Four moving allpass stages with stereo feedback"
+        FxModuleType.BITCRUSH -> "Intentional aliasing, sample hold and reduced bits"
     }
 
     fun usesRate(type: FxModuleType): Boolean = type != FxModuleType.SATURATION
@@ -63,6 +72,9 @@ internal object ModularFxUiModel {
         FxModuleType.TREMOLO -> "PULSE DEPTH"
         FxModuleType.CHORUS -> "MOD DEPTH"
         FxModuleType.DELAY -> "FEEDBACK"
+        FxModuleType.REVERB -> "DECAY"
+        FxModuleType.PHASER -> "SWEEP"
+        FxModuleType.BITCRUSH -> "BIT DEPTH"
     }
 
     fun rateName(type: FxModuleType): String = when (type) {
@@ -70,6 +82,9 @@ internal object ModularFxUiModel {
         FxModuleType.TREMOLO -> "PULSE RATE"
         FxModuleType.CHORUS -> "CHORUS SPEED"
         FxModuleType.DELAY -> "ECHO TIME"
+        FxModuleType.REVERB -> "DAMPING"
+        FxModuleType.PHASER -> "SWEEP RATE"
+        FxModuleType.BITCRUSH -> "SAMPLE HOLD RATE"
     }
 
     fun stereoName(type: FxModuleType): String = when (type) {
@@ -77,12 +92,22 @@ internal object ModularFxUiModel {
         FxModuleType.TREMOLO -> "STEREO PHASE"
         FxModuleType.CHORUS -> "STEREO WIDTH"
         FxModuleType.DELAY -> "PING-PONG"
+        FxModuleType.REVERB -> "ROOM WIDTH"
+        FxModuleType.PHASER -> "L/R PHASE OFFSET"
+        FxModuleType.BITCRUSH -> "L/R BIT CONTRAST"
     }
 
     fun wetDisplay(value: Float): String = (sanitized(value) * 100f).roundToInt().toString() + "%"
     fun depthDisplay(type: FxModuleType, value: Float): String {
-        val scaled = sanitized(value) * if (type == FxModuleType.DELAY) 88f else 100f
-        return scaled.roundToInt().toString() + "%"
+        val safe = sanitized(value)
+        return when (type) {
+            FxModuleType.DELAY -> (safe * 88f).roundToInt().toString() + "%"
+            FxModuleType.REVERB ->
+                String.format(Locale.US, "%.1f s", 0.2f + safe * 7.8f)
+            FxModuleType.BITCRUSH ->
+                (16f - safe * 12f).roundToInt().coerceIn(4, 16).toString() + " bits"
+            else -> (safe * 100f).roundToInt().toString() + "%"
+        }
     }
 
     fun rateDisplay(type: FxModuleType, value: Float): String {
@@ -95,6 +120,12 @@ internal object ModularFxUiModel {
                 String.format(Locale.US, "%.2f Hz", 0.05 + safe * 6.0)
             FxModuleType.DELAY ->
                 (25f + 1150f * safe).roundToInt().toString() + " ms"
+            FxModuleType.REVERB ->
+                (safe * 100f).roundToInt().toString() + "% DARK"
+            FxModuleType.PHASER ->
+                String.format(Locale.US, "%.2f Hz", 0.04 * 2.0.pow(safe.toDouble() * 7.65))
+            FxModuleType.BITCRUSH ->
+                (250.0 * 80.0.pow(safe.toDouble())).roundToInt().toString() + " Hz"
         }
     }
 
@@ -102,8 +133,12 @@ internal object ModularFxUiModel {
         val scaled = sanitized(value)
         return when (type) {
             FxModuleType.SATURATION -> "NOT USED"
-            FxModuleType.TREMOLO -> (scaled * 180f).roundToInt().toString() + "°"
-            FxModuleType.CHORUS, FxModuleType.DELAY -> wetDisplay(scaled)
+            FxModuleType.TREMOLO, FxModuleType.PHASER ->
+                (scaled * 180f).roundToInt().toString() + "°"
+            FxModuleType.CHORUS, FxModuleType.DELAY, FxModuleType.REVERB ->
+                wetDisplay(scaled)
+            FxModuleType.BITCRUSH ->
+                String.format(Locale.US, "%+.1f bit L/R", (scaled - 0.5f) * 4f)
         }
     }
 }

@@ -60,7 +60,7 @@ import kotlin.math.sin
 /**
  * A visually tactile editor for an ordered, HOST-OWNED [FxModuleConfig] snapshot.
  *
- * The four stereo processors are real DSP implementations in ModularFxChain. They
+ * The seven stereo processors are real DSP implementations in ModularFxChain. They
  * are not automatically attached to the live instrument merely because this
  * editor is mounted: the host must forward callbacks into the audio block worker.
  * This component never creates an audio engine, PCM stream, or phantom FFT.
@@ -668,4 +668,7 @@ private fun fxTint(type: FxModuleType): Color = when (type) {
     FxModuleType.TREMOLO -> OrbitalPalette.Cyan
     FxModuleType.CHORUS -> OrbitalPalette.Violet
     FxModuleType.DELAY -> OrbitalPalette.Teal
+    FxModuleType.REVERB -> Color(0xFF8AA8FF)
+    FxModuleType.PHASER -> Color(0xFF60E4C8)
+    FxModuleType.BITCRUSH -> Color(0xFFFF6D98)
 }

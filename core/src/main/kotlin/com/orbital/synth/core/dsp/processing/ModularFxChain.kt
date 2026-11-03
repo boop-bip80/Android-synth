@@ -15,11 +15,15 @@ import kotlin.math.sqrt
  * TREMOLO: depth=amplitude modulation, rate=0.05..12.85 Hz, stereo=0..180-degree offset.
  * CHORUS: depth=delay modulation, rate=0.05..6.05 Hz, stereo=stereo width.
  * DELAY: depth=feedback (maximum 0.88), rate=25..1175 ms, stereo=ping-pong.
+ * REVERB: depth=0.2..8 s decay, rate=HF damping, stereo=wet width.
+ * PHASER: depth=sweep+bounded feedback, rate=0.04..8 Hz, stereo=phase offset.
+ * BITCRUSH: depth=4..16 bits, rate=250..20,000 Hz hold, stereo=bit-depth contrast.
  *
  * All level controls are normalized 0..1; [wet] is dry/wet at the module boundary.
  * This is an original effects *chain*, not a replacement for the existing master FX.
  */
-enum class FxModuleType { SATURATION, TREMOLO, CHORUS, DELAY }
+// Append only: V4/V5 patch files use stable enum names and existing IDs.
+enum class FxModuleType { SATURATION, TREMOLO, CHORUS, DELAY, REVERB, PHASER, BITCRUSH }
 
 data class FxModuleConfig(
     val type: FxModuleType = FxModuleType.SATURATION,
@@ -149,7 +153,8 @@ class ModularFxChain(
         (if (value.isFinite()) value else 0f).coerceIn(-1f, 1f)
 
     private class FxStage(sampleRate: Int) {
-        var requested = FxModuleConfig()
+        private val emptyConfig = FxModuleConfig()
+        var requested = emptyConfig
             private set
         val needsProcessing: Boolean
             get() = wet > 0f || targetWet > 0f || pendingTypeSwitch
@@ -158,6 +163,9 @@ class ModularFxChain(
         private val delay = StereoDelay(sampleRate, maxDelaySeconds = 1.25f).apply {
             resetForBypass()
         }
+        private val reverb = StereoReverb(sampleRate).apply { resetForBypass() }
+        private val phaser = StereoPhaser(sampleRate).apply { resetForBypass() }
+        private val crusher = StereoBitcrusher(sampleRate).apply { resetForBypass() }
         private val wetOutput = FloatArray(2)
         private val transitionFrames = (sampleRate * 0.010).toInt().coerceAtLeast(1)
         private val depthSlew = (1.0 - exp(-1.0 / (sampleRate * 0.008))).toFloat()
@@ -194,8 +202,7 @@ class ModularFxChain(
         private fun applyActive(config: FxModuleConfig, resetNewType: Boolean) {
             active = config
             if (resetNewType) {
-                chorus.resetForBypass()
-                delay.resetForBypass()
+                resetProcessorHistories()
                 currentDepth = config.depth
             }
             // These are block-rate configuration calls and may use trig/pow.
@@ -213,6 +220,18 @@ class ModularFxChain(
                     pingPong = config.stereo,
                 )
                 FxModuleType.TREMOLO -> configureTremolo(config.rate, config.stereo)
+                FxModuleType.REVERB -> reverb.configure(
+                    decaySeconds = 0.2f + config.depth * 7.8f,
+                    damping = config.rate,
+                    wet = 1f,
+                    diffusion = 0.78f,
+                    stereoWidth = config.stereo,
+                )
+                FxModuleType.PHASER -> phaser.configure(
+                    rateHz = (0.04 * 2.0.pow(config.rate.toDouble() * 7.65)).toFloat(),
+                    stereoPhase = config.stereo,
+                )
+                FxModuleType.BITCRUSH -> crusher.configure(config.rate, config.stereo)
                 FxModuleType.SATURATION -> Unit
             }
         }
@@ -257,8 +276,7 @@ class ModularFxChain(
 
             if (wet == 0f && targetWet == 0f) {
                 if (!historyCleared) {
-                    chorus.resetForBypass()
-                    delay.resetForBypass()
+                    resetProcessorHistories()
                     historyCleared = true
                 }
                 output[0] = left
@@ -271,8 +289,7 @@ class ModularFxChain(
                 // The synth then skips this slot on future silent blocks; retire
                 // echo/chorus history NOW, not on a hypothetical next callback.
                 if (targetWet == 0f && !historyCleared) {
-                    chorus.resetForBypass()
-                    delay.resetForBypass()
+                    resetProcessorHistories()
                     historyCleared = true
                 }
                 output[0] = left
@@ -305,16 +322,30 @@ class ModularFxChain(
                 }
                 FxModuleType.CHORUS -> chorus.process(left, right, wetOutput, 0)
                 FxModuleType.DELAY -> delay.process(left, right, wetOutput, 0)
+                FxModuleType.REVERB -> reverb.process(left, right, wetOutput, 0)
+                FxModuleType.PHASER ->
+                    phaser.process(left, right, currentDepth, wetOutput, 0)
+                FxModuleType.BITCRUSH ->
+                    crusher.process(left, right, currentDepth, wetOutput, 0)
             }
             output[0] = blend(left, wetOutput[0], wet)
             output[1] = blend(right, wetOutput[1], wet)
         }
 
-        fun reset() {
-            requested = FxModuleConfig()
-            active = requested
+        private fun resetProcessorHistories() {
             chorus.resetForBypass()
             delay.resetForBypass()
+            reverb.resetForBypass()
+            phaser.resetForBypass()
+            crusher.resetForBypass()
+        }
+
+        fun reset() {
+            // Reuse one immutable empty config per stage: patch recalls execute
+            // on the audio worker and must never allocate their reset marker.
+            requested = emptyConfig
+            active = requested
+            resetProcessorHistories()
             wet = 0f
             targetWet = 0f
             wetStep = 0f
