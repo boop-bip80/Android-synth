@@ -9,6 +9,7 @@ import kotlin.math.abs
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
@@ -203,6 +204,56 @@ class ImmersiveVisualFieldTest {
                 )
             }
         }
+    }
+
+    @Test fun bassBandVisualClearsToPhysicalBlackWhenDrawGateCloses() {
+        // Synthetic UI fields here isolate the renderer; the separate
+        // AcceptedPcmBandAudioTrackTest validates the actual output source.
+        var sounding by mutableStateOf(true)
+        compose.setContent {
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                ImmersiveVisualField(
+                    modifier = Modifier.fillMaxSize(),
+                    morph = .76f, movement = .54f,
+                    cutoff = .65f, resonance = .73f,
+                    touchIntensity = 0f,
+                    audioRms = if (sounding) .49f else 0f,
+                    audioPeak = if (sounding) .61f else 0f,
+                    audioLowBand = if (sounding) .93f else 0f,
+                    audioMidBand = if (sounding) .05f else 0f,
+                    audioHighBand = if (sounding) .02f else 0f,
+                    skipArtwork = !sounding,
+                )
+            }
+        }
+        val field = compose.onNodeWithTag("immersiveVisualField").assertIsDisplayed()
+        val screenshot = RealAndroidFrameCapture(compose, compose.activity)
+        fun luminousSamples(label: String): Int =
+            screenshot.capture(field, label).use { frame ->
+                var bright = 0
+                for (iy in 0 until 44) for (ix in 0 until 44) {
+                    val px = ((ix + .5f) * frame.width / 44).toInt()
+                        .coerceIn(0, frame.width - 1)
+                    val py = ((iy + .5f) * frame.height / 44).toInt()
+                        .coerceIn(0, frame.height - 1)
+                    val color = frame.argbAt(px, py)
+                    if (maxOf(PixelColor.red(color), PixelColor.green(color),
+                            PixelColor.blue(color)) > 10) bright++
+                }
+                bright
+            }
+        val active = luminousSamples("renderer-bass-band-active")
+        assertTrue(
+            "An injected bass-band value should produce actual rendered caustic pixels: $active",
+            active >= 35,
+        )
+        compose.runOnIdle { sounding = false }
+        val stopped = luminousSamples("renderer-draw-gate-black")
+        assertTrue(
+            "When the stage's draw gate becomes fully black, no " +
+                "cached path or spectrum residue may remain: stopped=$stopped",
+            stopped <= 2,
+        )
     }
 
     @Test fun invalidTelemetryAndGestureValuesDoNotCrashCanvas() {
