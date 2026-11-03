@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.setValue
@@ -203,6 +204,11 @@ fun OrbitalScreen(
     onStageTouchSettingsChange: ((StageTouchSettings) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
+    // A selected SOUND XY pair survives tab swaps and Activity recreation.
+    // The independent FOCUS touch-performance configuration is unaffected.
+    var soundXyModeName by rememberSaveable {
+        mutableStateOf(ReferenceXyMode.PERFORMANCE.name)
+    }
     var immersiveMode by remember { mutableStateOf(false) }
     var soundAdvancedExpanded by remember { mutableStateOf(false) }
     var soundGraphExpanded by remember { mutableStateOf(false) }
@@ -246,6 +252,17 @@ fun OrbitalScreen(
     val engineId = remember { ParameterId.entries.firstOrNull { it.name == "ENGINE" } }
     val engineValue = engineId?.let(parameter) ?: 0f
     val engineChoice = EngineArchitectures[engineArchitectureIndex(engineValue)]
+    val requestedXyMode = ReferenceXyMode.entries.firstOrNull {
+        it.name == soundXyModeName
+    } ?: ReferenceXyMode.PERFORMANCE
+    val effectiveXyMode = requestedXyMode.resolveFallback(engineValue)
+    LaunchedEffect(requestedXyMode, effectiveXyMode) {
+        if (requestedXyMode != effectiveXyMode) {
+            // Engine 3 FM and engine 4 PD have stepped WAVE choices.
+            // Do not carry an unsupported XY assignment into a new engine.
+            soundXyModeName = effectiveXyMode.name
+        }
+    }
     val currentOn by rememberUpdatedState(onNoteOn)
     val currentOff by rememberUpdatedState(onNoteOff)
     var sequencerPlaying by remember { mutableStateOf(false) }
@@ -603,6 +620,8 @@ fun OrbitalScreen(
                         onPreviousPatch = onPreviousPatch,
                         onNextPatch = onNextPatch,
                         onOpenEngine = { soundAdvancedExpanded = true },
+                        xyMode = effectiveXyMode,
+                        onXyModeSelected = { mode -> soundXyModeName = mode.name },
                     )
                     Row(
                         Modifier
