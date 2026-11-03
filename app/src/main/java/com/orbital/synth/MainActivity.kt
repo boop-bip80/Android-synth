@@ -238,6 +238,7 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 OrbitalScreen(
                     state = screenState,
+                    synthSampleRate = synth.sampleRate,
                     onNoteOn = { note ->
                         if (note in 0..127) audioOutput.noteOn(TOUCH_SOURCE_ID, 0, note, 127)
                     },

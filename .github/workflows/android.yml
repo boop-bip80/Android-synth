@@ -136,14 +136,14 @@ jobs:
           cores: 2
           ram-size: 3072M
           heap-size: 512M
-          disk-size: ${{ matrix.suite == 'compact' && '4000M' || '6000M' }}
+          disk-size: ${{ (matrix.suite == 'compact' || matrix.suite == 'general-0' || matrix.suite == 'general-1') && '4000M' || '6000M' }}
           disable-animations: true
           emulator-options: -no-window -gpu swangle -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           # The runner executes each nonempty script line in a separate `sh -c`.
           # Use one Bash command so traps, pipefail and exit codes work together.
           script: ${{ matrix.suite == 'compact' && 'bash .github/workflows/ci-compact-geometry.sh' || matrix.suite == 'stage' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-live-stage-framebuffer.sh' || matrix.suite == 'visuals' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-immersive-stage.sh && bash .github/workflows/ci-oscillator-workbench.sh && bash .github/workflows/ci-landscape.sh' || matrix.suite == 'compact350' && 'bash .github/workflows/ci-compact350.sh' || matrix.suite == 'restart' && 'bash .github/workflows/ci-process-restart.sh && bash .github/workflows/ci-stage-bootstrap.sh' || 'bash .github/workflows/ci-emulator.sh' }}
       - name: Upload real emulator screenshots
-        if: ${{ always() && matrix.suite != 'compact350' }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: orbital-api35-${{ matrix.suite }}-emulator-screenshot
@@ -158,6 +158,8 @@ jobs:
             artifacts/compact-350-sound.png
             artifacts/compact-350-fx.png
             artifacts/compact-350-sound-return.png
+            artifacts/orbital-compact350-osc8-selector.png
+            artifacts/orbital-compact350-luminous.png
           # On a green job, a missing deliverable is a CI failure; on a failed
           # build/emulator run, retain best-effort artifact diagnostics.
           if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}

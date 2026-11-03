@@ -30,6 +30,20 @@ collect_diagnostics() {
   timeout 12s adb logcat -d -t 1500 -v threadtime > artifacts/emulator-logcat.txt 2>&1
   timeout 12s adb shell dumpsys meminfo com.orbital.synth > artifacts/app-memory.txt 2>&1
   timeout 12s adb shell dumpsys activity activities > artifacts/activity-state.txt 2>&1
+  # On a failed assertion, preserve the exact physical Android framebuffer
+  # captured by the test (never a generated/mock image or post-crash substitute).
+  if (( status != 0 )); then
+    if timeout 12s adb exec-out run-as com.orbital.synth \
+        cat files/orbital-compact350-capture-failure.png \
+        > artifacts/diagnostic-screen.png 2>/dev/null &&
+       [[ -s artifacts/diagnostic-screen.png ]]; then
+      sha256sum artifacts/diagnostic-screen.png \
+        > artifacts/compact350-failed-frame-sha256.txt
+      echo 'Preserved real failed compact350 foreground screenshot in diagnostics.'
+    elif [[ ! -s artifacts/diagnostic-screen.png ]]; then
+      rm -f artifacts/diagnostic-screen.png
+    fi
+  fi
   timeout 8s adb devices -l > artifacts/compact350-devices-after.txt 2>&1
   timeout 8s sudo dmesg --ctime > artifacts/compact350-host-kernel.txt 2>&1
   if [[ -s artifacts/emulator-full-logcat.txt ]] &&
@@ -136,4 +150,80 @@ print("Compact 350dp SOUND: exactly two real-device JUnit PASS cases")
 PY
 printf '%s\n' 'PASS: exactly 2 isolated real API35 JUnit cases; oscillator scroll, five ENGINE choices, piano notes' \
   > artifacts/compact350-junit-summary.txt
+
+# Gradle UTP's connected-test cleanup can clear app-private files after it
+# reports its two JUnit cases. Those two cases above MUST still pass/XML-match.
+# Re-install the EXACT previously SHA-logged debug/test APKs and rerun ONLY
+# the real OSC8 physical screenshot test with direct AndroidJUnitRunner, as
+# proven in STAGE/VISUALS. Capture/stream both PNGs before any UTP cleanup.
+printf '%s\n' 'reinstall-exact-apks-for-direct-real-frame-capture' > artifacts/emulator-phase.txt
+timeout 40s adb install -r "$app_apk"
+timeout 40s adb install -r "$test_apk"
+printf '%s\n' 'direct-extra-real-compact350-screenshot-instrumentation' > artifacts/emulator-phase.txt
+timeout 180s adb shell am instrument -w -r \
+  -e class 'com.orbital.synth.ui.Compact350SoundInstrumentedTest#shortLandscapeSoundHasReachableEightLayerEditorAndAnchoredPiano' \
+  com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
+  | tee artifacts/compact350-direct-capture-instrumentation.txt
+grep -Eq 'OK \(1 test\)' artifacts/compact350-direct-capture-instrumentation.txt || {
+  echo 'Extra genuine physical OSC8 screenshot capture method did not pass.' >&2
+  exit 1
+}
+if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_ABORTED' \
+    artifacts/compact350-direct-capture-instrumentation.txt; then
+  echo 'Direct compact350 instrumented capture reported failure.' >&2
+  exit 1
+fi
+printf '%s\n' 'extra_direct_capture=1_strict_pass' >> artifacts/instrumentation-suite.txt
+# Provenance: the test logs both actual Bitmap PNG lengths and this list
+# confirms the app-private files exist under the same debug package.
+timeout 12s adb shell run-as com.orbital.synth ls -l files \
+  > artifacts/compact350-app-files-before-extract.txt 2>&1 || true
+
+# Test #1 saves TWO genuine UiAutomation framebuffers: selected OSC8
+# chip + anchored piano on the first screen, then physically swiped/sculpted
+# OSC8 glowing waveform. Neither image may be absent/blank/invalid.
+printf '%s\n' 'extract-two-physical-compact-oscillator-screenshots' > artifacts/emulator-phase.txt
+for shot in orbital-compact350-osc8-selector.png orbital-compact350-luminous.png; do
+  extracted=0
+  for attempt in 1 2; do
+    if timeout 20s adb exec-out run-as com.orbital.synth \
+        cat "files/$shot" > "artifacts/$shot" &&
+       [[ -s "artifacts/$shot" ]] &&
+       [[ "$(file -b --mime-type "artifacts/$shot")" == "image/png" ]]; then
+      extracted=1
+      break
+    fi
+    printf 'retry=%s,shot=%s,bytes=%s\n' "$attempt" "$shot" \
+      "$(stat -c%s "artifacts/$shot" 2>/dev/null || printf 0)" \
+      >> artifacts/compact350-extract-retries.txt
+    sleep 2
+  done
+  [[ "$extracted" == 1 ]] || {
+    echo "Unable to extract genuine physical compact350 PNG: $shot" >&2
+    exit 1
+  }
+done
+python3 - <<'PY'
+from pathlib import Path
+import struct
+
+names = ("orbital-compact350-osc8-selector.png", "orbital-compact350-luminous.png")
+evidence = ["source=android.uiAutomation.takeScreenshot", "exact_test_cases=2",
+            "test=OSC8-selected-pinned-piano-then-physical-wave-XY"]
+for name in names:
+    path = Path("artifacts") / name
+    raw = path.read_bytes()
+    if len(raw) < 4096 or raw[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit(f"Missing/invalid actual API35 framebuffer PNG: {name}")
+    width, height = struct.unpack(">II", raw[16:24])
+    if width < 360 or height < 350:
+        raise SystemExit(f"Real emulator framebuffer too small: {name} {width}x{height}")
+    if raw[-12:] != b"\x00\x00\x00\x00IEND\xaeB\x60\x82":
+        raise SystemExit(f"Truncated native screenshot with no PNG IEND: {name}")
+    evidence.append(f"{name}={width}x{height};{len(raw)}bytes")
+    print(f"Physical OSC8 screenshot PASS: {name}, {width}x{height}, {len(raw)} bytes")
+Path("artifacts/compact350-native-framebuffer.txt").write_text(
+    "\n".join(evidence) + "\n", encoding="utf8"
+)
+PY
 printf '%s\n' 'complete' > artifacts/emulator-phase.txt

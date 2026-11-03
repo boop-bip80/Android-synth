@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.setValue
@@ -85,7 +86,6 @@ import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import com.orbital.synth.core.music.SequencerNote
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlin.math.pow
 import kotlin.math.roundToInt
 
 enum class PlayMode { POLY, MONO, LEGATO }
@@ -201,8 +201,15 @@ fun OrbitalScreen(
     /** Real output PCM telemetry; read only while the immersive stage is visible. */
     onReadAudioVisual: (() -> AudioVisualSnapshot)? = null,
     onStageTouchSettingsChange: ((StageTouchSettings) -> Unit)? = null,
+    /** Rendering rate of the ONE host OrbitalSynth for exact filter Hz readouts. */
+    synthSampleRate: Int = 48_000,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
+    // A selected SOUND XY pair survives tab swaps and Activity recreation.
+    // The independent FOCUS touch-performance configuration is unaffected.
+    var soundXyModeName by rememberSaveable {
+        mutableStateOf(ReferenceXyMode.PERFORMANCE.name)
+    }
     var immersiveMode by remember { mutableStateOf(false) }
     var soundAdvancedExpanded by remember { mutableStateOf(false) }
     var soundGraphExpanded by remember { mutableStateOf(false) }
@@ -246,6 +253,17 @@ fun OrbitalScreen(
     val engineId = remember { ParameterId.entries.firstOrNull { it.name == "ENGINE" } }
     val engineValue = engineId?.let(parameter) ?: 0f
     val engineChoice = EngineArchitectures[engineArchitectureIndex(engineValue)]
+    val requestedXyMode = ReferenceXyMode.entries.firstOrNull {
+        it.name == soundXyModeName
+    } ?: ReferenceXyMode.PERFORMANCE
+    val effectiveXyMode = requestedXyMode.resolveFallback(engineValue)
+    LaunchedEffect(requestedXyMode, effectiveXyMode) {
+        if (requestedXyMode != effectiveXyMode) {
+            // Engine 3 FM and engine 4 PD have stepped WAVE choices.
+            // Do not carry an unsupported XY assignment into a new engine.
+            soundXyModeName = effectiveXyMode.name
+        }
+    }
     val currentOn by rememberUpdatedState(onNoteOn)
     val currentOff by rememberUpdatedState(onNoteOff)
     var sequencerPlaying by remember { mutableStateOf(false) }
@@ -593,6 +611,7 @@ fun OrbitalScreen(
                         compact = compactOrbitLayout,
                         audioRms = soundVisual.rms,
                         audioPeak = soundVisual.peak,
+                        synthSampleRate = synthSampleRate,
                         patchName = state.patchName,
                         patchId = state.activePatchId,
                         patchEpoch = state.performanceResetEpoch,
@@ -603,6 +622,8 @@ fun OrbitalScreen(
                         onPreviousPatch = onPreviousPatch,
                         onNextPatch = onNextPatch,
                         onOpenEngine = { soundAdvancedExpanded = true },
+                        xyMode = effectiveXyMode,
+                        onXyModeSelected = { mode -> soundXyModeName = mode.name },
                     )
                     Row(
                         Modifier
@@ -2850,8 +2871,3 @@ private fun defaultValue(id: ParameterId): Float = when (id) {
 }
 
 private fun percent(value: Float): String = (value.coerceIn(0f, 1f) * 100f).roundToInt().toString() + "%"
-private fun cutoffLabel(value: Float): String {
-    val hz = 40.0 * 400.0.pow(value.coerceIn(0f, 1f).toDouble())
-    return if (hz >= 1000.0) "%.1f kHz".format(java.util.Locale.US, hz / 1000.0)
-    else hz.roundToInt().toString() + " Hz"
-}

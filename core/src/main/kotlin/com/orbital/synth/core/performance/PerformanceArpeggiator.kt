@@ -2,6 +2,7 @@ package com.orbital.synth.core.performance
 
 import com.orbital.synth.core.music.NoteEventKind
 import com.orbital.synth.core.music.TimedNoteEvent
+import com.orbital.synth.core.music.TimedNoteSink
 import kotlin.math.roundToLong
 
 /** Distinct musical traversal strategies; all use a stable note pool per step. */
@@ -192,9 +193,25 @@ class PerformanceArpeggiator(
     fun advance(frames: Int): List<TimedNoteEvent> {
         require(frames in 0..2_000_000)
         if (!isPlaying || frames == 0) return emptyList()
+        // Offline API remains source-compatible; worker renderers use advanceInto.
+        val events = ArrayList<TimedNoteEvent>()
+        advanceInto(frames, TimedNoteSink { sampleTime, kind, note, velocity ->
+            events.add(TimedNoteEvent(sampleTime, kind, note, velocity))
+        })
+        return events
+    }
+
+    /**
+     * Emit sample-addressed events through a caller-owned reusable sink.
+     * No List, TimedNoteEvent, iterator or closure is created by this path.
+     * The sink must not call back into the same arpeggiator.
+     */
+    fun advanceInto(frames: Int, sink: TimedNoteSink) {
+        require(frames in 0..2_000_000)
+        if (!isPlaying || frames == 0) return
         require(cursorSample <= Long.MAX_VALUE - frames)
         val end = cursorSample + frames
-        val events = ArrayList<TimedNoteEvent>()
+        cursorSample = end
 
         while (true) {
             val stepTime = sampleAtStep(nextStep)
@@ -204,16 +221,15 @@ class PerformanceArpeggiator(
             } else {
                 Long.MAX_VALUE
             }
-            val due = minOf(stepTime, offTime, retriggerTime)
-            if (due >= end) break
+            if (minOf(stepTime, offTime, retriggerTime) >= end) break
 
             when {
-                // The previous voice must finish before a same-sample retrigger.
+                // Release all due pitches ascending before a same-sample retrigger.
                 offTime <= stepTime && offTime <= retriggerTime -> {
                     for (note in 0..127) {
                         if (activeOffTime[note] == offTime) {
                             activeOffTime[note] = Long.MAX_VALUE
-                            events += TimedNoteEvent(offTime, NoteEventKind.NOTE_OFF, note)
+                            sink.emit(offTime, NoteEventKind.NOTE_OFF, note, 0)
                         }
                     }
                 }
@@ -221,12 +237,9 @@ class PerformanceArpeggiator(
                     prepareStep(nextStep, stepTime)
                     nextStep++
                 }
-                else -> emitRatchet(retriggerTime, events)
+                else -> emitRatchet(retriggerTime, sink)
             }
         }
-
-        cursorSample = end
-        return events
     }
 
     private fun prepareStep(ordinal: Long, whenSample: Long) {
@@ -266,7 +279,7 @@ class PerformanceArpeggiator(
         ratchetCount = settings.ratchets
     }
 
-    private fun emitRatchet(atSample: Long, out: MutableList<TimedNoteEvent>) {
+    private fun emitRatchet(atSample: Long, sink: TimedNoteSink) {
         val index = ratchetIndex
         val next = if (index + 1 == ratchetCount) {
             ratchetEnd
@@ -277,12 +290,10 @@ class PerformanceArpeggiator(
         for (slot in 0 until selectedCount) {
             val note = selectedNote[slot]
             if (activeOffTime[note] != Long.MAX_VALUE) {
-                out += TimedNoteEvent(atSample, NoteEventKind.NOTE_OFF, note)
+                sink.emit(atSample, NoteEventKind.NOTE_OFF, note, 0)
             }
             activeOffTime[note] = atSample + gateSamples
-            out += TimedNoteEvent(
-                atSample, NoteEventKind.NOTE_ON, note, selectedVelocity[slot]
-            )
+            sink.emit(atSample, NoteEventKind.NOTE_ON, note, selectedVelocity[slot])
         }
         ratchetIndex++
     }
