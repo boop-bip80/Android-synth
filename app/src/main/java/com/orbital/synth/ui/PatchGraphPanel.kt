@@ -444,7 +444,7 @@ fun PatchGraphPanel(
                     val word = when (node.kind) {
                         PatchNodeKind.FX_SLOT -> (node.slot + 1).toString()
                         PatchNodeKind.MOD_BUS -> node.destination?.name
-                            ?.take(6) ?: node.label
+                            ?.take(3) ?: node.label
                         else -> node.label
                     }
                     native.drawText(
@@ -836,6 +836,10 @@ private fun patchNodeTint(node: PatchGraphNode): Color = when (node.kind) {
         FxModuleType.TREMOLO -> OrbitalPalette.Cyan
         FxModuleType.CHORUS -> OrbitalPalette.Violet
         FxModuleType.DELAY -> OrbitalPalette.Teal
+        FxModuleType.REVERB -> OrbitalPalette.Blue
+        FxModuleType.PHASER -> OrbitalPalette.Cyan
+        FxModuleType.BITCRUSH -> OrbitalPalette.Gold
         null -> OrbitalPalette.Muted
+        else -> OrbitalPalette.Violet
     }
 }
