@@ -1,5 +1,6 @@
 package com.orbital.synth.core.dsp.oscillator
 
+import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.dsp.analog.LadderFilter
 import com.orbital.synth.core.dsp.analog.SemFilter
 import com.orbital.synth.core.dsp.digital.FmAlgorithm
@@ -136,6 +137,10 @@ internal class Voice(private val sampleRate: Int) {
     private var engineSwitchSeed = 0f
     private var lastRenderedSample = 0f
     private var ghostLastSample = 0f
+    private var ghostHadRack = false
+    // Eight independent, band-limited oscillator phases owned by this voice.
+    // Shared patch edits arrive only from the audio worker at block boundaries.
+    private val oscillatorRack = LayeredOscillatorRack(sampleRate)
     private val ladder = LadderFilter(sampleRate)
     private val sem = SemFilter(sampleRate)
     private val ghostLadder = LadderFilter(sampleRate)
@@ -150,6 +155,11 @@ internal class Voice(private val sampleRate: Int) {
             fm.setOperatorEnvelope(operator, 0.0, 0.01, 1f, 0.05)
         }
         phaseDistortion.setEnvelope(0.0, 0.01, 1f, 0.05)
+    }
+
+    fun configureOscillatorSlot(index: Int, slot: OscillatorSlot) {
+        oscillatorRack.configure(index, slot)
+        if (!active && !hasTail) oscillatorRack.primeSilentSlot(index)
     }
 
     /** Called once per render block on the audio worker, never on the UI thread. */
@@ -278,6 +288,7 @@ internal class Voice(private val sampleRate: Int) {
             ghostA2 = a2
             ghostA3 = a3
             ghostEngineModel = engineModel
+            ghostHadRack = oscillatorRack.hasAudibleLayers
             ghostLastSample = lastRenderedSample
             if (engineModel == 1) ladder.copyStateTo(ghostLadder)
             if (engineModel == 2) sem.copyStateTo(ghostSem)
@@ -294,6 +305,7 @@ internal class Voice(private val sampleRate: Int) {
         phase = 0.0
         lowerPhase = 0.0
         upperPhase = 0.0
+        oscillatorRack.resetPhase()
         integrator1 = 0.0
         integrator2 = 0.0
         ladder.reset()
@@ -338,6 +350,7 @@ internal class Voice(private val sampleRate: Int) {
         integrator1 = 0.0
         integrator2 = 0.0
         ghostSamples = 0
+        oscillatorRack.resetPhase()
         ladder.reset()
         sem.reset()
         ghostLadder.reset()
@@ -357,6 +370,9 @@ internal class Voice(private val sampleRate: Int) {
                 max(detuneUp, targetDetuneUp)
             mipLevel = WavetableBank.levelForFrequency(high, sampleRate)
             mipFade = WavetableBank.fadeToLowerLevel(high, sampleRate, mipLevel)
+            oscillatorRack.preparePitch(
+                max(frequency, targetFrequency) * maxPitchMultiplier
+            )
         }
     }
 
@@ -403,7 +419,13 @@ internal class Voice(private val sampleRate: Int) {
                     4 -> phaseDistortion.nextSampleAtFrequency(frequency, pitchMultiplier)
                     else -> waveSample
                 }
-                val input = (oscillator * velocity * amplitude).toDouble()
+                // The configured rack is audible in ALL five synthesis architectures.
+                // Eight independently-tuned, wavetable-mip-safe oscillators mix
+                // alongside the original engine, with bounded normalization.
+                val extraOscillators = oscillatorRack.nextSample(frequency * pitchMultiplier)
+                val mixedOscillator = (oscillator + extraOscillators) /
+                    (1f + oscillatorRack.totalGain)
+                val input = (mixedOscillator * velocity * amplitude).toDouble()
                 val filtered = when (engineModel) {
                     1 -> ladder.process(input.toFloat())
                     2 -> sem.process(input.toFloat())
@@ -433,7 +455,7 @@ internal class Voice(private val sampleRate: Int) {
 
         if (ghostSamples > 0) {
             val fade = ghostSamples / 64f
-            if (ghostEngineModel >= 3) {
+            if (ghostEngineModel >= 3 || ghostHadRack) {
                 // FM/PD oscillator graphs are independent and cannot be copied cheaply.
                 // A 64-sample tail of the actual last output avoids falling back to the
                 // wrong wavetable family when stealing a digital voice.

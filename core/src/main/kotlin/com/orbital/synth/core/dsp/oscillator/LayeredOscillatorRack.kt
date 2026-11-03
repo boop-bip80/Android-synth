@@ -1,0 +1,141 @@
+package com.orbital.synth.core.dsp.oscillator
+
+import com.orbital.synth.core.OscillatorSlot
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.pow
+
+/**
+ * Eight independently programmable, band-limited additive layers for one Voice.
+ *
+ * A layer is a real oscillator, not a detuned copy of the global WAVE control:
+ * it owns its own phase, waveform, morph, level and semitone/cents tuning.
+ * All arrays are allocated at construction. Only the audio render thread may call
+ * configure(), preparePitch(), resetPhase() or nextSample(). UI edits are published
+ * as immutable OscillatorSlot snapshots by OrbitalSynth between render blocks.
+ */
+internal class LayeredOscillatorRack(private val sampleRate: Int) {
+    companion object { const val SLOT_COUNT = 8 }
+
+    private val applied = arrayOfNulls<OscillatorSlot>(SLOT_COUNT)
+    private val phases = DoubleArray(SLOT_COUNT)
+    private val wave = FloatArray(SLOT_COUNT)
+    private val targetWave = FloatArray(SLOT_COUNT)
+    private val morph = FloatArray(SLOT_COUNT) { 1f }
+    private val targetMorph = FloatArray(SLOT_COUNT) { 1f }
+    private val currentGain = FloatArray(SLOT_COUNT)
+    private val targetGain = FloatArray(SLOT_COUNT)
+    private val currentRatio = DoubleArray(SLOT_COUNT) { 1.0 }
+    private val targetRatio = DoubleArray(SLOT_COUNT) { 1.0 }
+    private val mipCeilingRatio = DoubleArray(SLOT_COUNT) { 1.0 }
+    private val mipLevel = IntArray(SLOT_COUNT)
+    private val mipFade = FloatArray(SLOT_COUNT)
+
+    // 8 ms click-free level/wave/tuning motion; independent of audio buffer length.
+    private val slew = (1.0 - exp(-1.0 / (sampleRate * 0.008))).toFloat()
+    private var hasLayers = false
+
+    var totalGain: Float = 0f
+        private set
+
+    val hasAudibleLayers: Boolean get() = hasLayers
+
+    fun configure(index: Int, slot: OscillatorSlot) {
+        if (applied[index] === slot) return
+        applied[index] = slot
+        targetWave[index] = slot.waveform
+        targetMorph[index] = slot.morph
+        targetGain[index] = if (slot.enabled) slot.level else 0f
+        targetRatio[index] = 2.0.pow(
+            (slot.coarseSemitones.toDouble() * 100.0 + slot.fineCents.toDouble()) / 1200.0
+        )
+        // Freeze a conservative harmonic ceiling for the lifetime of this edit.
+        // Re-evaluating a decaying currentRatio at every render-block boundary
+        // would select brighter mip tables sooner in 256-frame blocks than in a
+        // single 8192-frame block, changing audio based on callback buffer size.
+        mipCeilingRatio[index] = max(currentRatio[index], targetRatio[index])
+        if (targetGain[index] > 0f || currentGain[index] > 0f) hasLayers = true
+    }
+
+    /**
+     * Called once per block. Reserve harmonic headroom for the highest pitch
+     * reached during portamento, detune changes, bend and vibrato.
+     */
+    fun preparePitch(highestBaseHz: Double) {
+        if (!hasLayers) return
+        for (i in 0 until SLOT_COUNT) {
+            if (targetGain[i] <= 0f && currentGain[i] <= 0f) continue
+            val highestHz = highestBaseHz * mipCeilingRatio[i]
+            mipLevel[i] = WavetableBank.levelForFrequency(highestHz, sampleRate)
+            mipFade[i] = WavetableBank.fadeToLowerLevel(highestHz, sampleRate, mipLevel[i])
+        }
+    }
+
+    /**
+     * No sample is audible from an idle voice; prime each new patch lane at its
+     * requested timbre/tuning instead of beginning a new note with a spurious
+     * eight-millisecond glide from the default 0-semitone sine oscillator.
+     */
+    fun primeSilentSlot(index: Int) {
+        currentGain[index] = targetGain[index]
+        currentRatio[index] = targetRatio[index]
+        wave[index] = targetWave[index]
+        morph[index] = targetMorph[index]
+        mipCeilingRatio[index] = targetRatio[index]
+        if (currentGain[index] > 0f) hasLayers = true
+    }
+
+    /** Every new note can use its current harmonically safe mip ceiling. */
+    fun resetPhase() {
+        phases.fill(0.0)
+        for (i in 0 until SLOT_COUNT) {
+            mipCeilingRatio[i] = max(currentRatio[i], targetRatio[i])
+        }
+    }
+
+    /**
+     * Return the additional oscillator signal and publish the currently smoothed
+     * sum of its layer gains. Caller blends (base + extra) / (1 + totalGain)
+     * to prevent a full rack from multiplying the nominal voice output by nine.
+     */
+    fun nextSample(fundamentalHz: Double): Float {
+        if (!hasLayers) {
+            totalGain = 0f
+            return 0f
+        }
+        var extra = 0f
+        var gains = 0f
+        var anyRemaining = false
+        for (i in 0 until SLOT_COUNT) {
+            val target = targetGain[i]
+            var gain = currentGain[i]
+            if (abs(target - gain) > 0.00001f) {
+                gain += (target - gain) * slew
+            } else {
+                gain = target
+            }
+            currentGain[i] = gain
+            if (target > 0f) anyRemaining = true
+            if (gain <= 0f) continue
+            anyRemaining = true
+            val ratio = currentRatio[i] + (targetRatio[i] - currentRatio[i]) * slew
+            currentRatio[i] = ratio
+            wave[i] += (targetWave[i] - wave[i]) * slew
+            morph[i] += (targetMorph[i] - morph[i]) * slew
+            val frequency = (fundamentalHz * ratio)
+                .coerceIn(0.0, sampleRate * 0.45)
+            val oscillator = WavetableBank.sample(
+                phases[i], mipLevel[i], wave[i], morph[i], mipFade[i]
+            )
+            extra += oscillator * gain
+            gains += gain
+            phases[i] += frequency / sampleRate
+            if (phases[i] >= 1.0) phases[i] -= floor(phases[i])
+        }
+        hasLayers = anyRemaining
+        totalGain = gains
+        return extra
+    }
+}
