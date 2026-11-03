@@ -160,14 +160,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: orbital-api35-visuals-emulator-screenshot
-          run-id: 41618045253
+          run-id: 41620194322
           github-token: ${{ github.token }}
           path: artifacts/live-sound-host-normal
       - name: Download genuine #149 compact 360dp hosted SOUND framebuffer (read only)
         uses: actions/download-artifact@v4
         with:
           name: orbital-api35-compact-emulator-screenshot
-          run-id: 41618045253
+          run-id: 41620194322
           github-token: ${{ github.token }}
           path: artifacts/live-sound-host-compact
       - name: Expose bounded real-host SOUND JPEGs for original artwork parity inspection
@@ -186,8 +186,8 @@ jobs:
           # instrumentation/ADB capture, not a setContent fixture, generated
           # concept image, or claim of successful UI test gates.
           sources = [
-              ("SOUNDHOST2", "artifacts/live-sound-host-normal", "orbital-emulator.png"),
-              ("SOUNDCOMPACT2", "artifacts/live-sound-host-compact", "compact-350-sound.png"),
+              ("SOUNDHOST3", "artifacts/live-sound-host-normal", "orbital-emulator.png"),
+              ("SOUNDCOMPACT3", "artifacts/live-sound-host-compact", "compact-350-sound.png"),
           ]
           for prefix, folder, name in sources:
               files = sorted(glob.glob(os.path.join(folder, '**', '*.png'), recursive=True))
@@ -200,7 +200,7 @@ jobs:
               assert blob.startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid live-host PNG'
               image = Image.open(io.BytesIO(blob))
               original = image.size
-              if prefix == "SOUNDHOST2":
+              if prefix == "SOUNDHOST3":
                   assert original[0] >= 600 and original[1] >= 1000, 'Expected actual portrait phone'
               else:
                   assert original[0] >= 300 and original[1] >= 300, 'Expected authentic 350dp short-height emulator'
