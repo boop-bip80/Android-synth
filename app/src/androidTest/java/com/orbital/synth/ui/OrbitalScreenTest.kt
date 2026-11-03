@@ -414,6 +414,10 @@ class OrbitalScreenTest {
             .fetchSemanticsNode().boundsInRoot
         val patch = compose.onNodeWithTag("referenceHeroPatchName")
             .fetchSemanticsNode().boundsInRoot
+        val miniTiles = compose.onNodeWithTag("referenceMiniSignals")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("All four truthful mini signal plots must remain visible",
+            miniTiles.height >= density * 60f && miniTiles.bottom <= keybed.top + 2f)
         assertTrue("PATCH label should float inside the real orb",
             patch.top >= orb.top && patch.bottom < orb.bottom)
         assertTrue("Real XY ribbon must visually overlay plasma",
@@ -467,10 +471,13 @@ class OrbitalScreenTest {
             down(0, Offset(width * .06f, center.y))
             down(1, Offset(width * .59f, center.y))
         }
-        compose.runOnIdle {
-            assertEquals(listOf("ON:60", "ON:67"), events)
+        compose.runOnIdle { assertEquals(listOf("ON:60", "ON:67"), events) }
+        // A and B remain PHYSICALLY held; tap PLAY with a *third*
+        // pointer, since ordinary performClick would reuse live pointer 0.
+        compose.onNodeWithContentDescription("Tab PLAY").performTouchInput {
+            down(2, center)
+            up(2)
         }
-        compose.onNodeWithContentDescription("Tab PLAY").performClick()
         compose.waitForIdle()
         compose.runOnIdle {
             assertEquals(listOf("ON:60", "ON:67", "OFF:60", "OFF:67"), events)
@@ -479,12 +486,36 @@ class OrbitalScreenTest {
         compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
         ).assertExists()
-        compose.onNodeWithContentDescription("Tab SOUND").performClick()
-        compose.onNodeWithTag("referencePerformanceKeybed").performTouchInput {
-            val width = center.x * 2f
-            down(2, Offset(width * .06f, center.y))
+        // Return to SOUND with the same independent third pointer. The old
+        // chromatic fingers still exist at Android input level, but their
+        // prior owners were disposed and cannot reattack in the new keybed.
+        compose.onNodeWithContentDescription("Tab SOUND").performTouchInput {
+            down(2, center)
             up(2)
         }
+        val glass = compose.onNodeWithTag("referencePerformanceKeybed")
+        glass.performTouchInput {
+            val width = center.x * 2f
+            down(3, Offset(width * .06f, center.y))
+        }
+        compose.runOnIdle {
+            assertEquals(
+                listOf("ON:60", "ON:67", "OFF:60", "OFF:67", "ON:60"),
+                events,
+            )
+        }
+        // Stale releases from A/B must NOT send OFF for fresh finger D.
+        glass.performTouchInput {
+            up(0)
+            up(1)
+        }
+        compose.runOnIdle {
+            assertEquals(
+                listOf("ON:60", "ON:67", "OFF:60", "OFF:67", "ON:60"),
+                events,
+            )
+        }
+        glass.performTouchInput { up(3) }
         compose.runOnIdle {
             assertEquals(
                 listOf("ON:60", "ON:67", "OFF:60", "OFF:67", "ON:60", "OFF:60"),
