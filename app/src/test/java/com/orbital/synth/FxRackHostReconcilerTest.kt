@@ -2,6 +2,9 @@ package com.orbital.synth
 
 import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.dsp.processing.FxModuleType
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -133,4 +136,41 @@ class FxRackHostReconcilerTest {
         assertEquals(original, coordinator.stageMove(original, 0, 0, ticket = 0L))
         assertFalse(coordinator.hasPendingMove)
     }
+
+    @Test fun patchSaveReturnsImmediatelyWhenNoMoveIsPending() = runBlocking {
+        val ok = awaitFxRackSettled(
+            timeoutMillis = 10L,
+            isPending = { false },
+            reconcile = { error("No additional polling should occur") },
+        )
+        assertTrue(ok)
+    }
+
+    @Test fun patchSaveSuspendsWithoutBlockingAndResumesWhenMoveSettles() = runBlocking {
+        var pending = true
+        var polls = 0
+        val gate = async(start = CoroutineStart.UNDISPATCHED) {
+            awaitFxRackSettled(
+                timeoutMillis = 500L,
+                isPending = { pending },
+                reconcile = { polls += 1 },
+            )
+        }
+        assertFalse("Coroutine should yield while worker has not acknowledged", gate.isCompleted)
+        pending = false
+        assertTrue(gate.await())
+        assertTrue(polls > 0)
+    }
+
+    @Test fun patchSaveFailsWithBoundedTimeoutIfAudioWorkerIsStopped() = runBlocking {
+        var polls = 0
+        val saved = awaitFxRackSettled(
+            timeoutMillis = 60L,
+            isPending = { true },
+            reconcile = { polls += 1 },
+        )
+        assertFalse(saved)
+        assertTrue(polls > 1)
+    }
+
 }
