@@ -7,6 +7,7 @@ import com.orbital.synth.core.performance.ArpeggiatorDirection
 import com.orbital.synth.core.performance.ArpeggiatorSettings
 import com.orbital.synth.core.performance.PerformanceArpeggiator
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -32,13 +33,22 @@ internal class PerformanceArpTransport(
     // Count only physical key/source commands. Safety fallback releases all keys
     // if their producer outruns the audio worker for multiple render buffers.
     private val maxPendingPhysicalCommands: Int = 2_048,
+    // Settings/Enabled are producer-side UI edits. Keep their ordinary FIFO
+    // semantics up to this limit; excess edits collapse to the latest snapshot.
+    private val maxPendingControlCommands: Int = 32,
+    // Optional deterministic producer seam after immutable publication and
+    // before the queue offer; tests can reproduce delayed old-worker controls.
+    private val beforeControlEnqueue: (() -> Unit)? = null,
+    // Test-only race seam; invoked on worker only when overflow was observed.
+    private val beforeOverflowSnapshot: (() -> Unit)? = null,
 ) {
     init {
         require(maxPendingPhysicalCommands > 0) { "Input queue capacity must be positive" }
+        require(maxPendingControlCommands > 0) { "Control queue capacity must be positive" }
     }
     private sealed interface Command {
-        data class Enabled(val value: Boolean) : Command
-        data class Settings(val value: ArpeggiatorSettings) : Command
+        data class Enabled(val value: Boolean, val revision: Long) : Command
+        data class Settings(val value: ArpeggiatorSettings, val revision: Long) : Command
         data class InputOn(
             val source: Long, val channel: Int, val note: Int,
             val velocity: Int, val epoch: Long
@@ -47,10 +57,20 @@ internal class PerformanceArpTransport(
             val source: Long, val channel: Int, val note: Int, val epoch: Long
         ) : Command
         data class SourceOff(val source: Long, val epoch: Long) : Command
-        data class Panic(val epoch: Long) : Command
     }
 
     private data class Key(val source: Long, val channel: Int, val note: Int)
+
+    // One immutable publication keeps settings, enable state and revisions
+    // consistent across UI producers, stop/start, and worker reconciliations.
+    // Revisions are independent: an intervening settings edit must not make
+    // an older but still-current enabled command disappear (and vice versa).
+    private data class RequestedControls(
+        val enabled: Boolean = false,
+        val settings: ArpeggiatorSettings = ArpeggiatorSettings(),
+        val enabledRevision: Long = 0L,
+        val settingsRevision: Long = 0L,
+    )
 
     private val commands = ConcurrentLinkedQueue<Command>()
     // Odd epochs accept input, even epochs reject it. A queued physical command
@@ -58,12 +78,18 @@ internal class PerformanceArpTransport(
     // the producer was preempted after checking isRunning but before queue.offer.
     private val inputEpoch = AtomicLong(0L)
     private val pendingPhysicalCommands = AtomicInteger(0)
+    private val pendingControlCommands = AtomicInteger(0)
+    private val controlOverflowDirty = AtomicBoolean(false)
     private val editLock = Any()
 
     // Exposed only within this module for deterministic stress assertions.
     internal val pendingPhysicalInputCount: Int get() = pendingPhysicalCommands.get()
-    @Volatile private var requestedEnabled = false
-    @Volatile private var requestedSettings = ArpeggiatorSettings()
+    internal val pendingControlCommandCount: Int get() = pendingControlCommands.get()
+    internal val appliedSettingsControlRevision: Long get() = workerSettingsRevision
+    internal val requestedSettingsControlRevision: Long get() = requestedControls.settingsRevision
+    internal val appliedEnabledControlRevision: Long get() = workerEnabledRevision
+    internal val requestedEnabledControlRevision: Long get() = requestedControls.enabledRevision
+    @Volatile private var requestedControls = RequestedControls()
     private val arpeggiator = PerformanceArpeggiator(sampleRate)
     private val directKeys = LinkedHashMap<Key, Int>()
 
@@ -94,20 +120,27 @@ internal class PerformanceArpTransport(
 
     // All variables below are confined to the audio worker.
     private var workerEnabled = false
+    private var workerEnabledRevision = 0L
+    private var workerSettingsRevision = 0L
 
-    val enabled: Boolean get() = requestedEnabled
-    val direction: ArpeggiatorDirection get() = requestedSettings.direction
-    val subdivisionsPerBeat: Int get() = requestedSettings.subdivisionsPerBeat
-    val tempo: Int get() = requestedSettings.bpm.toInt()
-    val latch: Boolean get() = requestedSettings.latch
-    val octaves: Int get() = requestedSettings.octaves
-    val ratchets: Int get() = requestedSettings.ratchets
-    val gate: Double get() = requestedSettings.gate
-    val probability: Double get() = requestedSettings.probability
+    val enabled: Boolean get() = requestedControls.enabled
+    val direction: ArpeggiatorDirection get() = requestedControls.settings.direction
+    val subdivisionsPerBeat: Int get() = requestedControls.settings.subdivisionsPerBeat
+    val tempo: Int get() = requestedControls.settings.bpm.toInt()
+    val latch: Boolean get() = requestedControls.settings.latch
+    val octaves: Int get() = requestedControls.settings.octaves
+    val ratchets: Int get() = requestedControls.settings.ratchets
+    val gate: Double get() = requestedControls.settings.gate
+    val probability: Double get() = requestedControls.settings.probability
 
     fun setEnabled(value: Boolean) {
-        requestedEnabled = value
-        commands.offer(Command.Enabled(value))
+        synchronized(editLock) {
+            val previous = requestedControls
+            val next = previous.copy(enabled = value,
+                enabledRevision = previous.enabledRevision + 1L)
+            requestedControls = next
+            enqueueControl { Command.Enabled(value, next.enabledRevision) }
+        }
     }
 
     fun setDirection(value: ArpeggiatorDirection) {
@@ -164,9 +197,42 @@ internal class PerformanceArpTransport(
     private fun updateSettings(change: (ArpeggiatorSettings) -> ArpeggiatorSettings) {
         // Only producer threads take this lock; the audio thread never does.
         synchronized(editLock) {
-            val updated = change(requestedSettings)
-            requestedSettings = updated
-            commands.offer(Command.Settings(updated))
+            val previous = requestedControls
+            val updated = change(previous.settings)
+            val next = previous.copy(settings = updated,
+                settingsRevision = previous.settingsRevision + 1L)
+            requestedControls = next
+            enqueueControl { Command.Settings(updated, next.settingsRevision) }
+        }
+    }
+
+    private inline fun enqueueControl(command: () -> Command) {
+        // A test may pause here after publishing a new desired configuration.
+        // An old worker's delayed offer must not reconfigure the next worker.
+        try {
+            beforeControlEnqueue?.invoke()
+        } catch (error: Throwable) {
+            // The immutable request was already published; retain a bounded
+            // worker notification even if the producer's test seam throws.
+            controlOverflowDirty.set(true)
+            throw error
+        }
+        // All control producers hold editLock; only the worker decrements.
+        // No CAS loop, queue scan, worker lock, or per-sample allocation.
+        if (pendingControlCommands.get() >= maxPendingControlCommands) {
+            controlOverflowDirty.set(true)
+            return
+        }
+        pendingControlCommands.incrementAndGet()
+        var enqueued = false
+        try {
+            commands.offer(command())
+            enqueued = true
+        } finally {
+            if (!enqueued) {
+                pendingControlCommands.decrementAndGet()
+                controlOverflowDirty.set(true)
+            }
         }
     }
 
@@ -237,17 +303,21 @@ internal class PerformanceArpTransport(
         return false
     }
 
-    private fun forgetPhysicalReservation(command: Command) {
+    private fun forgetCommandReservation(command: Command) {
         when (command) {
             is Command.InputOn, is Command.InputOff, is Command.SourceOff ->
                 pendingPhysicalCommands.decrementAndGet()
-            else -> Unit
+            is Command.Enabled, is Command.Settings ->
+                pendingControlCommands.decrementAndGet()
         }
     }
 
     fun panic() {
-        val epoch = activeInputEpoch() ?: return
-        commands.offer(Command.Panic(epoch))
+        // Safety is independent of queue length: immediately close the current
+        // odd input epoch so the NEXT audio block releases every held key.
+        // Pending NoteOn/NoteOff from this epoch are rejected as stale, and
+        // the worker safely reopens a new epoch after its global release.
+        deactivateInputEpoch()
     }
 
     private fun activeInputEpoch(): Long? {
@@ -273,7 +343,7 @@ internal class PerformanceArpTransport(
         deactivateInputEpoch()
         while (true) {
             val command = commands.poll() ?: break
-            forgetPhysicalReservation(command)
+            forgetCommandReservation(command)
         }
     }
 
@@ -297,10 +367,13 @@ internal class PerformanceArpTransport(
     fun onWorkerStart() {
         // WorkerStop already discarded old physical-key events. Preserve freshly
         // enqueued UI note presses made during worker startup.
+        val controls = requestedControls
         releaseGenerated(arpeggiator.panic())
         releaseDirect()
-        releaseGenerated(arpeggiator.configure(requestedSettings))
-        workerEnabled = requestedEnabled
+        releaseGenerated(arpeggiator.configure(controls.settings))
+        workerSettingsRevision = controls.settingsRevision
+        workerEnabled = controls.enabled
+        workerEnabledRevision = controls.enabledRevision
         if (workerEnabled) arpeggiator.start()
         activateInputEpoch()
     }
@@ -318,7 +391,7 @@ internal class PerformanceArpTransport(
         // Requested controls remain available as immutable volatile snapshots.
         while (true) {
             val command = commands.poll() ?: break
-            forgetPhysicalReservation(command)
+            forgetCommandReservation(command)
         }
     }
 
@@ -343,10 +416,9 @@ internal class PerformanceArpTransport(
     }
 
     private fun drainCommands() {
-        // A full physical queue has closed the odd input epoch. Release ALL
-        // currently held notes before admitting a new epoch, rather than lose
-        // a critical NoteOff and leave a sustained key behind. This check is
-        // deliberately independent of any queued Panic/Settings event.
+        // Both physical saturation and panic close the active odd epoch
+        // immediately. This always releases held voices before considering
+        // queued controls or physical input and cannot be starved by UI floods.
         val retiredEpoch = inputEpoch.get()
         if (retiredEpoch > 0L && (retiredEpoch and 1L) == 0L) {
             releaseGenerated(arpeggiator.panic())
@@ -355,28 +427,19 @@ internal class PerformanceArpTransport(
             inputEpoch.compareAndSet(retiredEpoch, retiredEpoch + 1L)
         }
 
-        // Bound worst-case incoming MIDI bursts; leftovers drain next buffer.
+        // Normal (< maxPendingControlCommands) control messages retain their
+        // exact original FIFO placement alongside physical note events.
         for (ignored in 0 until 512) {
             val command = commands.poll() ?: break
-            forgetPhysicalReservation(command)
+            forgetCommandReservation(command)
             when (command) {
                 is Command.Enabled -> {
-                    if (command.value != requestedEnabled) continue
-                    if (workerEnabled == command.value) continue
-                    if (command.value) {
-                        releaseDirect()
-                        releaseGenerated(arpeggiator.panic())
-                        releaseGenerated(arpeggiator.configure(requestedSettings))
-                        arpeggiator.start()
-                        workerEnabled = true
-                    } else {
-                        releaseGenerated(arpeggiator.panic())
-                        workerEnabled = false
-                    }
+                    if (command.value != requestedControls.enabled) continue
+                    applyEnabledControl(command.value, command.revision)
                 }
                 is Command.Settings -> {
-                    if (command.value != requestedSettings) continue
-                    releaseGenerated(arpeggiator.configure(command.value))
+                    if (command.value != requestedControls.settings) continue
+                    applySettingsControl(command.value, command.revision)
                 }
                 is Command.InputOn -> {
                     if (command.epoch != inputEpoch.get()) continue
@@ -414,13 +477,43 @@ internal class PerformanceArpTransport(
                     releaseDirectSource(command.source)
                     releaseGenerated(arpeggiator.allNotesOff(command.source))
                 }
-                is Command.Panic -> {
-                    if (command.epoch != inputEpoch.get()) continue
-                    releaseGenerated(arpeggiator.panic())
-                    releaseDirect()
-                    if (workerEnabled) arpeggiator.start()
-                }
             }
+        }
+
+        // Overflow-only last-writer-wins reconciliation occurs at the END of
+        // this worker segment. At most 32 stale UI controls can precede a real
+        // NoteOff; 100k slider changes cannot monopolize 512-command drains.
+        // getAndSet precedes the snapshot: a simultaneous producer either
+        // appears in this snapshot or leaves a dirty flag for the next block.
+        if (controlOverflowDirty.getAndSet(false)) {
+            beforeOverflowSnapshot?.invoke()
+            val latest = requestedControls
+            applySettingsControl(latest.settings, latest.settingsRevision)
+            applyEnabledControl(latest.enabled, latest.enabledRevision)
+        }
+    }
+
+    private fun applySettingsControl(value: ArpeggiatorSettings, revision: Long) {
+        // onWorkerStart already applied its immutable snapshot. A producer
+        // delayed across stop/start may offer an old control afterward.
+        if (revision <= workerSettingsRevision) return
+        workerSettingsRevision = revision
+        releaseGenerated(arpeggiator.configure(value))
+    }
+
+    private fun applyEnabledControl(value: Boolean, revision: Long) {
+        if (revision <= workerEnabledRevision) return
+        workerEnabledRevision = revision
+        if (workerEnabled == value) return
+        if (value) {
+            releaseDirect()
+            releaseGenerated(arpeggiator.panic())
+            releaseGenerated(arpeggiator.configure(requestedControls.settings))
+            arpeggiator.start()
+            workerEnabled = true
+        } else {
+            releaseGenerated(arpeggiator.panic())
+            workerEnabled = false
         }
     }
 

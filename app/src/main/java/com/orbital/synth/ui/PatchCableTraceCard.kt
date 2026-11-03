@@ -48,6 +48,8 @@ internal fun PatchCableTraceCard(
 ) {
     val tint = when {
         trace.status == PatchCableTraceStatus.RESERVED -> OrbitalPalette.Gold
+        trace.status == PatchCableTraceStatus.UNWIRED_SOURCE -> OrbitalPalette.Muted
+        trace.status == PatchCableTraceStatus.GESTURE_DRIVEN -> OrbitalPalette.Teal
         trace.polarity == PatchCablePolarity.INVERTED -> OrbitalPalette.Violet
         trace.polarity == PatchCablePolarity.ZERO -> OrbitalPalette.Gold
         else -> OrbitalPalette.Cyan
@@ -58,6 +60,8 @@ internal fun PatchCableTraceCard(
         PatchCableTraceStatus.ZERO_DEPTH -> .24f
         PatchCableTraceStatus.RESERVED -> .24f
         PatchCableTraceStatus.BYPASSED -> .14f
+        PatchCableTraceStatus.GESTURE_DRIVEN -> .39f
+        PatchCableTraceStatus.UNWIRED_SOURCE -> .14f
     }
     val corner = RoundedCornerShape(13.dp)
     Box(
@@ -137,7 +141,8 @@ internal fun PatchCableTraceCard(
                 Spacer(Modifier.weight(1f))
             }
             Text(trace.status.caption,
-                color = if (trace.status == PatchCableTraceStatus.PATCHED)
+                color = if (trace.status == PatchCableTraceStatus.PATCHED ||
+                    trace.status == PatchCableTraceStatus.GESTURE_DRIVEN)
                     OrbitalPalette.Teal else OrbitalPalette.Muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

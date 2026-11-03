@@ -15,11 +15,13 @@ import kotlin.math.abs
  * NOT FFT, loudness, measured modulation voltage, or imagined audio activity.
  */
 internal enum class PatchCableTraceStatus(val caption: String) {
-    PATCHED("PATCHED / SIGNAL DEPENDENT"),
+    PATCHED("DSP GENERATOR / SIGNAL DEPENDENT"),
     BYPASSED("BYPASSED"),
     RESERVED("RESERVED / NO AUDIO"),
     ZERO_DEPTH("ZERO DEPTH / NO AUDIO"),
-    DORMANT_SOURCE("DORMANT SOURCE"),
+    DORMANT_SOURCE("SOURCE PAUSED / NOT GENERATING"),
+    GESTURE_DRIVEN("GESTURE-DRIVEN / TOUCH REQUIRED"),
+    UNWIRED_SOURCE("UNWIRED / CONFIG ONLY IN THIS APP"),
 }
 
 internal enum class PatchCablePolarity(val caption: String) {
@@ -48,7 +50,8 @@ internal data class PatchCableTrace(
     val accessibleLabel: String
         get() = "Edit route ${slot + 1}, ${source.name} to ${destination.name}, " +
             "depth ${depthCaption}, ${polarity.caption.lowercase(Locale.US)} polarity, " +
-            "${curve.name} curve, ${status.caption.lowercase(Locale.US)}."
+            "${curve.name} curve, ${status.caption.lowercase(Locale.US)}, " +
+            ModulationSourceAvailability.kind(source).caption.lowercase(Locale.US) + "."
 }
 
 internal object PatchCableTraceModel {
@@ -65,10 +68,11 @@ internal object PatchCableTraceModel {
                 PatchCableTraceStatus.RESERVED
             !route.enabled -> PatchCableTraceStatus.BYPASSED
             depth == 0f -> PatchCableTraceStatus.ZERO_DEPTH
-            route.source == ModSource.STEP && stepConfig?.enabled != true ->
-                PatchCableTraceStatus.DORMANT_SOURCE
-            PatchGraphUiModel.lfoIndex(route.source) >= 0 &&
-                lfos.getOrNull(PatchGraphUiModel.lfoIndex(route.source))?.enabled != true ->
+            ModulationSourceAvailability.kind(route.source) == ModulationSourceKind.UNWIRED ->
+                PatchCableTraceStatus.UNWIRED_SOURCE
+            ModulationSourceAvailability.kind(route.source) == ModulationSourceKind.TOUCH ->
+                PatchCableTraceStatus.GESTURE_DRIVEN
+            !ModulationSourceAvailability.generatorEnabled(route.source, lfos, stepConfig) ->
                 PatchCableTraceStatus.DORMANT_SOURCE
             else -> PatchCableTraceStatus.PATCHED
         }

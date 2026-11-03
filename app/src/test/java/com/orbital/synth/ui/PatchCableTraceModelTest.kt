@@ -87,14 +87,15 @@ class PatchCableTraceModelTest {
         assertEquals(PatchCableTraceStatus.PATCHED, stepOn.status)
     }
 
-    @Test fun externalTouchPatchIsSignalDependentNotFabricatedLfoReadout() {
+    @Test fun externalTouchPatchIsExplicitlyGestureDrivenNotFabricatedLfoReadout() {
         val touch = PatchCableTraceModel.describe(4,
             ModulationRouteConfig(true, ModSource.TOUCH_PRESSURE,
                 ModDestination.PITCH, -4f), emptyList(), null)
-        assertEquals(PatchCableTraceStatus.PATCHED, touch.status)
+        assertEquals(PatchCableTraceStatus.GESTURE_DRIVEN, touch.status)
         assertEquals(1f, touch.strength, 0f)
         assertTrue(touch.accessibleLabel.contains("TOUCH_PRESSURE"))
-        assertTrue(touch.accessibleLabel.contains("signal dependent"))
+        assertTrue(touch.accessibleLabel.contains("gesture-driven"))
+        assertTrue(touch.accessibleLabel.contains("touch required"))
     }
 
     @Test fun invalidSlotAndExcessMagnitudeAreValidated() {

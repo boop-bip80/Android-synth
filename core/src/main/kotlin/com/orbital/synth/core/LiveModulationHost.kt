@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicIntegerArray
 import java.util.concurrent.atomic.AtomicReferenceArray
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.abs
 
 /** Immutable UI/editor snapshot: the audio thread never mutates this object. */
 data class ModulationRouteConfig(
@@ -43,7 +44,25 @@ internal class LiveModulationHost(sampleRate: Int) {
     companion object {
         const val ROUTE_COUNT = 64
         const val LFO_COUNT = 8
+
+        // Existing normalized destination slews are 8/12 ms time constants.
+        // A tail is terminated by an epsilon gate and a hard 120 ms cap,
+        // including when a user repeatedly edits dormant/zero-depth routes.
+        private const val RESIDUAL_MORPH = 0x01
+        private const val RESIDUAL_PITCH = 0x02
+        private const val RESIDUAL_CUTOFF = 0x04
+        private const val RESIDUAL_RESONANCE = 0x08
+        private const val RESIDUAL_AMP = 0x10
+        private const val RESIDUAL_PAN = 0x20
+        private const val RESIDUAL_EPSILON = 0.0001f
     }
+
+    private val oscillatorModulation = OscillatorLayerModulation(sampleRate)
+    /** Worker-only frames: callers must not publish or mutate these primitive arrays. */
+    val oscillatorGainMultipliers: FloatArray get() = oscillatorModulation.gainMultipliers
+    val oscillatorPitchMultipliers: DoubleArray get() = oscillatorModulation.pitchMultipliers
+    val oscillatorModulationActive: Boolean get() = oscillatorModulation.active
+    val oscillatorPitchMipMask: Int get() = oscillatorModulation.mipSafetyMask
 
     private val rack = ModulationRack(sampleRate, LFO_COUNT, ROUTE_COUNT).apply {
         setDestinationSlewMs(ModDestination.MORPH, 8f)
@@ -81,8 +100,32 @@ internal class LiveModulationHost(sampleRate: Int) {
     private val baseValues = FloatArray(ModDestination.entries.size) { 0.5f }
     private val frameValues = FloatArray(ModDestination.entries.size) { 0.5f }
 
+    private val maxResidualFrames = maxOf(1, (sampleRate * 0.120).toInt())
+    private var liveRouteCount = 0
+    private var liveGlobalMask = 0
+    private var touchedGlobalMask = 0
+    private var livePitch = false
+    private var liveFilter = false
+    private var liveAmp = false
+    private var livePan = false
+    private var residualMask = 0
+    private var residualFrames = 0
+
+    /**
+     * True only while a finite nonzero cable reaches implemented DSP, OR
+     * during a bounded audible global-bus release slew. Editor-only/reserved
+     * and permanently zero-depth patches never activate per-sample DSP.
+     */
     var active: Boolean = false
         private set
+
+    /**
+     * A configured (even zero-depth/reserved) cable historically kept the
+     * free-running LFO clock advancing. Preserve that clock cheaply when the
+     * audible matrix is asleep so a later depth edit does not restart its phase.
+     * Worker-owned; never published or read from a UI thread.
+     */
+    private var hasEnabledRouteClock = false
     var pitchRouteActive: Boolean = false
         private set
     var filterRouteActive: Boolean = false
@@ -180,41 +223,113 @@ internal class LiveModulationHost(sampleRate: Int) {
     }
 
     fun syncBlock(baseMorph: Float, baseCutoff: Float, baseResonance: Float): Boolean {
+        val wasActive = active
         val latestRouteRevision = routeRevision.get()
-        if (latestRouteRevision != appliedRouteRevision) {
+        val changedRoutes = latestRouteRevision != appliedRouteRevision
+        if (changedRoutes) {
+            val previouslyLiveGlobalMask = liveGlobalMask
             var count = 0
+            var nextGlobalMask = 0
             var pitchCount = 0
             var filterCount = 0
             var ampCount = 0
             var panCount = 0
+            var oscillatorGainMask = 0
+            var oscillatorPitchMask = 0
+            var hasAnyEnabledCable = false
             for (i in 0 until ROUTE_COUNT) {
                 val next = publishedRoutes.get(i)
+                // Never let saved but currently unwired destinations, nor zero
+                // depth, consume the 48 kHz matrix/filter/pitch fast paths.
+                // Keep the exact saved editor config in publishedRoutes.
+                val eligible = next.enabled && next.depth.isFinite() &&
+                    next.depth != 0f && isWiredAudioDestination(next.destination)
                 if (next !== appliedRoutes[i]) {
-                    if (next.enabled) {
+                    if (eligible) {
                         rack.matrix.setRoute(i, next.source, next.destination, next.depth, next.curve)
                     } else {
                         rack.matrix.clearRoute(i)
                     }
                     appliedRoutes[i] = next
                 }
-                if (next.enabled) {
+                if (next.enabled) hasAnyEnabledCable = true
+                if (eligible) {
                     count++
                     when (next.destination) {
-                        ModDestination.PITCH -> pitchCount++
-                        ModDestination.CUTOFF, ModDestination.RESONANCE -> filterCount++
-                        ModDestination.AMP -> ampCount++
-                        ModDestination.PAN -> panCount++
-                        else -> Unit // All other typed targets remain explicitly reserved.
+                        ModDestination.MORPH -> nextGlobalMask =
+                            nextGlobalMask or RESIDUAL_MORPH
+                        ModDestination.PITCH -> {
+                            pitchCount++
+                            nextGlobalMask = nextGlobalMask or RESIDUAL_PITCH
+                        }
+                        ModDestination.CUTOFF -> {
+                            filterCount++
+                            nextGlobalMask = nextGlobalMask or RESIDUAL_CUTOFF
+                        }
+                        ModDestination.RESONANCE -> {
+                            filterCount++
+                            nextGlobalMask = nextGlobalMask or RESIDUAL_RESONANCE
+                        }
+                        ModDestination.AMP -> {
+                            ampCount++
+                            nextGlobalMask = nextGlobalMask or RESIDUAL_AMP
+                        }
+                        ModDestination.PAN -> {
+                            panCount++
+                            nextGlobalMask = nextGlobalMask or RESIDUAL_PAN
+                        }
+                        else -> {
+                            val ordinal = next.destination.ordinal
+                            if (ordinal >= ModDestination.OSC1_GAIN.ordinal &&
+                                ordinal <= ModDestination.OSC8_GAIN.ordinal) {
+                                oscillatorGainMask = oscillatorGainMask or
+                                    (1 shl (ordinal - ModDestination.OSC1_GAIN.ordinal))
+                            } else if (ordinal >= ModDestination.OSC1_PITCH.ordinal &&
+                                ordinal <= ModDestination.OSC8_PITCH.ordinal) {
+                                oscillatorPitchMask = oscillatorPitchMask or
+                                    (1 shl (ordinal - ModDestination.OSC1_PITCH.ordinal))
+                            }
+                        }
                     }
                 }
             }
-            active = count > 0
-            pitchRouteActive = pitchCount > 0
-            filterRouteActive = filterCount > 0
-            ampRouteActive = ampCount > 0
-            panRouteActive = panCount > 0
+            liveRouteCount = count
+            liveGlobalMask = nextGlobalMask
+            livePitch = pitchCount > 0
+            liveFilter = filterCount > 0
+            liveAmp = ampCount > 0
+            livePan = panCount > 0
+            hasEnabledRouteClock = hasAnyEnabledCable
+            oscillatorModulation.configureMasks(oscillatorGainMask, oscillatorPitchMask)
             appliedRouteRevision = latestRouteRevision
-            if (!active) rack.resetSmoothing()
+
+            // Sustain a release PER GLOBAL BUS even when an unrelated
+            // oscillator or another global route remains active. Without this,
+            // blockConstantPitch / filter / AMP / PAN host flags would bypass
+            // their still-slewing output on the very next audio block.
+            val removedGlobalMask = previouslyLiveGlobalMask and nextGlobalMask.inv()
+            val newAudibleRelease = removedGlobalMask and touchedGlobalMask and
+                currentResidualMask(baseMorph, baseCutoff, baseResonance)
+            // An immediately replugged bus stops being residual and resumes
+            // the still-warm live slew; unrelated residual buses are retained.
+            residualMask = (residualMask and nextGlobalMask.inv()) or newAudibleRelease
+            if (newAudibleRelease != 0) residualFrames = maxResidualFrames
+            if (residualMask == 0) residualFrames = 0
+        }
+
+        // Every worker block also observes a completed tail, even when the
+        // atomic route revision did not change since the preceding block.
+        val releaseActive = residualFrames > 0
+        active = liveRouteCount > 0 || releaseActive
+        pitchRouteActive = livePitch || (releaseActive && (residualMask and RESIDUAL_PITCH) != 0)
+        filterRouteActive = liveFilter ||
+            (releaseActive && (residualMask and (RESIDUAL_CUTOFF or RESIDUAL_RESONANCE)) != 0)
+        ampRouteActive = liveAmp || (releaseActive && (residualMask and RESIDUAL_AMP) != 0)
+        panRouteActive = livePan || (releaseActive && (residualMask and RESIDUAL_PAN) != 0)
+        if (!active && (wasActive || changedRoutes)) {
+            touchedGlobalMask = 0
+            residualMask = 0
+            rack.resetSmoothing()
         }
 
         val nextSteps = publishedSteps.get()
@@ -230,9 +345,20 @@ internal class LiveModulationHost(sampleRate: Int) {
             appliedBpmBits = latestTempo
         }
 
-        // A programmed step clock must also tick when it has no routed cables
-        // yet, so the real playhead is available while users draw the pattern.
-        if (!active) return false
+        // Baselines must be available before potentially sleeping the matrix.
+        // A dormant zero-depth cable primes its old 8/12 ms slew from dry at
+        // block rate, with zero LFO-phase or audio-thread sample-clock cost.
+        baseValues[ModDestination.MORPH.ordinal] = baseMorph.coerceIn(0f, 1f)
+        baseValues[ModDestination.PITCH.ordinal] = 0.5f
+        baseValues[ModDestination.CUTOFF.ordinal] = baseCutoff.coerceIn(0f, 1f)
+        baseValues[ModDestination.RESONANCE.ordinal] = baseResonance.coerceIn(0f, 1f)
+        baseValues[ModDestination.AMP.ordinal] = 0.5f
+        baseValues[ModDestination.PAN.ordinal] = 0.5f
+        if (!active && hasEnabledRouteClock) rack.primeSmoothingAtBase(baseValues)
+
+        // STEP continues even with no cables; dormant LFO editor changes must
+        // still sync before a depth edit reactivates the matrix.
+        if (!active && !hasEnabledRouteClock) return false
 
         val latestLfoRevision = lfoRevision.get()
         if (latestLfoRevision != appliedLfoRevision) {
@@ -254,23 +380,31 @@ internal class LiveModulationHost(sampleRate: Int) {
             appliedLfoRevision = latestLfoRevision
         }
 
+        if (!active) return false
+
         for (source in ModSource.entries) {
             rack.setSource(
                 source, java.lang.Float.intBitsToFloat(expressionBits.get(source.ordinal))
             )
         }
-        baseValues[ModDestination.MORPH.ordinal] = baseMorph.coerceIn(0f, 1f)
-        baseValues[ModDestination.PITCH.ordinal] = 0.5f
-        baseValues[ModDestination.CUTOFF.ordinal] = baseCutoff.coerceIn(0f, 1f)
-        baseValues[ModDestination.RESONANCE.ordinal] = baseResonance.coerceIn(0f, 1f)
-        // These buses are bipolar around 0.5, so unconnected routes are neutral.
-        baseValues[ModDestination.AMP.ordinal] = 0.5f
-        baseValues[ModDestination.PAN.ordinal] = 0.5f
         return true
     }
 
     /** Audio-thread only: advances clock exactly once and reads the live buses. */
     fun tick() {
+        // The caller latches modulationEnabled once per audio block. A tail may
+        // retire halfway through that block: cease all expensive matrix/LFO
+        // waveform math on the exact capped sample, not at next block edge.
+        if (liveRouteCount == 0 && residualFrames == 0) {
+            tickStepOnly()
+            morph = baseValues[ModDestination.MORPH.ordinal]
+            pitchSemitones = 0f
+            cutoff = baseValues[ModDestination.CUTOFF.ordinal]
+            resonance = baseValues[ModDestination.RESONANCE.ordinal]
+            ampGain = 1f
+            panOffset = 0f
+            return
+        }
         rack.next(baseValues, frameValues)
         morph = frameValues[ModDestination.MORPH.ordinal]
         // 0.5 is neutral, +/-6 semitones is the programmed full pitch range.
@@ -280,32 +414,107 @@ internal class LiveModulationHost(sampleRate: Int) {
         // User-programmed AMP route is a 0..2 linear multiplier, neutral at 1.
         ampGain = frameValues[ModDestination.AMP.ordinal] * 2f
         panOffset = (frameValues[ModDestination.PAN.ordinal] - 0.5f) * 2f
+        if (liveGlobalMask != 0) touchedGlobalMask = touchedGlobalMask or liveGlobalMask
+        if (residualFrames > 0) {
+            // Any departed global bus (including one unplugged while other
+            // routes remain live) continues its existing 8/12ms slew to dry.
+            // Retire expired flags promptly without allocating a worker task.
+            residualMask = residualMask and currentResidualMask(
+                baseValues[ModDestination.MORPH.ordinal],
+                baseValues[ModDestination.CUTOFF.ordinal],
+                baseValues[ModDestination.RESONANCE.ordinal],
+            )
+            residualFrames--
+            if (residualMask == 0) residualFrames = 0
+        }
+        if (oscillatorModulation.active) oscillatorModulation.next(frameValues)
         if (rack.stepEnabled && visibleStepPlayhead != rack.stepPlayhead) {
             visibleStepPlayhead = rack.stepPlayhead
         }
     }
 
     fun onNoteOn() {
-        if (active || rack.stepEnabled) {
+        if (active || hasEnabledRouteClock || rack.stepEnabled) {
             rack.retrigger()
             visibleStepPlayhead = rack.stepPlayhead
         }
     }
 
-    /** Advance just the visual STEP clock if no cable is consuming it yet. */
+    /**
+     * No effective DSP cable: preserve legacy free-running LFO/STEP clocks
+     * without any trig, matrix, destination smoothing, or heap allocation.
+     */
     fun tickStepOnly() {
-        if (rack.stepEnabled) {
+        // When the last OSC cable disappears, its gain and pitch still return
+        // to exact neutral over 8 ms while the voices continue playing.
+        if (oscillatorModulation.active) oscillatorModulation.next(null)
+        if (hasEnabledRouteClock) {
+            rack.advance(1)
+        } else if (rack.stepEnabled) {
             rack.advanceStepOnly(1)
-            if (visibleStepPlayhead != rack.stepPlayhead) {
-                visibleStepPlayhead = rack.stepPlayhead
-            }
+        }
+        if (rack.stepEnabled && visibleStepPlayhead != rack.stepPlayhead) {
+            visibleStepPlayhead = rack.stepPlayhead
         }
     }
 
     /** Free-running synchronized modulation must keep time through silent blocks. */
     fun advanceSilence(frames: Int) {
-        if (active) rack.advance(frames)
+        if (liveRouteCount > 0 || hasEnabledRouteClock) rack.advance(frames)
         else if (rack.stepEnabled) rack.advanceStepOnly(frames)
         if (rack.stepEnabled) visibleStepPlayhead = rack.stepPlayhead
+        // With no voices or audible FX tails there is no PCM to declick.
+        // Retire global output state before another note or preset recall.
+        if (residualFrames > 0) {
+            residualFrames = 0
+            residualMask = 0
+            touchedGlobalMask = 0
+            rack.resetSmoothing()
+        }
+        // Only called after the voice/FX-tail silence check in OrbitalSynth.
+        oscillatorModulation.resetWhileSilent()
+    }
+
+    private fun currentResidualMask(
+        baseMorph: Float, baseCutoff: Float, baseResonance: Float,
+    ): Int {
+        var mask = 0
+        if (abs(morph - baseMorph.coerceIn(0f, 1f)) > RESIDUAL_EPSILON) {
+            mask = mask or RESIDUAL_MORPH
+        }
+        if (abs(pitchSemitones) > 12f * RESIDUAL_EPSILON) {
+            mask = mask or RESIDUAL_PITCH
+        }
+        if (abs(cutoff - baseCutoff.coerceIn(0f, 1f)) > RESIDUAL_EPSILON) {
+            mask = mask or RESIDUAL_CUTOFF
+        }
+        if (abs(resonance - baseResonance.coerceIn(0f, 1f)) > RESIDUAL_EPSILON) {
+            mask = mask or RESIDUAL_RESONANCE
+        }
+        if (abs(ampGain - 1f) > 2f * RESIDUAL_EPSILON) {
+            mask = mask or RESIDUAL_AMP
+        }
+        if (abs(panOffset) > 2f * RESIDUAL_EPSILON) {
+            mask = mask or RESIDUAL_PAN
+        }
+        return mask
+    }
+
+    /**
+     * Only these 22 normalized buses currently drive synthesis code. Other
+     * stable ModDestination ordinals remain serializable for future engines.
+     */
+    private fun isWiredAudioDestination(destination: ModDestination): Boolean {
+        return when (destination) {
+            ModDestination.PITCH, ModDestination.MORPH, ModDestination.CUTOFF,
+            ModDestination.RESONANCE, ModDestination.AMP, ModDestination.PAN -> true
+            else -> {
+                val ordinal = destination.ordinal
+                (ordinal >= ModDestination.OSC1_GAIN.ordinal &&
+                    ordinal <= ModDestination.OSC8_GAIN.ordinal) ||
+                    (ordinal >= ModDestination.OSC1_PITCH.ordinal &&
+                        ordinal <= ModDestination.OSC8_PITCH.ordinal)
+            }
+        }
     }
 }

@@ -1,9 +1,12 @@
 package com.orbital.synth.ui
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -59,6 +62,8 @@ import com.orbital.synth.audio.AudioVisualSnapshot
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.abs
+
+private val StageFlickFadeEasing = Easing { StageFlickMotionMath.smoothProgress(it) }
 
 /**
  * Keyboardless performance canvas. This is a real input surface: touches are routed
@@ -135,6 +140,30 @@ internal fun ImmersiveStage(
     var touchX by remember { mutableFloatStateOf(.5f) }
     var touchY by remember { mutableFloatStateOf(.5f) }
     var touchIntensity by remember { mutableFloatStateOf(0f) }
+    // Purely visual finger-flick energy: a real position/time derivative, NEVER
+    // synthetic microphone pressure or a second DSP parameter. The one-shot
+    // 420ms Animatable pauses completely once fingers stop and audio falls quiet.
+    var flickKick by remember { mutableFloatStateOf(0f) }
+    var flickRevision by remember { mutableLongStateOf(0L) }
+    var currentFlickSession by remember { mutableLongStateOf(0L) }
+    val flickLight = remember { Animatable(0f) }
+    LaunchedEffect(flickRevision) {
+        if (flickRevision == 0L) return@LaunchedEffect
+        // Honour the device's reduce-motion animator setting. Position-driven
+        // touch feedback still works without this optional flash animation.
+        if (!ValueAnimator.areAnimatorsEnabled() || flickKick <= .001f) {
+            flickLight.snapTo(0f)
+        } else {
+            flickLight.snapTo(maxOf(flickKick.coerceIn(0f, 1f), flickLight.value * .72f))
+            flickLight.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(
+                    durationMillis = StageFlickMotionMath.DECAY_MS,
+                    easing = StageFlickFadeEasing,
+                ),
+            )
+        }
+    }
     var pulse by remember { mutableLongStateOf(0L) }
     var lastHapticAt by remember { mutableLongStateOf(-1000L) }
 
@@ -211,6 +240,8 @@ internal fun ImmersiveStage(
             // A background/focus/panic epoch must turn OFF the visual lease as
             // well as the note lease without leaving keyboardless FOCUS.
             touchIntensity = 0f
+            flickKick = 0f
+            flickRevision++
             touchX = .5f
             touchY = .5f
             reportTouchModulation(.5f, .5f, .5f, force = true)
@@ -220,6 +251,8 @@ internal fun ImmersiveStage(
     fun cancelPerformanceTouch() {
         deliver(mapper.cancelAll())
         pointerCancelEpoch++
+        flickKick = 0f
+        flickRevision++
         touchIntensity = 0f
         reportTouchModulation(.5f, .5f, .5f, force = true)
     }
@@ -279,11 +312,15 @@ internal fun ImmersiveStage(
             touchX = touchX,
             touchY = touchY,
             touchIntensity = touchIntensity,
+            touchFlickEnergy = flickLight.value,
             pulse = pulse,
             audioRms = audioVisual.rms,
             audioPeak = audioVisual.peak,
             audioTransient = audioVisual.transient,
             audioBrightness = audioVisual.brightness,
+            audioLowBand = audioVisual.lowBand,
+            audioMidBand = audioVisual.midBand,
+            audioHighBand = audioVisual.highBand,
             skipArtwork = ImmersiveFieldDrawGate.shouldSkip(cleanCanvas, fieldAlpha),
         )
 
@@ -312,6 +349,16 @@ internal fun ImmersiveStage(
                     // immediately after the epoch cancels the old note leases.
                     awaitPointerEventScope {
                         val activeIds = mutableSetOf<Long>()
+                        val flickTracker = StageFlickVelocityTracker()
+                        // An old cancelled pointer recognizer must not darken a
+                        // newer physical gesture in its delayed finally block.
+                        val flickSession = ++currentFlickSession
+                        // Per-pointer, UI-thread-only last delivered samples. A frame from
+                        // another finger's UP must never zero this contact's velocity FX.
+                        // Arrays allocate on fresh DOWN, not during high-rate drags.
+                        val deliveredSamples = mutableMapOf<Long, FloatArray>()
+                        fun safePressure(raw: Float): Float =
+                            if (raw.isFinite()) raw else 1f
                         fun normalizeX(x: Float): Float =
                             (x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                         fun normalizeY(y: Float): Float =
@@ -321,10 +368,13 @@ internal fun ImmersiveStage(
                             activeIds.add(id)
                             touchX = normalizeX(x)
                             touchY = normalizeY(y)
-                            touchIntensity = pressure.coerceIn(.15f, 1f)
+                            val contactPressure = safePressure(pressure)
+                            deliveredSamples[id] = floatArrayOf(touchX, touchY, contactPressure)
+                            flickTracker.down(id, touchX, touchY, time)
+                            touchIntensity = contactPressure.coerceIn(.15f, 1f)
                             pulse += 1L
-                            reportTouchModulation(touchX, touchY, pressure)
-                            val noteEvents = mapper.touchDown(id, touchX, touchY, pressure, time)
+                            reportTouchModulation(touchX, touchY, contactPressure)
+                            val noteEvents = mapper.touchDown(id, touchX, touchY, contactPressure, time)
                             deliver(noteEvents)
                             // Haptic accent ONLY for an actual newly sounded note:
                             // never during sustained drags, expression or release.
@@ -378,19 +428,46 @@ internal fun ImmersiveStage(
                                             handled = true
                                         }
                                         change.pressed && id in activeIds -> {
-                                            touchX = normalizeX(change.position.x)
-                                            touchY = normalizeY(change.position.y)
-                                            touchIntensity = change.pressure.coerceIn(.15f, 1f)
-                                            reportTouchModulation(touchX, touchY, change.pressure)
-                                            deliver(
-                                                mapper.touchMove(
-                                                    id, touchX, touchY, change.pressure,
+                                            val nextX = normalizeX(change.position.x)
+                                            val nextY = normalizeY(change.position.y)
+                                            val nextPressure = safePressure(change.pressure)
+                                            val sample = deliveredSamples[id]
+                                            if (sample == null || sample[0] != nextX ||
+                                                sample[1] != nextY ||
+                                                abs(sample[2] - nextPressure) >= .01f
+                                            ) {
+                                                if (sample == null) {
+                                                    deliveredSamples[id] = floatArrayOf(
+                                                        nextX, nextY, nextPressure,
+                                                    )
+                                                } else {
+                                                    sample[0] = nextX
+                                                    sample[1] = nextY
+                                                    sample[2] = nextPressure
+                                                }
+                                                val swipeSpeed = flickTracker.move(
+                                                    id, nextX, nextY, change.uptimeMillis,
+                                                )
+                                                if (swipeSpeed != null &&
+                                                    (swipeSpeed >= .015f || flickKick > .015f)
+                                                ) {
+                                                    flickKick = swipeSpeed
+                                                    flickRevision++
+                                                }
+                                                touchX = nextX
+                                                touchY = nextY
+                                                touchIntensity = nextPressure.coerceIn(.15f, 1f)
+                                                reportTouchModulation(touchX, touchY, nextPressure)
+                                                deliver(mapper.touchMove(
+                                                    id, touchX, touchY, nextPressure,
                                                     change.uptimeMillis,
-                                                ),
-                                            )
+                                                ))
+                                            }
                                             handled = true
                                         }
                                         !change.pressed && activeIds.remove(id) -> {
+                                            deliveredSamples.remove(id)
+                                            flickTracker.up(id)
                                             deliver(mapper.touchUp(id))
                                             if (mapper.activePointerCount == 0) {
                                                 touchIntensity = 0f
@@ -412,6 +489,12 @@ internal fun ImmersiveStage(
                             // events for pre-reset IDs cannot kill new notes.
                             activeIds.forEach { id -> deliver(mapper.touchUp(id)) }
                             activeIds.clear()
+                            deliveredSamples.clear()
+                            flickTracker.cancelAll()
+                            if (currentFlickSession == flickSession) {
+                                flickKick = 0f
+                                flickRevision++
+                            }
                             touchIntensity = 0f
                             reportTouchModulation(.5f, .5f, .5f, force = true)
                         }

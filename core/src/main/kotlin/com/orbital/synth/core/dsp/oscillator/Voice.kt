@@ -387,7 +387,10 @@ internal class Voice(private val sampleRate: Int) {
         panSlewRemaining = 0
     }
 
-    fun preparePitch(maxPitchMultiplier: Double) {
+    fun preparePitch(
+        maxPitchMultiplier: Double,
+        oscillatorPitchMipMask: Int = 0,
+    ) {
         if (active) {
             // Reserve additional mip headroom for the sharpest unison side voice.
             // Include both current and next ratios while a detune move is slewing.
@@ -396,12 +399,19 @@ internal class Voice(private val sampleRate: Int) {
             mipLevel = WavetableBank.levelForFrequency(high, sampleRate)
             mipFade = WavetableBank.fadeToLowerLevel(high, sampleRate, mipLevel)
             oscillatorRack.preparePitch(
-                max(frequency, targetFrequency) * maxPitchMultiplier
+                max(frequency, targetFrequency) * maxPitchMultiplier,
+                oscillatorPitchMipMask,
             )
         }
     }
 
-    fun nextSample(wave: Float, morph: Float, pitchMultiplier: Double): Float {
+    fun nextSample(
+        wave: Float,
+        morph: Float,
+        pitchMultiplier: Double,
+        oscillatorGainMultipliers: FloatArray? = null,
+        oscillatorPitchMultipliers: DoubleArray? = null,
+    ): Float {
         advancePan()
         var result = 0f
         if (active) {
@@ -447,7 +457,11 @@ internal class Voice(private val sampleRate: Int) {
                 // The configured rack is audible in ALL five synthesis architectures.
                 // Eight independently-tuned, wavetable-mip-safe oscillators mix
                 // alongside the original engine, with bounded normalization.
-                val extraOscillators = oscillatorRack.nextSample(frequency * pitchMultiplier)
+                val extraOscillators = oscillatorRack.nextSample(
+                    frequency * pitchMultiplier,
+                    oscillatorGainMultipliers,
+                    oscillatorPitchMultipliers,
+                )
                 val mixedOscillator = (oscillator + extraOscillators) /
                     (1f + oscillatorRack.totalGain)
                 val input = (mixedOscillator * velocity * amplitude).toDouble()

@@ -29,6 +29,13 @@ internal data class PatchGraphNode(
     val fxType: FxModuleType? = null,
 )
 
+/** A mobile graph exposes one nonoverlapping real DSP target bank at a time. */
+internal enum class PatchGraphTargetBank(val label: String, val oscillatorIndex: Int = -1) {
+    GLOBAL("GLOBAL"),
+    OSC1("OSC 1", 0), OSC2("OSC 2", 1), OSC3("OSC 3", 2), OSC4("OSC 4", 3),
+    OSC5("OSC 5", 4), OSC6("OSC 6", 5), OSC7("OSC 7", 6), OSC8("OSC 8", 7),
+}
+
 internal enum class PatchCableKind { FIXED_AUDIO, MODULATION }
 
 internal data class PatchGraphCable(
@@ -51,6 +58,10 @@ internal data class PatchGraphSnapshot(
     val reservedRouteCount: Int,
     val stepRouteCount: Int = 0,
     val dormantStepRouteCount: Int = 0,
+    /** Configured live routes whose typed destination belongs to another visible bank. */
+    val hiddenLiveRouteCount: Int = 0,
+    /** Live oscillator destinations remain patchable but silent while their layer is bypassed. */
+    val dormantOscillatorTargetRouteCount: Int = 0,
 )
 
 /**
@@ -60,8 +71,9 @@ internal data class PatchGraphSnapshot(
  * Actual engine wiring is fixed:
  * BASE CORE OSC + optional OSC1..8 -> voice mix -> voice filter -> amp/pan ->
  * existing master FX -> ordered modular FX (including dry bypass slots) -> OUT.
- * Live modulation buses are PITCH/MORPH/CUTOFF/RESONANCE/AMP/PAN. Other typed
- * destination IDs are future-reserved metadata, not audible signal routes.
+ * The six global buses plus 16 independently audible OSC gain/pitch ports
+ * are live. Banked target views show only resolvable, nonoverlapping endpoints.
+ * DRIVE/FX/etc remain reserved metadata, never fabricated PCM cables.
  */
 internal object PatchGraphUiModel {
     val lfoSources: List<ModSource> = listOf(
@@ -70,6 +82,46 @@ internal object PatchGraphUiModel {
     )
 
     val liveTargets: List<ModDestination> = ModulationConstellationModel.liveDestinations
+    private val globalTargets = listOf(
+        ModDestination.PITCH, ModDestination.MORPH,
+        ModDestination.CUTOFF, ModDestination.RESONANCE,
+        ModDestination.AMP, ModDestination.PAN,
+    )
+    private val oscillatorGainTargets = listOf(
+        ModDestination.OSC1_GAIN, ModDestination.OSC2_GAIN,
+        ModDestination.OSC3_GAIN, ModDestination.OSC4_GAIN,
+        ModDestination.OSC5_GAIN, ModDestination.OSC6_GAIN,
+        ModDestination.OSC7_GAIN, ModDestination.OSC8_GAIN,
+    )
+    private val oscillatorPitchTargets = listOf(
+        ModDestination.OSC1_PITCH, ModDestination.OSC2_PITCH,
+        ModDestination.OSC3_PITCH, ModDestination.OSC4_PITCH,
+        ModDestination.OSC5_PITCH, ModDestination.OSC6_PITCH,
+        ModDestination.OSC7_PITCH, ModDestination.OSC8_PITCH,
+    )
+
+    /** Every bank lists only real typed destinations; never a saved-only reserved ID. */
+    fun visibleTargets(bank: PatchGraphTargetBank): List<ModDestination> =
+        if (bank.oscillatorIndex < 0) globalTargets else listOf(
+            oscillatorGainTargets[bank.oscillatorIndex],
+            oscillatorPitchTargets[bank.oscillatorIndex],
+        )
+
+    fun oscillatorTargetIndex(target: ModDestination): Int {
+        val gain = oscillatorGainTargets.indexOf(target)
+        return if (gain >= 0) gain else oscillatorPitchTargets.indexOf(target)
+    }
+
+    fun targetLabel(target: ModDestination): String =
+        if (oscillatorTargetIndex(target) >= 0) target.name.substringAfter('_')
+        else target.name
+
+    fun bankForTarget(target: ModDestination): PatchGraphTargetBank {
+        val oscillatorIndex = oscillatorTargetIndex(target)
+        return PatchGraphTargetBank.entries.firstOrNull {
+            it.oscillatorIndex == oscillatorIndex
+        } ?: PatchGraphTargetBank.GLOBAL
+    }
 
     fun lfoSource(index: Int): ModSource = lfoSources[index.coerceIn(0, 7)]
 
@@ -107,7 +159,9 @@ internal object PatchGraphUiModel {
         ModDestination.PITCH, ModDestination.MORPH -> "CORE"
         ModDestination.CUTOFF, ModDestination.RESONANCE -> "FILTER"
         ModDestination.AMP, ModDestination.PAN -> "AMP"
-        else -> null
+        else -> oscillatorTargetIndex(destination).takeIf { it >= 0 }?.let { layer ->
+            "OSC " + (layer + 1) + " " + targetLabel(destination)
+        }
     }
 
     fun slotName(type: FxModuleType): String = when (type) {
@@ -127,6 +181,7 @@ internal object PatchGraphUiModel {
         routes: List<ModulationRouteConfig>,
         fxSlots: List<FxModuleConfig>,
         stepConfig: ModulationStepConfig? = null,
+        bank: PatchGraphTargetBank = PatchGraphTargetBank.GLOBAL,
     ): PatchGraphSnapshot {
         val nodes = ArrayList<PatchGraphNode>(36)
         fun node(
@@ -162,8 +217,11 @@ internal object PatchGraphUiModel {
             node(
                 "FX" + i, PatchNodeKind.FX_SLOT, (i + 1).toString() +
                     if (configured) " " + slotName(config.type) else " DRY",
-                (i + 1).toFloat() / (count + 1),
-                .55f,
+                if (count > 6) {
+                    // Snake eight real ordered FX stages over two touch-safe rows.
+                    .125f + (if (i < 4) i else 7 - i) * .25f
+                } else (i + 1).toFloat() / (count + 1),
+                if (count > 6) (if (i < 4) .52f else .59f) else .55f,
                 configured && config.enabled && config.wet > 0f, i,
                 fxType = if (configured) config.type else null,
             )
@@ -184,11 +242,23 @@ internal object PatchGraphUiModel {
                 source = lfoSources[i],
             )
         }
-        val targetNodes = liveTargets.mapIndexed { i, dest ->
+        // At 350dp, drawing 22 terminals at y=.89/.96 creates 19
+        // unreachable overlaps. Show six global targets OR one layer's
+        // independent GAIN/PITCH ports; other valid routes remain stored and
+        // are honestly counted as hidden-in-another-bank, never reserved.
+        val targetNodes = visibleTargets(bank).mapIndexed { i, dest ->
+            val oscIndex = oscillatorTargetIndex(dest)
             node(
-                "BUS" + dest.name, PatchNodeKind.MOD_BUS, dest.name,
-                .18f + (i % 3) * .32f,
-                if (i < 3) .89f else .96f,
+                "BUS" + dest.name, PatchNodeKind.MOD_BUS, targetLabel(dest),
+                if (bank == PatchGraphTargetBank.GLOBAL) .18f + (i % 3) * .32f
+                else if (i == 0) .28f else .72f,
+                if (bank == PatchGraphTargetBank.GLOBAL) {
+                    if (i < 3) .89f else .96f
+                } else .92f,
+                // A live typed destination can be configured while its
+                // layer produces silence. Gain is multiplicative (0–2×):
+                // level=0 stays inaudible even with a modulation route.
+                active = oscIndex < 0 || layers[oscIndex].active,
                 dest = dest,
             )
         }
@@ -217,22 +287,33 @@ internal object PatchGraphUiModel {
         var reserved = 0
         var stepRoutes = 0
         var dormantSteps = 0
+        var hiddenLive = 0
+        var dormantOscillatorTarget = 0
+        val visiblePorts = targetNodes.associateBy { it.destination }
+
         routes.take(64).forEachIndexed { index, route ->
             if (!route.enabled) return@forEachIndexed
             if (route.destination !in liveTargets) {
                 reserved++
                 return@forEachIndexed
             }
+
             live++
+            val to = visiblePorts[route.destination]
+            if (to == null) hiddenLive++
+            val oscIndex = oscillatorTargetIndex(route.destination)
+            val layerAudible = oscIndex < 0 || layers[oscIndex].active
+            if (!layerAudible) dormantOscillatorTarget++
+            val usableDepth = route.depth.isFinite() && route.depth != 0f
+
             if (route.source == ModSource.STEP) {
                 stepRoutes++
                 if (stepNode == null || !stepNode.active) dormantSteps++
-                if (stepNode != null) {
+                if (stepNode != null && to != null) {
                     patch += PatchGraphCable(
-                        from = stepNode,
-                        to = targetNodes.first { it.destination == route.destination },
+                        from = stepNode, to = to,
                         kind = PatchCableKind.MODULATION,
-                        active = stepNode.active,
+                        active = stepNode.active && layerAudible && usableDepth,
                         routeSlot = index,
                     )
                 }
@@ -243,14 +324,16 @@ internal object PatchGraphUiModel {
                 external++
                 return@forEachIndexed
             }
-            val active = lfoNodes[lfoIndex].active
-            if (!active) dormant++
-            val to = targetNodes.first { it.destination == route.destination }
-            patch += PatchGraphCable(
-                from = lfoNodes[lfoIndex], to = to,
-                kind = PatchCableKind.MODULATION, active = active,
-                routeSlot = index,
-            )
+            val activeSource = lfoNodes[lfoIndex].active
+            if (!activeSource) dormant++
+            if (to != null) {
+                patch += PatchGraphCable(
+                    from = lfoNodes[lfoIndex], to = to,
+                    kind = PatchCableKind.MODULATION,
+                    active = activeSource && layerAudible && usableDepth,
+                    routeSlot = index,
+                )
+            }
         }
 
         return PatchGraphSnapshot(
@@ -261,6 +344,8 @@ internal object PatchGraphUiModel {
             reservedRouteCount = reserved,
             stepRouteCount = stepRoutes,
             dormantStepRouteCount = dormantSteps,
+            hiddenLiveRouteCount = hiddenLive,
+            dormantOscillatorTargetRouteCount = dormantOscillatorTarget,
         )
     }
 
