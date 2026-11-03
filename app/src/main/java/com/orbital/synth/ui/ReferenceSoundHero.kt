@@ -3,8 +3,6 @@ package com.orbital.synth.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.awaitPointerEventScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -195,40 +195,75 @@ fun ReferenceSoundHero(
                         )
                     }
                     .pointerInput(compact, patchId ?: patchName, patchEpoch, engineName, navigationEpoch) {
-                        // One original-down pointer owns the visual glow; a drag
-                        // cannot race a canceled, unrelated tap recognizer.
+                        // A patch recall cancels the prior recognizer while a
+                        // physical finger can still be DOWN. awaitEachGesture
+                        // waits for *all* stale fingers to lift before allowing
+                        // a newly pressed finger, silently ignoring a real new
+                        // attack. Accept only genuinely new down transitions.
                         val ribbonPixels = ribbonHeight.toPx()
-                        awaitEachGesture {
-                            val first = awaitFirstDown(requireUnconsumed = false)
-                            val ownerTicket = gate.ticket()
-                            fingerSession++
-                            val ownerSession = fingerSession
-                            fingerPressed = true
+                        awaitPointerEventScope {
+                            var ownerId: PointerId? = null
+                            var ownerTicket = gate.ticket()
+                            var ownerSession = 0L
                             try {
-                                if (gate.allows(ownerTicket)) update(
-                                    first.position.x / size.width,
-                                    ReferenceHeroTouch.movementAt(
-                                        first.position.y, size.height.toFloat(), ribbonPixels,
-                                    ),
-                                )
-                                first.consume()
                                 while (true) {
                                     val frame = awaitPointerEvent()
-                                    val owner = frame.changes.firstOrNull { it.id == first.id }
-                                    if (owner == null || !owner.pressed ||
-                                        !gate.allows(ownerTicket)) break
-                                    update(
-                                        owner.position.x / size.width,
-                                        ReferenceHeroTouch.movementAt(
-                                            owner.position.y, size.height.toFloat(), ribbonPixels,
-                                        ),
-                                    )
-                                    owner.consume()
+                                    val previousId = ownerId
+                                    if (previousId != null) {
+                                        val owner = frame.changes.firstOrNull {
+                                            it.id == previousId
+                                        }
+                                        if (owner == null || !owner.pressed ||
+                                            !gate.allows(ownerTicket)
+                                        ) {
+                                            if (fingerSession == ownerSession &&
+                                                gate.allows(ownerTicket)
+                                            ) fingerPressed = false
+                                            ownerId = null
+                                        } else {
+                                            update(
+                                                owner.position.x / size.width,
+                                                ReferenceHeroTouch.movementAt(
+                                                    owner.position.y, size.height.toFloat(),
+                                                    ribbonPixels,
+                                                ),
+                                            )
+                                            owner.consume()
+                                        }
+                                    }
+                                    if (ownerId == null) {
+                                        // Ignore unknown pointers that were
+                                        // already held before the new patch's
+                                        // recognizer existed (previousPressed).
+                                        // Fresh pointer 2 may be admitted while
+                                        // stale pointer 0 is still on glass.
+                                        val freshDown = frame.changes.firstOrNull {
+                                            it.pressed && !it.previousPressed && !it.isConsumed
+                                        }
+                                        if (freshDown != null) {
+                                            ownerId = freshDown.id
+                                            ownerTicket = gate.ticket()
+                                            fingerSession++
+                                            ownerSession = fingerSession
+                                            fingerPressed = true
+                                            if (gate.allows(ownerTicket)) update(
+                                                freshDown.position.x / size.width,
+                                                ReferenceHeroTouch.movementAt(
+                                                    freshDown.position.y, size.height.toFloat(),
+                                                    ribbonPixels,
+                                                ),
+                                            )
+                                            freshDown.consume()
+                                        }
+                                    }
                                 }
                             } finally {
-                                if (fingerSession == ownerSession && gate.allows(ownerTicket)) {
-                                    fingerPressed = false
-                                }
+                                // Stale cancelled coroutine must NEVER clear
+                                // a newer pointer's glow across patch/engine
+                                // changes or 2-finger overlap.
+                                if (fingerSession == ownerSession &&
+                                    gate.allows(ownerTicket)
+                                ) fingerPressed = false
                             }
                         }
                     },
