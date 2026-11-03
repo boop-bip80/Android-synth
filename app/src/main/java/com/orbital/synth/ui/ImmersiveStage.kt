@@ -315,6 +315,12 @@ internal fun ImmersiveStage(
                     // immediately after the epoch cancels the old note leases.
                     awaitPointerEventScope {
                         val activeIds = mutableSetOf<Long>()
+                        // Per-pointer, UI-thread-only last delivered samples. A frame from
+                        // another finger's UP must never zero this contact's velocity FX.
+                        // Arrays allocate on fresh DOWN, not during high-rate drags.
+                        val deliveredSamples = mutableMapOf<Long, FloatArray>()
+                        fun safePressure(raw: Float): Float =
+                            if (raw.isFinite()) raw.coerceIn(0f, 1f) else 1f
                         fun normalizeX(x: Float): Float =
                             (x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                         fun normalizeY(y: Float): Float =
@@ -324,10 +330,12 @@ internal fun ImmersiveStage(
                             activeIds.add(id)
                             touchX = normalizeX(x)
                             touchY = normalizeY(y)
-                            touchIntensity = pressure.coerceIn(.15f, 1f)
+                            val contactPressure = safePressure(pressure)
+                            deliveredSamples[id] = floatArrayOf(touchX, touchY, contactPressure)
+                            touchIntensity = contactPressure.coerceIn(.15f, 1f)
                             pulse += 1L
-                            reportTouchModulation(touchX, touchY, pressure)
-                            val noteEvents = mapper.touchDown(id, touchX, touchY, pressure, time)
+                            reportTouchModulation(touchX, touchY, contactPressure)
+                            val noteEvents = mapper.touchDown(id, touchX, touchY, contactPressure, time)
                             deliver(noteEvents)
                             // Haptic accent ONLY for an actual newly sounded note:
                             // never during sustained drags, expression or release.
@@ -381,19 +389,36 @@ internal fun ImmersiveStage(
                                             handled = true
                                         }
                                         change.pressed && id in activeIds -> {
-                                            touchX = normalizeX(change.position.x)
-                                            touchY = normalizeY(change.position.y)
-                                            touchIntensity = change.pressure.coerceIn(.15f, 1f)
-                                            reportTouchModulation(touchX, touchY, change.pressure)
-                                            deliver(
-                                                mapper.touchMove(
-                                                    id, touchX, touchY, change.pressure,
+                                            val nextX = normalizeX(change.position.x)
+                                            val nextY = normalizeY(change.position.y)
+                                            val nextPressure = safePressure(change.pressure)
+                                            val sample = deliveredSamples[id]
+                                            if (sample == null || sample[0] != nextX ||
+                                                sample[1] != nextY ||
+                                                abs(sample[2] - nextPressure) >= .01f
+                                            ) {
+                                                if (sample == null) {
+                                                    deliveredSamples[id] = floatArrayOf(
+                                                        nextX, nextY, nextPressure,
+                                                    )
+                                                } else {
+                                                    sample[0] = nextX
+                                                    sample[1] = nextY
+                                                    sample[2] = nextPressure
+                                                }
+                                                touchX = nextX
+                                                touchY = nextY
+                                                touchIntensity = nextPressure.coerceIn(.15f, 1f)
+                                                reportTouchModulation(touchX, touchY, nextPressure)
+                                                deliver(mapper.touchMove(
+                                                    id, touchX, touchY, nextPressure,
                                                     change.uptimeMillis,
-                                                ),
-                                            )
+                                                ))
+                                            }
                                             handled = true
                                         }
                                         !change.pressed && activeIds.remove(id) -> {
+                                            deliveredSamples.remove(id)
                                             deliver(mapper.touchUp(id))
                                             if (mapper.activePointerCount == 0) {
                                                 touchIntensity = 0f
@@ -415,6 +440,7 @@ internal fun ImmersiveStage(
                             // events for pre-reset IDs cannot kill new notes.
                             activeIds.forEach { id -> deliver(mapper.touchUp(id)) }
                             activeIds.clear()
+                            deliveredSamples.clear()
                             touchIntensity = 0f
                             reportTouchModulation(.5f, .5f, .5f, force = true)
                         }
