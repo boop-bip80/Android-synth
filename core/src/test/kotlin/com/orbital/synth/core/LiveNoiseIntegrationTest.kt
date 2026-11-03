@@ -142,6 +142,8 @@ class LiveNoiseIntegrationTest {
         assertTrue(audio.all { it.isFinite() && abs(it) <= 1f })
         synth.allNotesOff()
         synth.renderStereo(FloatArray(8_192 * 2), 8_192)
+        // activeVoiceCount is the block-start snapshot; refresh after release.
+        synth.renderStereo(FloatArray(2), 1)
         assertEquals("No stuck active keys after releasing a dense noise chord",
             0, synth.activeVoiceCount)
     }
