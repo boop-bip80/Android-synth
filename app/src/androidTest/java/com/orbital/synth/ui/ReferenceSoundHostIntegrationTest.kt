@@ -91,8 +91,18 @@ class ReferenceSoundHostIntegrationTest {
         // production Compose window; no setContent(), no fake audio, no second
         // synth. After real UiAutomation screenshot verification it is removed
         // before any SOUND gestures or screenshot assertions run.
-        val marker = View(compose.activity).apply {
-            setBackgroundColor(PixelColor.MAGENTA)
+        // Two sharply separated colors + exact on-screen View bounds make a
+        // false proof from the synth's natural violet/magenta neon impossible.
+        // A broad bottom-right color count alone could match unrelated UI.
+        val marker = object : View(compose.activity) {
+            private val paint = android.graphics.Paint()
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                paint.color = PixelColor.MAGENTA
+                canvas.drawRect(0f, 0f, width / 2f, height.toFloat(), paint)
+                paint.color = PixelColor.GREEN
+                canvas.drawRect(width / 2f, 0f, width.toFloat(), height.toFloat(), paint)
+            }
+        }.apply {
             isFocusable = false
             isClickable = false
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -107,39 +117,92 @@ class ReferenceSoundHostIntegrationTest {
                 ),
             )
         }
-        var physicalMarkerPixels = 0
+        var physicalMagentaPixels = 0
+        var physicalGreenPixels = 0
+        var exactMarkerVerified = false
         try {
             for (attempt in 0 until 6) {
                 val frame: Bitmap? = foregroundAutomation.takeScreenshot()
                 if (frame != null) {
-                    var matched = 0
-                    for (y in (frame.height * .78f).toInt() until frame.height step 2) {
-                        for (x in (frame.width * .82f).toInt() until frame.width step 2) {
-                            val pixel = frame.getPixel(x, y)
-                            if (PixelColor.red(pixel) >= 245 &&
-                                PixelColor.green(pixel) <= 10 &&
-                                PixelColor.blue(pixel) >= 245
-                            ) matched++
+                    try {
+                        // Location is read on the Activity's actual UI thread.
+                        // UiAutomation's display screenshot shares screen pixels
+                        // with getLocationOnScreen, unlike Compose-local bounds.
+                        val region = IntArray(4)
+                        compose.activityRule.scenario.onActivity {
+                            val topLeft = IntArray(2)
+                            marker.getLocationOnScreen(topLeft)
+                            region[0] = topLeft[0]
+                            region[1] = topLeft[1]
+                            region[2] = marker.width
+                            region[3] = marker.height
                         }
+                        val left = region[0]
+                        val top = region[1]
+                        val width = region[2]
+                        val height = region[3]
+                        if (width >= 20 && height >= 20) {
+                            // Ignore edges and the two-tone seam, which can be
+                            // antialiased by SurfaceFlinger or screenshot scaling.
+                            val xLeftStart = maxOf(0, left + width / 10)
+                            val xLeftEnd = minOf(frame.width, left + width * 4 / 10)
+                            val xRightStart = maxOf(0, left + width * 6 / 10)
+                            val xRightEnd = minOf(frame.width, left + width * 9 / 10)
+                            val yStart = maxOf(0, top + height / 5)
+                            val yEnd = minOf(frame.height, top + height * 4 / 5)
+                            var leftSamples = 0
+                            var rightSamples = 0
+                            var magentaMatches = 0
+                            var greenMatches = 0
+                            for (y in yStart until yEnd step 2) {
+                                for (x in xLeftStart until xLeftEnd step 2) {
+                                    val pixel = frame.getPixel(x, y)
+                                    leftSamples++
+                                    if (PixelColor.red(pixel) >= 245 &&
+                                        PixelColor.green(pixel) <= 10 &&
+                                        PixelColor.blue(pixel) >= 245
+                                    ) magentaMatches++
+                                }
+                                for (x in xRightStart until xRightEnd step 2) {
+                                    val pixel = frame.getPixel(x, y)
+                                    rightSamples++
+                                    if (PixelColor.red(pixel) <= 10 &&
+                                        PixelColor.green(pixel) >= 245 &&
+                                        PixelColor.blue(pixel) <= 10
+                                    ) greenMatches++
+                                }
+                            }
+                            physicalMagentaPixels = magentaMatches
+                            physicalGreenPixels = greenMatches
+                            exactMarkerVerified = leftSamples >= 12 &&
+                                rightSamples >= 12 &&
+                                magentaMatches * 100 >= leftSamples * 80 &&
+                                greenMatches * 100 >= rightSamples * 80
+                            if (exactMarkerVerified) break
+                        }
+                    } finally {
+                        frame.recycle()
                     }
-                    frame.recycle()
-                    physicalMarkerPixels = maxOf(physicalMarkerPixels, matched)
-                    if (physicalMarkerPixels >= 50) break
                 }
                 Thread.sleep(180L)
             }
             assertTrue(
-                "A different MainActivity owns SurfaceFlinger: this exact " +
-                    "AudioTrack-backed test Activity marker absent from real " +
-                    "bottom-right pixels; count=$physicalMarkerPixels OS=$foreground",
-                physicalMarkerPixels >= 50,
+                "A different MainActivity owns SurfaceFlinger: the precise " +
+                    "20dp magenta/green pixel signature is absent from the " +
+                    "actual ActivityScenario View bounds; magenta=" +
+                    "$physicalMagentaPixels green=$physicalGreenPixels " +
+                    "OS=$foreground",
+                exactMarkerVerified,
             )
         } finally {
             compose.activityRule.scenario.onActivity {
                 (marker.parent as? ViewGroup)?.removeView(marker)
             }
         }
-        println("REFERENCE_HOST_INSTANCE_PIXEL_PROOF count=$physicalMarkerPixels")
+        println(
+            "REFERENCE_HOST_INSTANCE_PIXEL_PROOF exact=true " +
+                "magenta=$physicalMagentaPixels green=$physicalGreenPixels",
+        )
         compose.onNodeWithTag("referenceSoundHero").assertExists()
         compose.onNodeWithTag("referenceSoundHeroOrb").assertIsDisplayed()
         compose.onNodeWithTag("orbitalPlasmaField").assertExists()
