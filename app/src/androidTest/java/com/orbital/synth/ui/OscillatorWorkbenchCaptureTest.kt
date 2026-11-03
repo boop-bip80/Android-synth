@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -34,11 +35,28 @@ class OscillatorWorkbenchCaptureTest {
         compose.onNodeWithTag("referenceSoundAdvancedToggle").performScrollTo()
             .assertIsDisplayed().performClick()
         compose.onNodeWithTag("oscillatorRack").assertExists()
+
+        // Real factory boot may legitimately have zero enabled oscillators;
+        // the workbench must permit constructing its FIRST audible source.
+        compose.onNodeWithTag("oscillatorLayer0").performScrollTo().performClick()
+        if (compose.onAllNodesWithContentDescription("Oscillator 1, active")
+                .fetchSemanticsNodes().isEmpty()
+        ) {
+            compose.onNodeWithTag("oscillatorEnable").performScrollTo()
+                .assertIsDisplayed().performClick()
+        }
+        compose.waitForIdle()
         compose.onNodeWithContentDescription("Oscillator 1, active").assertExists()
 
-        // Add the NEXT independent audible oscillator using the same on-screen
-        // control a phone user sees (not fixture state or synthetic callbacks).
-        compose.onNodeWithTag("oscillatorAdd").performScrollTo()
+        // Add a second truly audible oscillator and select it before wave
+        // edits. This remains valid if a saved patch already has OSC2 active.
+        if (compose.onAllNodesWithContentDescription("Oscillator 2, active")
+                .fetchSemanticsNodes().isEmpty()
+        ) {
+            compose.onNodeWithTag("oscillatorAdd").performScrollTo()
+                .assertIsDisplayed().performClick()
+        }
+        compose.onNodeWithTag("oscillatorLayer1").performScrollTo()
             .assertIsDisplayed().performClick()
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Oscillator 2, active").assertExists()

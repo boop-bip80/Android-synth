@@ -51,6 +51,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -82,8 +83,10 @@ internal fun ImmersiveStage(
     onPerformanceConfigChange: ((StageTouchSettings) -> Unit)? = null,
     /** Meter from real Android AudioTrack output, sampled only while the stage is on-screen. */
     audioVisualSource: (() -> AudioVisualSnapshot)? = null,
+    /** Host revision invalidating all held performance voices on background/recall. */
+    performanceResetEpoch: Long = 0L,
 ) {
-    val mapper = remember { TouchPerformanceMapper() }
+    val mapper = remember(performanceResetEpoch) { TouchPerformanceMapper() }
     var showConfig by remember { mutableStateOf(false) }
     // Explicit opt-in. On a clean canvas there is no synth HUD or keyboard.
     // Android Back (or the screen reader custom action) reveals controls first.
@@ -201,9 +204,14 @@ internal fun ImmersiveStage(
     LaunchedEffect(mapper, stageSettings) {
         deliver(mapper.updateConfig(stageSettings.toTouchConfig()))
     }
-    DisposableEffect(mapper) {
+    DisposableEffect(mapper, performanceResetEpoch) {
         onDispose {
             deliver(mapper.cancelAll())
+            // A background/focus/panic epoch must turn OFF the visual lease as
+            // well as the note lease without leaving keyboardless FOCUS.
+            touchIntensity = 0f
+            touchX = .5f
+            touchY = .5f
             reportTouchModulation(.5f, .5f, .5f, force = true)
         }
     }
@@ -283,6 +291,8 @@ internal fun ImmersiveStage(
                 .testTag("immersiveCanvas")
                 .semantics {
                     contentDescription = "Immersive sound field"
+                    stateDescription = if (touchIntensity > .01f)
+                        "Touch sculpting" else "Touch idle"
                     if (cleanCanvas) {
                         customActions = listOf(
                             CustomAccessibilityAction("Reveal stage controls") {
@@ -293,7 +303,7 @@ internal fun ImmersiveStage(
                         )
                     }
                 }
-                .pointerInput(mapper) {
+                .pointerInput(mapper, performanceResetEpoch) {
                     // awaitEachGesture completes only after every pointer is up.
                     // The finally block makes note-off safe under OS gesture
                     // cancellation, screen changes and recomposition disposal.
@@ -360,12 +370,16 @@ internal fun ImmersiveStage(
                                 pointerEvent.changes.forEach { change ->
                                     val id = change.id.value
                                     if (change.pressed) {
-                                        if (id !in activeIds) {
+                                        if (id !in activeIds && !change.previousPressed) {
+                                            // Only a genuine DOWN admits a new finger
+                                            // after an Activity onStop epoch reset.
+                                            // A stale held finger seen during another
+                                            // new touch cannot reattack a canceled voice.
                                             start(
                                                 id, change.position.x, change.position.y,
                                                 change.pressure, change.uptimeMillis,
                                             )
-                                        } else {
+                                        } else if (id in activeIds) {
                                             touchX = normalizeX(change.position.x)
                                             touchY = normalizeY(change.position.y)
                                             touchIntensity = change.pressure.coerceIn(.15f, 1f)

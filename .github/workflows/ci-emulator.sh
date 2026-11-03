@@ -251,6 +251,47 @@ if [[ ! -s "$debug_apk" ]]; then
   exit 1
 fi
 timeout 120s adb install -r "$debug_apk"
+
+# Process-death contract: this test intentionally spans TWO AndroidJUnitRunner
+# invocations with an OS force-stop between them. Each invocation is opt-in;
+# the ordinary full-suite run skips this class's two phase methods explicitly.
+# No mock Activity recreation can satisfy the fresh Process.myPid assertion.
+step_restart_test_apk='app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'
+[[ -s "$step_restart_test_apk" ]] || {
+  echo "STEP process-restart instrumentation APK is missing." >&2
+  exit 1
+}
+timeout 120s adb install -r "$step_restart_test_apk"
+printf '%s\n' 'step-v5-prepare-before-process-death' > artifacts/emulator-phase.txt
+timeout 180s adb shell am instrument -w -r \
+  -e class 'com.orbital.synth.ui.StepProcessRestartInstrumentedTest#prepareStepPatchAndProveFocusPlayStateBeforeProcessDeath' \
+  -e orbitalStepRestartPhase prepare \
+  com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
+  | tee artifacts/step-restart-prepare.txt
+grep -Eq 'OK \(1 test\)' artifacts/step-restart-prepare.txt || {
+  echo "STEP process-restart prepare instrumentation did not pass." >&2
+  exit 1
+}
+printf '%s\n' 'step-v5-actual-os-force-stop' > artifacts/emulator-phase.txt
+timeout 20s adb shell am force-stop com.orbital.synth
+if timeout 8s adb shell pidof com.orbital.synth >/dev/null 2>&1; then
+  echo "Android kept ORBITAL alive despite the required force-stop." >&2
+  exit 1
+fi
+launch_orbital artifacts/step-restart-cold-launch.txt
+printf '%s\n' 'step-v5-verify-new-os-process' > artifacts/emulator-phase.txt
+timeout 180s adb shell am instrument -w -r \
+  -e class 'com.orbital.synth.ui.StepProcessRestartInstrumentedTest#verifyAfterForcedDeathColdRestartAndDeleteOnlyOurPatch' \
+  -e orbitalStepRestartPhase verify \
+  com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
+  | tee artifacts/step-restart-verify.txt
+grep -Eq 'OK \(1 test\)' artifacts/step-restart-verify.txt || {
+  echo "STEP V5 cold-process recall/instrumentation did not pass." >&2
+  exit 1
+}
+printf 'step_v5_persistence=PASS\nprocess_death=REAL_FORCE_STOP\nfresh_android_pid=ASSERTED\nstep_audio_clock=PASS\nfocus_play_transition=PASS\n' \
+  > artifacts/step-restart-summary.txt
+
 installed_package="$(timeout 15s adb shell pm path com.orbital.synth | tr -d '\r')"
 if [[ "$installed_package" != *'package:'* ]]; then
   echo "com.orbital.synth is not installed after adb install: $installed_package" >&2

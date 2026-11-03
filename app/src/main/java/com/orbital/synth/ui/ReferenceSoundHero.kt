@@ -300,7 +300,7 @@ fun ReferenceSoundHero(
                         verticalArrangement = Arrangement.Center,
                     ) {
                         Text(
-                            "WAVETABLE / PATCH",
+                            "SOUND / PATCH",
                             color = OrbitalPalette.Muted,
                             fontSize = 8.sp,
                             letterSpacing = 1.1.sp,

@@ -403,7 +403,11 @@ class OrbitalScreenTest {
                 onModeChange = {}, onOctaveChange = {},
             )
         }
-        val editor = compose.onNodeWithTag("referenceSoundEditorViewport")
+        val stage = compose.onNodeWithTag("immersiveModeToggle")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("Portrait STAGE must have a >=48dp physical touch target",
+            stage.height >= 48f * density && stage.width >= 48f * density)
+        val editor = compose.onNodeWithTag("soundEditorScroll")
             .fetchSemanticsNode().boundsInRoot
         val mini = compose.onNodeWithTag("referenceMiniSignals")
             .fetchSemanticsNode().boundsInRoot
@@ -418,6 +422,41 @@ class OrbitalScreenTest {
             mini.bottom <= keybed.top - 2f * density)
         assertTrue("Plasma artwork must stay visible at scroll offset zero: orb=$orb editor=$editor",
             orb.top >= editor.top && orb.bottom <= editor.bottom)
+    }
+
+    @Test fun realDeviceLargeFontKeepsFourTilesAnd48DpHudTouchTargetsInView() {
+        // Genuine API35 device dimensions/density, not a 360dp fake parent.
+        // Only fontScale is simulated; the 411dp emulator width/height remain
+        // physical. This must protect accessibility users with larger text.
+        val density = compose.activity.resources.displayMetrics.density
+        val widthPx = compose.activity.resources.displayMetrics.widthPixels
+        assertTrue("API35 phone width should exceed 600 real pixels", widthPx >= 600)
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density, 1.3f)) {
+                OrbitalScreen(
+                    state = OrbitalUiState(presetCount = 8),
+                    onNoteOn = {}, onNoteOff = {},
+                    onParameterChange = { _, _ -> },
+                    onModeChange = {}, onOctaveChange = {},
+                )
+            }
+        }
+        val editor = compose.onNodeWithTag("soundEditorScroll")
+            .fetchSemanticsNode().boundsInRoot
+        val mini = compose.onNodeWithTag("referenceMiniSignals")
+            .fetchSemanticsNode().boundsInRoot
+        val keys = compose.onNodeWithTag("referencePerformanceKeybed")
+            .fetchSemanticsNode().boundsInRoot
+        val patch = compose.onNodeWithTag("referenceHeroPatchName")
+            .fetchSemanticsNode().boundsInRoot
+        val engine = compose.onNodeWithTag("referenceHeroEngineName")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("1.3x font must not clip ENV/LFO/EXPR/MOD in device viewport: " +
+            "mini=$mini editor=$editor keys=$keys",
+            mini.height >= 60f * density && mini.bottom <= editor.bottom - 2f * density &&
+                mini.bottom <= keys.top - 2f * density)
+        assertTrue("PATCH must remain a >=48dp physical target", patch.height >= 48f * density)
+        assertTrue("ENGINE must remain a >=48dp physical target", engine.height >= 48f * density)
     }
 
     @Test fun compactPortraitReferenceHeroKeepsOverlayControlsAndKeysLegible() {
@@ -465,6 +504,33 @@ class OrbitalScreenTest {
         compose.onNodeWithTag("referenceSoundAdvancedToggle")
             .performScrollTo().performClick()
         compose.onNodeWithTag("referenceSoundAdvancedToggle").assertExists()
+    }
+
+    @Test fun shortLandscapeSoundHasReachableEightLayerEditorAndAnchoredPiano() {
+        val slots = mutableStateOf(List(8) { OscillatorSlot() })
+        compose.setContent {
+            Box(Modifier.width(360.dp).height(350.dp)) {
+                OrbitalScreen(
+                    state = OrbitalUiState(oscillatorSlots = slots.value),
+                    onNoteOn = {}, onNoteOff = {},
+                    onParameterChange = { _, _ -> },
+                    onModeChange = {}, onOctaveChange = {},
+                    onOscillatorSlotChange = { index, next ->
+                        slots.value = slots.value.toMutableList().apply { set(index, next) }
+                    },
+                )
+            }
+        }
+        compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        ).assertIsDisplayed()
+        compose.onNodeWithTag("referencePerformanceKeybed").assertDoesNotExist()
+        compose.onNodeWithTag("compactOscillatorToggle")
+            .performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithTag("oscillatorRack").assertExists()
+        compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        ).assertIsDisplayed()
     }
 
     @Test fun keyboardExposesChromaticAccessibleActions() {

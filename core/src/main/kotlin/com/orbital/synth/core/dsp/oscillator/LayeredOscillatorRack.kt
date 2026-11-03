@@ -12,6 +12,8 @@ import kotlin.math.pow
  *
  * A layer is a real oscillator, not a detuned copy of the global WAVE control:
  * it owns its own phase, waveform, morph, level and semitone/cents tuning.
+ * Each layer can additionally mix into a continuously colored white/pink/brown
+ * noise source; with all noise controls at zero the legacy PCM path is exact.
  * All arrays are allocated at construction. Only the audio render thread may call
  * configure(), preparePitch(), resetPhase() or nextSample(). UI edits are published
  * as immutable OscillatorSlot snapshots by OrbitalSynth between render blocks.
@@ -32,6 +34,11 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
     private val mipCeilingRatio = DoubleArray(SLOT_COUNT) { 1.0 }
     private val mipLevel = IntArray(SLOT_COUNT)
     private val mipFade = FloatArray(SLOT_COUNT)
+    private val noiseBank = LayerNoiseBank(sampleRate)
+    private val noiseMix = FloatArray(SLOT_COUNT)
+    private val targetNoiseMix = FloatArray(SLOT_COUNT)
+    private val noiseColor = FloatArray(SLOT_COUNT)
+    private val targetNoiseColor = FloatArray(SLOT_COUNT)
 
     // 8 ms click-free level/wave/tuning motion; independent of audio buffer length.
     private val slew = (1.0 - exp(-1.0 / (sampleRate * 0.008))).toFloat()
@@ -47,6 +54,8 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
         applied[index] = slot
         targetWave[index] = slot.waveform
         targetMorph[index] = slot.morph
+        targetNoiseMix[index] = slot.noiseLevel
+        targetNoiseColor[index] = slot.noiseColor
         targetGain[index] = if (slot.enabled) slot.level else 0f
         targetRatio[index] = 2.0.pow(
             (slot.coarseSemitones.toDouble() * 100.0 + slot.fineCents.toDouble()) / 1200.0
@@ -83,13 +92,16 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
         currentRatio[index] = targetRatio[index]
         wave[index] = targetWave[index]
         morph[index] = targetMorph[index]
+        noiseMix[index] = targetNoiseMix[index]
+        noiseColor[index] = targetNoiseColor[index]
         mipCeilingRatio[index] = targetRatio[index]
         if (currentGain[index] > 0f) hasLayers = true
     }
 
     /** Every new note can use its current harmonically safe mip ceiling. */
-    fun resetPhase() {
+    fun resetPhase(seed: Long = 0L) {
         phases.fill(0.0)
+        noiseBank.reset(seed)
         for (i in 0 until SLOT_COUNT) {
             mipCeilingRatio[i] = max(currentRatio[i], targetRatio[i])
         }
@@ -124,12 +136,24 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
             currentRatio[i] = ratio
             wave[i] += (targetWave[i] - wave[i]) * slew
             morph[i] += (targetMorph[i] - morph[i]) * slew
+            val mixDiff = targetNoiseMix[i] - noiseMix[i]
+            noiseMix[i] = if (abs(mixDiff) <= 0.00001f) targetNoiseMix[i]
+                else (noiseMix[i] + mixDiff * slew).coerceIn(0f, 1f)
+            val colorDiff = targetNoiseColor[i] - noiseColor[i]
+            noiseColor[i] = if (abs(colorDiff) <= 0.00001f) targetNoiseColor[i]
+                else (noiseColor[i] + colorDiff * slew).coerceIn(0f, 1f)
             val frequency = (fundamentalHz * ratio)
                 .coerceIn(0.0, sampleRate * 0.45)
-            val oscillator = WavetableBank.sample(
-                phases[i], mipLevel[i], wave[i], morph[i], mipFade[i]
-            )
-            extra += oscillator * gain
+            // Exactly the previous wavetable PCM when noiseMix==0. No RNG
+            // advances (or noise work runs) for a legacy/disabled noise layer.
+            val oscillator = if (noiseMix[i] >= 0.999999f) 0f else
+                WavetableBank.sample(
+                    phases[i], mipLevel[i], wave[i], morph[i], mipFade[i]
+                )
+            val source = if (noiseMix[i] > 0f) {
+                oscillator + (noiseBank.next(i, noiseColor[i]) - oscillator) * noiseMix[i]
+            } else oscillator
+            extra += source * gain
             gains += gain
             phases[i] += frequency / sampleRate
             if (phases[i] >= 1.0) phases[i] -= floor(phases[i])

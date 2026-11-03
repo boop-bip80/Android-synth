@@ -45,7 +45,7 @@ class PatchStepsV5Test {
             modulationTempoBpm = 131f,
         )
         val text = PatchCodec.encode(patch)
-        assertEquals(5, PatchCodec.CURRENT_VERSION)
+        assertEquals(6, PatchCodec.CURRENT_VERSION)
         assertTrue(text.startsWith("ORBITAL-PATCH/5\n"))
         assertTrue(text.contains("step.seq=1,PING_PONG,11,0.5,0.42,1"))
         assertEquals(1, text.lines().count { it.startsWith("step.seq=") })
@@ -150,7 +150,7 @@ class PatchStepsV5Test {
         rejects { PatchCodec.decode(text.replace("0.5,0.42", "0.5,Infinity")) }
         rejects { PatchCodec.decode(text.replace("0.42,1", "2.0,1")) }
         rejects { PatchCodec.decode(text.replace("step.seq=1,", "step.seq=1,0,")) }
-        rejects { PatchCodec.decode(text.replace("ORBITAL-PATCH/5", "ORBITAL-PATCH/6")) }
+        rejects { PatchCodec.decode(text.replace("ORBITAL-PATCH/5", "ORBITAL-PATCH/7")) }
         val v4 = PatchCodec.encode(FactoryPatches.DEFAULT.copy(
             fxSlots = listOf(FxModuleConfig()),
         ))

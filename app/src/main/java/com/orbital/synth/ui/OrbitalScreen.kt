@@ -206,6 +206,7 @@ fun OrbitalScreen(
     var immersiveMode by remember { mutableStateOf(false) }
     var soundAdvancedExpanded by remember { mutableStateOf(false) }
     var soundGraphExpanded by remember { mutableStateOf(false) }
+    var compactOscillatorExpanded by remember { mutableStateOf(false) }
     var soundVisual by remember { mutableStateOf(AudioVisualSnapshot()) }
     val readLiveAudioVisual by rememberUpdatedState(onReadAudioVisual)
     LaunchedEffect(selectedTab, immersiveMode) {
@@ -295,6 +296,7 @@ fun OrbitalScreen(
             initialPerformanceConfig = state.stageTouchSettings,
             onPerformanceConfigChange = onStageTouchSettingsChange,
             audioVisualSource = onReadAudioVisual,
+            performanceResetEpoch = state.performanceResetEpoch,
             onExit = { immersiveMode = false },
         )
     } else {
@@ -437,7 +439,6 @@ fun OrbitalScreen(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .testTag("referenceSoundEditorViewport")
                 .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .42f), RoundedCornerShape(19.dp))
                 .background(
                     Brush.verticalGradient(
@@ -446,6 +447,7 @@ fun OrbitalScreen(
                     RoundedCornerShape(19.dp),
                 )
                 .verticalScroll(editorScroll)
+                .testTag("soundEditorScroll")
                 .padding(
                     horizontal = if (referencePortrait) 5.dp else 7.dp,
                     vertical = if (referencePortrait) 3.dp else 6.dp,
@@ -469,6 +471,42 @@ fun OrbitalScreen(
                         engineValue = engineValue,
                         onParameterChange = onParameterChange,
                     )
+                    // Preserve the compact landscape piano, yet expose the
+                    // full real eight-layer editor behind a 48dp touch toggle.
+                    if (state.oscillatorSlots.isNotEmpty() &&
+                        onOscillatorSlotChange != null
+                    ) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .testTag("compactOscillatorToggle")
+                                .border(1.dp, OrbitalPalette.PanelEdge, RoundedCornerShape(12.dp))
+                                .background(OrbitalPalette.Panel.copy(alpha = .65f),
+                                    RoundedCornerShape(12.dp))
+                                .clickable(role = Role.Button) {
+                                    compactOscillatorExpanded = !compactOscillatorExpanded
+                                }
+                                .semantics {
+                                    contentDescription = if (compactOscillatorExpanded)
+                                        "Hide eight-layer oscillator editor"
+                                    else "Show eight-layer oscillator editor"
+                                }
+                                .heightIn(min = 48.dp)
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Label("EIGHT-LAYER OSC EDITOR")
+                            Text(if (compactOscillatorExpanded) "−" else "+",
+                                color = OrbitalPalette.Cyan, fontSize = 18.sp)
+                        }
+                        if (compactOscillatorExpanded) {
+                            OscillatorRackPanel(
+                                slots = state.oscillatorSlots,
+                                onSlotChange = onOscillatorSlotChange,
+                            )
+                        }
+                    }
                 } else {
                     // First viewport: the genuine procedural reference hero,
                     // one overlaid interactive XY, five real macros and four
@@ -1295,7 +1333,7 @@ private fun Header(
         Box(
             Modifier
                 .width(if (compact) 54.dp else 64.dp)
-                .heightIn(min = 40.dp)
+                .heightIn(min = if (compact) 40.dp else 48.dp)
                 .testTag("immersiveModeToggle")
                 .border(1.dp, OrbitalPalette.Cyan.copy(alpha = .55f), RoundedCornerShape(13.dp))
                 .background(OrbitalPalette.Blue.copy(alpha = .18f), RoundedCornerShape(13.dp))

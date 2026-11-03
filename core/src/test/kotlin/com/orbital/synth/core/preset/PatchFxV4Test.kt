@@ -54,7 +54,7 @@ class PatchFxV4Test {
             fxSlots = fxLayers,
         )
         val encoded = PatchCodec.encode(patch)
-        assertEquals(5, PatchCodec.CURRENT_VERSION)
+        assertEquals(6, PatchCodec.CURRENT_VERSION)
         assertTrue(encoded.startsWith("ORBITAL-PATCH/4\n"))
         assertTrue(encoded.contains("fx.0=1,SATURATION,"))
         assertTrue(encoded.contains("fx.1=0,DELAY,"))

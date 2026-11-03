@@ -709,16 +709,11 @@ class MainActivity : ComponentActivity() {
     private fun updateOscillatorSlot(index: Int, next: OscillatorSlot) {
         if (index !in 0 until synth.oscillatorSlotCount) return
         if (!next.waveform.isFinite() || !next.morph.isFinite() ||
-            !next.level.isFinite() || !next.fineCents.isFinite()) return
-        synth.setOscillatorSlot(
-            index = index,
-            enabled = next.enabled,
-            waveform = next.waveform,
-            level = next.level,
-            coarseSemitones = next.coarseSemitones,
-            fineCents = next.fineCents,
-            morph = next.morph,
-        )
+            !next.level.isFinite() || !next.fineCents.isFinite() ||
+            !next.noiseLevel.isFinite() || !next.noiseColor.isFinite()) return
+        // Complete immutable V6 layer: colored noise controls reach the same
+        // real AudioTrack synth without dropping any slot parameters.
+        synth.setOscillatorSlot(index, next)
         screenState = screenState.copy(oscillatorSlots = oscillatorSnapshot())
     }
 
