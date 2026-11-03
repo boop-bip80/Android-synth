@@ -139,8 +139,13 @@ idle_visible = int(values["idle_visible"])
 live_visible = int(values["live_visible"])
 idle_colorful = int(values["idle_colorful"])
 live_colorful = int(values["live_colorful"])
-if live_visible < max(75,idle_visible+20) or live_colorful < max(30,idle_colorful+10):
-    raise SystemExit("Held-note frame is not visibly brighter/colorful than idle stage")
+sample_count = int(values["live_samples"])
+if idle_visible * 5 >= int(values["idle_samples"]) * 4:
+    raise SystemExit("Idle PNG is not an actually settled dark performance canvas")
+if live_visible < idle_visible + max(100,sample_count//400):
+    raise SystemExit("Held-note frame has no credible extra illuminated pixels")
+if live_colorful < idle_colorful + max(50,sample_count//800):
+    raise SystemExit("Held-note frame lacks newly illuminated chromatic filaments")
 if values.get("live_dimensions") != f"{width}x{height}":
     raise SystemExit("In-app Android framebuffer geometry mismatched actual emulator")
 print(f"PASS real AndroidAudioTrack PCM and held-note colored field; PNG {width}x{height} "
