@@ -22,7 +22,7 @@ internal object ReferenceKeybedUiModel {
         if (!x.isFinite() || !y.isFinite() ||
             !width.isFinite() || !height.isFinite() ||
             width <= 0f || height <= 0f ||
-            x !in 0f..<width || y !in 0f..<height) return null
+            x < 0f || x >= width || y < 0f || y >= height) return null
         return (x * KEY_COUNT / width).toInt().coerceIn(0, KEY_COUNT - 1)
     }
 
