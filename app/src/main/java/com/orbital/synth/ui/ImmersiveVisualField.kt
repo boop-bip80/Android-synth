@@ -12,6 +12,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -88,6 +90,10 @@ fun ImmersiveVisualField(
     } else 0f
     val impact = remember { Animatable(1f) }
     val audioImpact = remember { Animatable(1f) }
+    // A tap is a moment in space. Preserve its origin while the finger releases
+    // and stage defaults recenter; the light ripple must not teleport.
+    var tapX by remember { mutableFloatStateOf(.5f) }
+    var tapY by remember { mutableFloatStateOf(.5f) }
     // Rising-edge threshold avoids restarting/cancelling the 620 ms animation
     // on every 30 Hz meter update (which would leave a stuck transient ring).
     val transientHit = pcm.transient > .30f
@@ -110,7 +116,11 @@ fun ImmersiveVisualField(
     LaunchedEffect(fingerX, fingerY, pressure, pulse) {
         if (pressure > .01f) {
             val next = Offset(fingerX, fingerY)
-            if (touchTrace.lastOrNull() != next) {
+            val last = touchTrace.lastOrNull()
+            if (last == null || ImmersiveLightMath.shouldRecordTrailPoint(
+                    last.x, last.y, next.x, next.y,
+                )
+            ) {
                 touchTrace.add(next)
                 while (touchTrace.size > 24) touchTrace.removeAt(0)
             }
@@ -124,6 +134,8 @@ fun ImmersiveVisualField(
     }
     LaunchedEffect(pulse) {
         if (pulse > 0L && animationsEnabled) {
+            tapX = fingerX
+            tapY = fingerY
             impact.snapTo(0f)
             impact.animateTo(1f, tween(durationMillis = 850, easing = LinearEasing))
         } else {
@@ -151,7 +163,12 @@ fun ImmersiveVisualField(
         )
         val radius = shortEdge * (.265f + aperture * .045f) * (1f + pcm.radiusBoost)
         val touch = Offset(width * fingerX, height * fingerY)
+        val tapOrigin = Offset(width * tapX, height * tapY)
         val stroke = (shortEdge / 390f).coerceIn(.6f, 2.2f)
+        val conduitEnergy = ImmersiveLightMath.conduitEnergy(pressure, pcm.rms, pcm.peak)
+        val petalFlare = ImmersiveLightMath.petalFlare(pressure, pcm.rms, pcm.transient)
+        val chroma = ImmersiveLightMath.chromaBlend(pcm.brightness, aperture)
+        val livingHue = androidx.compose.ui.graphics.lerp(ultraviolet, cyan, chroma)
 
         drawRect(ink)
 
@@ -241,6 +258,47 @@ fun ImmersiveVisualField(
             radius = radius * .98f,
         )
 
+        // Reactive aurora petals: twelve sculpted Bézier light volumes bloom from
+        // the orbital shell. Their size responds to REAL PCM level/transient and
+        // held-touch intensity; they disappear during idle silence. Each petal
+        // draws a wide low-alpha bloom plus two crisp interference filaments.
+        if (pressure > .01f || pcm.rms > .018f || pcm.transient > .04f) {
+            val phase = if (animationsEnabled) animatedPhase * turn * .085f else 0f
+            for (petal in 0 until ImmersiveLightMath.PETAL_COUNT) {
+                val a = turn * petal / ImmersiveLightMath.PETAL_COUNT + phase +
+                    timbre * .22f
+                val span = .20f + focus * .16f
+                val inner = radius * (.66f + aperture * .10f)
+                val outer = radius * (1.36f + petalFlare * .28f)
+                val begin = c + Offset(cos(a) * inner, sin(a) * inner * .78f)
+                val tipA = a + span
+                val tip = c + Offset(cos(tipA) * outer, sin(tipA) * outer * .78f)
+                val endA = a + span * 2.2f
+                val end = c + Offset(cos(endA) * inner, sin(endA) * inner * .78f)
+                val wing = Path().apply {
+                    moveTo(begin.x, begin.y)
+                    cubicTo(
+                        c.x + cos(a + .08f) * outer * .83f,
+                        c.y + sin(a + .08f) * outer * .70f,
+                        tip.x, tip.y,
+                        end.x, end.y,
+                    )
+                }
+                val tint = when (petal % 4) {
+                    0 -> amber
+                    1 -> livingHue
+                    2 -> ultraviolet
+                    else -> electricBlue
+                }
+                drawPath(wing, tint.copy(alpha = .028f * petalFlare),
+                    style = Stroke(width = 22f * stroke, cap = StrokeCap.Round))
+                drawPath(wing, tint.copy(alpha = .15f * petalFlare),
+                    style = Stroke(width = 3.6f * stroke, cap = StrokeCap.Round))
+                drawPath(wing, ice.copy(alpha = .25f * petalFlare),
+                    style = Stroke(width = .57f * stroke, cap = StrokeCap.Round))
+            }
+        }
+
         // Concentric etched circles and rotating orbital ellipses.
         for (layer in 1..4) {
             val rr = radius * (1f + layer * .13f)
@@ -276,6 +334,43 @@ fun ImmersiveVisualField(
                 size = Size(radius * 2.56f, radius * .56f),
                 style = Stroke(width = 1.0f * stroke),
             )
+        }
+
+        // A visible relationship between the finger and sounding orbit: nine
+        // high-curvature light tendons bend toward the actual touched pixel.
+        // Disconnected/idle surfaces never draw a remembered finger position.
+        if (pressure > .01f && conduitEnergy > .01f) {
+            val dx = touch.x - c.x
+            val dy = touch.y - c.y
+            val distance = kotlin.math.sqrt(dx * dx + dy * dy).coerceAtLeast(1f)
+            val tangent = Offset(-dy / distance, dx / distance)
+            val touchToCore = Offset(dx, dy)
+            for (strand in 0 until ImmersiveLightMath.CONDUIT_STRANDS) {
+                val lane = (strand - 4) * .25f
+                val start = c + tangent * (lane * radius * .08f)
+                val end = touch + tangent * (lane * shortEdge * .009f)
+                val twist = sin(animatedPhase * turn * .62f + strand * .79f + timbre * 3.1f) *
+                    shortEdge * (.022f + motion * .02f)
+                val ctrl1 = c + touchToCore * .28f + tangent * (lane * radius * .22f + twist)
+                val ctrl2 = c + touchToCore * .72f -
+                    tangent * (lane * radius * .12f + twist * .48f)
+                val filament = Path().apply {
+                    moveTo(start.x, start.y)
+                    cubicTo(ctrl1.x, ctrl1.y, ctrl2.x, ctrl2.y, end.x, end.y)
+                }
+                val tint = when (strand % 4) {
+                    0 -> amber
+                    1 -> ultraviolet
+                    2 -> cyan
+                    else -> livingHue
+                }
+                drawPath(filament, tint.copy(alpha = .032f * conduitEnergy),
+                    style = Stroke(width = 15f * stroke, cap = StrokeCap.Round))
+                drawPath(filament, tint.copy(alpha = .24f * conduitEnergy),
+                    style = Stroke(width = 2.8f * stroke, cap = StrokeCap.Round))
+                drawPath(filament, ice.copy(alpha = .41f * conduitEnergy),
+                    style = Stroke(width = .7f * stroke, cap = StrokeCap.Round))
+            }
         }
 
         // Live timbre ribbons: phase and fold depend on the controls, not random noise.
@@ -392,6 +487,34 @@ fun ImmersiveVisualField(
             )
         }
 
+        // Actual PCM dynamics open irregular arc-shaped caustics around the
+        // aperture. These are level-controlled light paths, NOT frequency bins.
+        // Brightness (a waveform-slope proxy) selects color, while RMS/peak
+        // govern size and opacity; no audio -> no caustic draw calls.
+        val audible = (pcm.rms * .62f + pcm.peak * .38f).coerceIn(0f, 1f)
+        if (audible > .014f) {
+            for (arc in 0 until 7) {
+                val rr = radius * (.58f + arc * .094f + pcm.radiusBoost * .45f)
+                val angle = arc * 51.43f + timbre * 70f +
+                    if (animationsEnabled) animatedPhase * 95f else 0f
+                val tint = when (arc % 4) {
+                    0 -> amber
+                    1 -> livingHue
+                    2 -> electricBlue
+                    else -> ultraviolet
+                }
+                drawArc(
+                    color = tint.copy(alpha = (.065f + audible * .36f) * (.65f + arc * .038f)),
+                    startAngle = angle,
+                    sweepAngle = (19f + aperture * 26f + pcm.brightness * 18f),
+                    useCenter = false,
+                    topLeft = Offset(c.x - rr, c.y - rr * .82f),
+                    size = Size(rr * 2f, rr * 1.64f),
+                    style = Stroke(width = (.85f + audible * 1.65f) * stroke, cap = StrokeCap.Round),
+                )
+            }
+        }
+
         // Touch trail is deterministic, bounded and owned by the event-driven stage.
         if (touchTrace.isNotEmpty()) {
             val n = touchTrace.size
@@ -430,9 +553,58 @@ fun ImmersiveVisualField(
                 drawCircle(
                     color = (if (ring == 1) amber else cyan).copy(alpha = opacity * (.6f - ring * .14f)),
                     radius = r,
-                    center = touch,
+                    center = tapOrigin,
                     style = Stroke(width = (3.1f - ring * .7f) * stroke),
                 )
+            }
+        }
+
+        // A fresh tap or actual PCM transient releases 48 bounded, deterministic
+        // photon motes. They fly from the performed pixel (touch) or sounding
+        // nucleus (PCM), never from a random point. Once the event decays, the
+        // entire layer stops drawing; idle battery cost is zero.
+        val gestureBurst = animationsEnabled && pulse > 0L && impact.value < 1f
+        val pcmBurst = animationsEnabled && pcm.transient > .03f &&
+            audioImpact.value < 1f
+        if (gestureBurst || pcmBurst) {
+            val useGesture = gestureBurst &&
+                (!pcmBurst || impact.value <= audioImpact.value)
+            val progress = if (useGesture) impact.value else audioImpact.value
+            val origin = if (useGesture) tapOrigin else c
+            val burstLevel = if (useGesture)
+                ImmersiveLightMath.burstEnergy(.86f, pcm.transient)
+            else ImmersiveLightMath.burstEnergy(0f, pcm.transient)
+            val opacity = ImmersiveLightMath.burstOpacity(progress, burstLevel)
+            if (opacity > .003f) {
+                for (seed in ImmersiveLightMath.embers) {
+                    val spread = ImmersiveLightMath.emberDisplacement(
+                        seed, progress, burstLevel, shortEdge,
+                    )
+                    val spin = if (animationsEnabled) animatedPhase * turn * .19f else 0f
+                    val a = seed.angle + spin +
+                        sin(seed.phase * turn + timbre * 2f) * .12f
+                    val point = origin + Offset(
+                        cos(a) * spread,
+                        sin(a) * spread * (.79f + aperture * .16f),
+                    )
+                    val tint = when (seed.hueLane) {
+                        0 -> amber
+                        1 -> livingHue
+                        2 -> ultraviolet
+                        else -> ice
+                    }
+                    val alpha = (opacity * (.26f + seed.phase * .34f)).coerceAtMost(1f)
+                    drawCircle(
+                        color = tint.copy(alpha = alpha * .15f),
+                        radius = seed.radiusScale * (5f + 3f * pcm.peak) * stroke,
+                        center = point,
+                    )
+                    drawCircle(
+                        color = tint.copy(alpha = alpha),
+                        radius = seed.radiusScale * .98f * stroke,
+                        center = point,
+                    )
+                }
             }
         }
 
