@@ -29,16 +29,20 @@ internal class LayerAmpEnvelopeBank(sampleRate: Int) {
     private val applied = arrayOfNulls<LayerAmpEnvelope>(LANES)
     private val enabled = BooleanArray(LANES)
     private val stages = IntArray(LANES)
-    private val levels = FloatArray(LANES)
+    private val levels = DoubleArray(LANES)
     private val bypassMix = FloatArray(LANES)
     private val targetMix = FloatArray(LANES)
-    private val attackStep = FloatArray(LANES)
-    private val decayStep = FloatArray(LANES)
+    private val attackStep = DoubleArray(LANES)
+    private val decayStep = DoubleArray(LANES)
     private val releaseFrames = IntArray(LANES) { 1 }
-    private val releaseStep = FloatArray(LANES)
-    private val targetSustain = FloatArray(LANES) { 1f }
+    private val releaseStep = DoubleArray(LANES)
+    private val targetSustain = DoubleArray(LANES) { 1.0 }
     private val sampleRateHz = sampleRate
     private val slew = (1.0 - exp(-1.0 / (sampleRate * 0.008))).toFloat()
+    private val slewDouble = 1.0 - exp(-1.0 / (sampleRate * 0.008))
+    // Float32 can freeze below exact bypass unity. Compute the epsilon once
+    // from representable Float ULP and sample-rate-dependent 8 ms coefficient.
+    private val bypassSnapThreshold = max(0.00001f, java.lang.Math.ulp(1f) / slew)
 
     fun configure(slot: Int, config: LayerAmpEnvelope) {
         if (applied[slot] === config) return
@@ -46,13 +50,13 @@ internal class LayerAmpEnvelopeBank(sampleRate: Int) {
         applied[slot] = config
         enabled[slot] = config.enabled
         targetMix[slot] = if (config.enabled) 1f else 0f
-        targetSustain[slot] = config.sustain
+        targetSustain[slot] = config.sustain.toDouble()
 
         val attackSeconds = 0.001 + config.attack.toDouble() * config.attack * 4.0
         val decaySeconds = 0.005 + config.decay.toDouble() * config.decay * 3.0
         val releaseSeconds = 0.005 + config.release.toDouble() * config.release * 4.0
-        attackStep[slot] = 1f / max(1, (sampleRateHz * attackSeconds).toInt())
-        decayStep[slot] = (1f - config.sustain) /
+        attackStep[slot] = 1.0 / max(1, (sampleRateHz * attackSeconds).toInt())
+        decayStep[slot] = (1.0 - config.sustain.toDouble()) /
             max(1, (sampleRateHz * decaySeconds).toInt())
         releaseFrames[slot] = max(1, (sampleRateHz * releaseSeconds).toInt())
         if (stages[slot] == RELEASE) {
@@ -64,14 +68,14 @@ internal class LayerAmpEnvelopeBank(sampleRate: Int) {
         // Idle voices are primed by the owner before their next note gate.
         if (config.enabled && !wasEnabled) {
             stages[slot] = ATTACK
-            levels[slot] = 0f
+            levels[slot] = 0.0
         }
     }
 
     fun primeSilentSlot(slot: Int) {
         bypassMix[slot] = targetMix[slot]
         stages[slot] = OFF
-        levels[slot] = 0f
+        levels[slot] = 0.0
     }
 
     /** Repeated/stealing polyphonic note gates restart each layer; legato does not. */
@@ -79,7 +83,7 @@ internal class LayerAmpEnvelopeBank(sampleRate: Int) {
         for (slot in 0 until LANES) {
             if (enabled[slot] || bypassMix[slot] > 0f) {
                 stages[slot] = ATTACK
-                levels[slot] = 0f
+                levels[slot] = 0.0
             }
         }
     }
@@ -96,7 +100,7 @@ internal class LayerAmpEnvelopeBank(sampleRate: Int) {
     fun hardStop() {
         for (slot in 0 until LANES) {
             stages[slot] = OFF
-            levels[slot] = 0f
+            levels[slot] = 0.0
             bypassMix[slot] = targetMix[slot]
         }
     }
@@ -108,39 +112,39 @@ internal class LayerAmpEnvelopeBank(sampleRate: Int) {
         if (!isEngaged(slot)) return 1f
         val mixTarget = targetMix[slot]
         var mix = bypassMix[slot] + (mixTarget - bypassMix[slot]) * slew
-        if (abs(mixTarget - mix) < 0.00001f) mix = mixTarget
+        if (abs(mixTarget - mix) <= bypassSnapThreshold) mix = mixTarget
         bypassMix[slot] = mix
 
         var level = levels[slot]
         when (stages[slot]) {
             ATTACK -> {
-                level = min(1f, level + attackStep[slot])
-                if (level >= 1f) stages[slot] = DECAY
+                level = min(1.0, level + attackStep[slot])
+                if (level >= 1.0) stages[slot] = DECAY
             }
             DECAY -> {
                 if (level <= targetSustain[slot]) {
                     // Raising sustain mid-decay must not jump the envelope up
                     // instantaneously; the same 8 ms slew owns the edit.
                     stages[slot] = SUSTAIN
-                    level += (targetSustain[slot] - level) * slew
+                    level += (targetSustain[slot] - level) * slewDouble
                 } else {
                     level = max(targetSustain[slot], level - decayStep[slot])
                     if (level <= targetSustain[slot]) stages[slot] = SUSTAIN
                 }
             }
             SUSTAIN -> {
-                level += (targetSustain[slot] - level) * slew
+                level += (targetSustain[slot] - level) * slewDouble
             }
             RELEASE -> {
-                level = max(0f, level - releaseStep[slot])
-                if (level <= 0.00001f) {
-                    level = 0f
+                level = max(0.0, level - releaseStep[slot])
+                if (level <= 0.00001) {
+                    level = 0.0
                     stages[slot] = OFF
                 }
             }
-            else -> level = 0f
+            else -> level = 0.0
         }
         levels[slot] = level
-        return 1f + (level - 1f) * mix
+        return (1.0 + (level - 1.0) * mix.toDouble()).toFloat()
     }
 }

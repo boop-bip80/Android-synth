@@ -8,6 +8,83 @@ import org.junit.Test
 import kotlin.math.abs
 
 class LayerAmpEnvelopeBankTest {
+
+    @Test fun bypassCrossfadeSnapsToExactZeroAndOneAt48And192k() {
+        for (sampleRate in intArrayOf(48_000, 192_000)) {
+            val bank = LayerAmpEnvelopeBank(sampleRate)
+            val bypass = LayerAmpEnvelope()
+            val shaped = LayerAmpEnvelope(
+                enabled = true, attack = 1f, decay = .8f, sustain = .2f,
+            )
+            bank.configure(2, bypass)
+            bank.primeSilentSlot(2)
+            bank.noteOn()
+            bank.configure(2, shaped)
+            val first = bank.nextGain(2)
+            assertTrue("Enabling the VCA must de-click at $sampleRate",
+                first > .995f)
+            repeat(sampleRate / 4) { bank.nextGain(2) }
+
+            // A fixed 1e-5 threshold stalls at 0.99998856/0.99995422
+            // at 48/192k and never reaches exact full VCA authority.
+            val field = LayerAmpEnvelopeBank::class.java.getDeclaredField("bypassMix")
+            field.isAccessible = true
+            val mix = field.get(bank) as FloatArray
+            assertEquals("VCA full-enable never reached exact unity at $sampleRate",
+                1f, mix[2], 0f)
+
+            val beforeDisable = bank.nextGain(2)
+            bank.configure(2, shaped.copy(enabled = false))
+            val afterDisable = bank.nextGain(2)
+            assertTrue("Bypass must not jump on the first disabled frame",
+                abs(afterDisable - beforeDisable) < .01f)
+            repeat(sampleRate / 4) { bank.nextGain(2) }
+            assertEquals("Bypass must settle exactly to zero at $sampleRate",
+                0f, mix[2], 0f)
+            assertFalse("Bypassed DSP lane must fully retire", bank.isEngaged(2))
+            assertEquals(1f, bank.nextGain(2), 0f)
+        }
+    }
+
+    @Test fun liveSustainIncreaseToOneReachesExactFullAmplitudeAtBothRates() {
+        for (sampleRate in intArrayOf(48_000, 192_000)) {
+            val bank = LayerAmpEnvelopeBank(sampleRate)
+            val config = LayerAmpEnvelope(
+                enabled = true, attack = 0f, decay = .02f, sustain = .2f,
+            )
+            bank.configure(0, config)
+            bank.primeSilentSlot(0)
+            bank.noteOn()
+            repeat(sampleRate / 2) { bank.nextGain(0) }
+            assertEquals(.2f, bank.nextGain(0), .01f)
+            bank.configure(0, config.copy(sustain = 1f))
+            assertTrue("A 100% sustain edit must slew, never jump",
+                bank.nextGain(0) < .21f)
+            repeat(sampleRate / 4) { bank.nextGain(0) }
+            assertEquals("No floating sustain plateau below unity at $sampleRate",
+                1f, bank.nextGain(0), 0f)
+        }
+    }
+
+    @Test fun threeSecondDecayNearUnityHasSampleRateAccurateAmplitude() {
+        for (sampleRate in intArrayOf(48_000, 192_000)) {
+            val bank = LayerAmpEnvelopeBank(sampleRate)
+            bank.configure(0, LayerAmpEnvelope(
+                enabled = true, attack = 0f, decay = 1f,
+                sustain = .99f, release = 0f,
+            ))
+            bank.primeSilentSlot(0)
+            bank.noteOn()
+            repeat(sampleRate) { bank.nextGain(0) }
+            val afterOneSecond = bank.nextGain(0)
+            assertTrue("48/192k DECAY must progress accurately; " +
+                "Float32 per-frame step can stall at 1: $afterOneSecond",
+                afterOneSecond >= .9965f && afterOneSecond <= .9969f)
+            repeat(sampleRate * 3) { bank.nextGain(0) }
+            assertEquals(.99f, bank.nextGain(0), .0001f)
+        }
+    }
+
     @Test fun disabledBankReturnsExactUnityThroughGatesAndReset() {
         val bank = LayerAmpEnvelopeBank(48_000)
         bank.configure(0, LayerAmpEnvelope())
