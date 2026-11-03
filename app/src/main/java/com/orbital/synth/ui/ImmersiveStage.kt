@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orbital.synth.core.ParameterId
+import kotlin.math.abs
 
 /**
  * Keyboardless performance canvas. This is a real input surface: touches are routed
@@ -60,6 +61,9 @@ internal fun ImmersiveStage(
     val latestOn = rememberUpdatedState(onNoteOn)
     val latestOff = rememberUpdatedState(onNoteOff)
     val latestParameter = rememberUpdatedState(onParameterChange)
+    // Dedupe minute pointer jitter before triggering Compose state invalidations.
+    // Finger position and the visual renderer still update on every pointer event.
+    val lastExpression = remember { FloatArray(4) { Float.NaN } }
     var touchX by remember { mutableFloatStateOf(.5f) }
     var touchY by remember { mutableFloatStateOf(.5f) }
     var touchIntensity by remember { mutableFloatStateOf(0f) }
@@ -73,10 +77,18 @@ internal fun ImmersiveStage(
                 is TouchVoiceEvent.NoteOn -> latestOn.value(event.note)
                 is TouchVoiceEvent.NoteOff -> latestOff.value(event.note)
                 is TouchVoiceEvent.Expression -> {
-                    latestParameter.value(ParameterId.CUTOFF, event.cutoff)
-                    latestParameter.value(ParameterId.MORPH, event.morph)
-                    latestParameter.value(ParameterId.MOVEMENT, event.movement)
-                    latestParameter.value(ParameterId.FX_AMOUNT, event.fx)
+                    fun send(index: Int, id: ParameterId, value: Float) {
+                        if (lastExpression[index].isNaN() ||
+                            abs(lastExpression[index] - value) >= .008f
+                        ) {
+                            lastExpression[index] = value
+                            latestParameter.value(id, value)
+                        }
+                    }
+                    send(0, ParameterId.CUTOFF, event.cutoff)
+                    send(1, ParameterId.MORPH, event.morph)
+                    send(2, ParameterId.MOVEMENT, event.movement)
+                    send(3, ParameterId.FX_AMOUNT, event.fx)
                 }
             }
         }
