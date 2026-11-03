@@ -56,18 +56,56 @@ timeout 10s adb shell wm size "${compact_width_px}x${compact_height_px}"
 sleep 2
 timeout 15s adb shell am force-stop com.orbital.synth >/dev/null 2>&1 || true
 timeout 25s adb shell am start -n com.orbital.synth/.MainActivity > artifacts/compact-350-launch.txt
+# A fresh Google APIs emulator can show an *external* Pixel Launcher ANR
+# above a healthy ORBITAL Activity. Recover only that exact named system app;
+# never ignore, dismiss or relaunch through an ORBITAL ANR or any other dialog.
+launcher_anr_overlay_visible() {
+  local snapshot="$1"
+  grep -Eq 'mCurrentFocus=.*Application Not Responding: com[.]google[.]android[.]apps[.]nexuslauncher(}|$)' "$snapshot"
+}
+
+recover_launcher_anr_overlay() {
+  local attempt="$1"
+  timeout 12s adb shell dumpsys window > "artifacts/compact-350-launcher-anr-before-$attempt.txt" 2>&1 || true
+  if (( attempt == 0 )); then
+    printf 'attempt=%s action=back_external_pixel_launcher_anr\n' "$attempt" \
+      >> artifacts/compact-350-launcher-recovery.txt
+    timeout 10s adb shell input keyevent KEYCODE_BACK || true
+  else
+    printf 'attempt=%s action=force_stop_only_pixel_launcher_then_relaunch_orbital\n' "$attempt" \
+      >> artifacts/compact-350-launcher-recovery.txt
+    timeout 15s adb shell am force-stop com.google.android.apps.nexuslauncher || true
+    timeout 25s adb shell am start -n com.orbital.synth/.MainActivity \
+      > artifacts/compact-350-launcher-relaunch.txt
+  fi
+}
+
 ready=0
+launcher_anr_recoveries=0
 for attempt in {1..60}; do
   timeout 12s adb shell dumpsys window > artifacts/compact-350-window.txt 2>&1 || true
   if timeout 8s adb shell pidof com.orbital.synth >/dev/null 2>&1 &&
-     grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth' artifacts/compact-350-window.txt; then
+     grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth/com[.]orbital[.]synth[.]MainActivity' artifacts/compact-350-window.txt; then
     ready=1
     break
   fi
+  if (( launcher_anr_recoveries < 2 )) &&
+     launcher_anr_overlay_visible artifacts/compact-350-window.txt; then
+    recover_launcher_anr_overlay "$launcher_anr_recoveries"
+    launcher_anr_recoveries=$((launcher_anr_recoveries + 1))
+    sleep 2
+  fi
   sleep 1
 done
+printf 'launcher_anr_recoveries=%s\nfocus_ready_poll=%s\n' \
+  "$launcher_anr_recoveries" "$attempt" >> "$summary_file"
 if [[ "$ready" != 1 ]]; then
+  timeout 15s adb shell dumpsys activity activities > artifacts/compact-350-focus-activity.txt 2>&1 || true
+  timeout 15s adb shell dumpsys window > artifacts/compact-350-focus-failure.txt 2>&1 || true
+  timeout 8s adb shell pidof com.orbital.synth > artifacts/compact-350-focus-pid.txt 2>&1 || true
   printf '%s\n' 'MainActivity did not become focused at 360x350dp display.' >&2
+  printf '%s\n' 'Latest focus state:' >&2
+  grep -m 2 -E 'mCurrentFocus|mFocusedApp' artifacts/compact-350-focus-failure.txt >&2 || true
   exit 1
 fi
 sleep 2

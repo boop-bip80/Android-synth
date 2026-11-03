@@ -153,6 +153,8 @@ jobs:
             artifacts/compact-350-logcat.txt
             artifacts/compact-350-launch.txt
             artifacts/compact-350-window.txt
+            artifacts/compact-350-focus-*.txt
+            artifacts/compact-350-launcher-*.txt
             artifacts/compact-350-*.xml
             artifacts/compact-350-*-dump.txt
             artifacts/activity-state.txt
