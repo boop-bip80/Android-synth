@@ -18,6 +18,7 @@ import com.orbital.synth.audio.AndroidAudioOutput
 import com.orbital.synth.audio.PerformanceTouchEpochPolicy
 import com.orbital.synth.audio.AndroidMidiManager
 import com.orbital.synth.audio.SourceAwareMidiMessageListener
+import com.orbital.synth.audio.MidiSourcePitchBendOwnership
 import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationLfoConfig
@@ -126,6 +127,14 @@ class MainActivity : ComponentActivity() {
             activeSequenceId = initialSequence.id,
         )
         refreshSequenceChoices()
+        // The DSP has one global bend (not MPE). Preserve the latest live
+        // controller's expression when another USB/Bluetooth port disappears.
+        // The synchronized owner serializes its calls into this nonblocking DSP queue.
+        val applyGlobalMidiBend: (Int) -> Unit = { raw ->
+            val bend = (raw.coerceIn(0, 16_383) - 8_192) / 8_192f
+            synth.setPitchBend(bend * 2f)
+        }
+        val sourcePitchBends = MidiSourcePitchBendOwnership(applyGlobalMidiBend)
         midiManager = AndroidMidiManager(applicationContext, object : SourceAwareMidiMessageListener {
             override fun onSourceNoteOn(sourceId: Long, channel: Int, note: Int, velocity: Int) {
                 audioOutput.noteOn(sourceId, channel, note, velocity.coerceIn(0, 127))
@@ -133,6 +142,14 @@ class MainActivity : ComponentActivity() {
 
             override fun onSourceNoteOff(sourceId: Long, channel: Int, note: Int, velocity: Int) {
                 audioOutput.noteOff(sourceId, channel, note)
+            }
+
+            override fun onSourcePitchBend(sourceId: Long, channel: Int, value: Int) {
+                sourcePitchBends.onBend(sourceId, channel, value)
+            }
+
+            override fun onSourceDisconnected(sourceId: Long) {
+                sourcePitchBends.onDisconnect(sourceId)
             }
 
             // Preserve direct/legacy listener behavior without sharing touch or port keys.
@@ -158,10 +175,9 @@ class MainActivity : ComponentActivity() {
             }
 
             override fun onPitchBend(channel: Int, value: Int) {
-                // Standard global ±2-semitone bend. Per-note MPE bend requires
-                // channel-associated voices and is intentionally not claimed yet.
-                val bend = (value.coerceIn(0, 16_383) - 8_192) / 8_192f
-                synth.setPitchBend(bend * 2f)
+                // Direct legacy listeners retain their original global behavior.
+                // Channel-associated voice pitch/MPE is not implemented.
+                applyGlobalMidiBend(value)
             }
         })
 
