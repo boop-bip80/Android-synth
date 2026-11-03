@@ -34,6 +34,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.math.max
 import kotlin.math.min
 
 @RunWith(AndroidJUnit4::class)
@@ -113,21 +114,32 @@ class FxParameterSignatureTest {
             }
         }
         compose.waitForIdle()
-        // The tiny waveform miniature is deliberately non-focusable: the
-        // full effect-slot button speaks its real parameters once to TalkBack.
-        // Capture that actual glass card's pixels instead of requiring a
-        // separate accessibility node for its decorative internal Canvas.
+        // The miniature is deliberately inside the parent button's semantics
+        // and may be clipped by the horizontally scrolling module strip.
+        // Assert real TalkBack information, then scroll to the *visible* large
+        // signature and inspect the actual Compose root framebuffer.
         val moduleCard = compose.onNodeWithTag("fxSlot0")
-        val modulePixels = moduleCard.captureToImage().toPixelMap()
-        assertTrue("Small configured slot was not actually drawn",
-            modulePixels.width > 64 && modulePixels.height > 64)
-        compose.onNodeWithTag("fxSelectedSignature").fetchSemanticsNode()
+        moduleCard.assertHasClickAction()
+        assertTrue("Card omitted real FX settings from TalkBack",
+            accessible("fxSlot0").contains("configured and enabled") &&
+                accessible("fxSlot0").contains("dry wet"))
         ensureVisible("fxSelectedSignature")
-        val darkGlassCapture = compose.onNodeWithTag("fxSelectedSignature")
-            .captureToImage().toPixelMap()
+        val signature = compose.onNodeWithTag("fxSelectedSignature")
+            .fetchSemanticsNode().boundsInRoot
+        val viewport = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        val darkGlassCapture = compose.onRoot().captureToImage().toPixelMap()
+        // Intersect measured on-screen signature bounds with this screenshot.
+        // A clipped/offscreen or zero-sized preview fails instead of producing a
+        // bogus 0x0 Bitmap or accidentally sampling unrelated luminous text.
+        val left = max(0, (signature.left - viewport.left).toInt())
+        val right = min(darkGlassCapture.width, (signature.right - viewport.left).toInt())
+        val top = max(0, (signature.top - viewport.top).toInt())
+        val bottom = min(darkGlassCapture.height, (signature.bottom - viewport.top).toInt())
+        assertTrue("360dp signature lacks measured visible framebuffer area",
+            right - left > 64 && bottom - top > 64)
         var luminousPixels = 0
-        for (y in 0 until darkGlassCapture.height step 4)
-            for (x in 0 until darkGlassCapture.width step 4) {
+        for (y in top until bottom step 4)
+            for (x in left until right step 4) {
                 val pixel = darkGlassCapture[x, y]
                 if (pixel.green > .40f && pixel.blue > .40f) luminousPixels++
             }
