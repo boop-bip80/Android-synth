@@ -257,6 +257,7 @@ internal fun ImmersiveStage(
             audioPeak = audioVisual.peak,
             audioTransient = audioVisual.transient,
             audioBrightness = audioVisual.brightness,
+            skipArtwork = ImmersiveFieldDrawGate.shouldSkip(cleanCanvas, fieldAlpha),
         )
 
         Box(
