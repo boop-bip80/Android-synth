@@ -4,6 +4,8 @@ import com.orbital.synth.core.dsp.processing.LfoShape
 import com.orbital.synth.core.dsp.processing.ModCurve
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
+import com.orbital.synth.core.dsp.processing.StepDirection
 import org.junit.Assert.*
 import org.junit.Test
 import kotlin.math.abs
@@ -307,6 +309,99 @@ class LiveModulationIntegrationTest {
         var sum = 0.0
         for (index in a.indices) sum += abs((a[index] - b[index]).toDouble())
         return sum
+    }
+
+    @Test fun realStepClockCanRhythmicallyMuteAmpAndAnimateActualPlayhead() {
+        val machine = synth()
+        machine.setModulationSteps(ModulationStepConfig(
+            enabled = true,
+            values = listOf(1f, -1f) + List(14) { 0f },
+            length = 2, beatsPerStep = .25f, glide = 0f,
+            direction = StepDirection.FORWARD,
+        ))
+        machine.setModulationTempoBpm(120f)
+        machine.setModulationRoute(0, ModSource.STEP, ModDestination.AMP, 0.5f)
+        machine.noteOn(60)
+        val audio = FloatArray(3_000 * 2)
+        machine.renderStereo(audio, 3_000)
+        fun magnitude(start: Int, end: Int): Double {
+            var sum = 0.0
+            for (frame in start until end) {
+                sum += abs(audio[frame * 2].toDouble()) + abs(audio[frame * 2 + 1].toDouble())
+            }
+            return sum
+        }
+        val high = magnitude(250, 900)
+        val low = magnitude(1_250, 1_900)
+        assertTrue("STEP=1 must be louder than STEP=-1: high=$high, low=$low",
+            high > 1.0 && high > low * 8.0)
+        assertEquals("Three sixteenth-note steps wrap back to second pad", 1,
+            machine.modulationStepPlayhead)
+        assertBounded(audio)
+    }
+
+    @Test fun stepToCutoffIsAudibleAndSilentClockMatchesRenderedClock() {
+        val plain = synth().apply {
+            setParameter(ParameterId.CUTOFF, 0.82f)
+        }
+        val programmed = synth().apply {
+            setParameter(ParameterId.CUTOFF, 0.82f)
+            setModulationSteps(ModulationStepConfig(
+                enabled = true, values = List(16) { -1f }, length = 1,
+                beatsPerStep = .25f, glide = 0f,
+            ))
+            setModulationRoute(0, ModSource.STEP, ModDestination.CUTOFF, 0.5f)
+        }
+        plain.noteOn(62)
+        programmed.noteOn(62)
+        val reference = FloatArray(8_192)
+        val modified = FloatArray(reference.size)
+        plain.renderStereo(reference, reference.size / 2)
+        programmed.renderStereo(modified, modified.size / 2)
+        var difference = 0.0
+        for (i in reference.indices) difference += abs((reference[i] - modified[i]).toDouble())
+        assertTrue("A real STEP cable must change filter PCM", difference > 1.0)
+        assertBounded(modified)
+
+        val clockOnly = synth()
+        val untouched = synth()
+        clockOnly.setModulationSteps(ModulationStepConfig(
+            enabled = true, length = 4, beatsPerStep = .25f,
+        ))
+        clockOnly.setModulationTempoBpm(120f)
+        clockOnly.noteOn(64)
+        untouched.noteOn(64)
+        val one = FloatArray(2_500 * 2)
+        val two = FloatArray(one.size)
+        clockOnly.renderStereo(one, 2_500)
+        untouched.renderStereo(two, 2_500)
+        assertArrayEquals("Unrouted STEP must preserve the existing audio output",
+            two, one, 0f)
+        assertEquals(2, clockOnly.modulationStepPlayhead)
+    }
+
+    @Test fun stepSequencePcmIsIndependentOfAudioCallbackSize() {
+        val one = synth()
+        val chunks = synth()
+        for (machine in arrayOf(one, chunks)) {
+            machine.setModulationSteps(ModulationStepConfig(
+                enabled = true, values = List(16) { if (it % 2 == 0) 1f else -1f },
+                length = 16, beatsPerStep = .125f, glide = .35f,
+            ))
+            machine.setModulationRoute(0, ModSource.STEP, ModDestination.MORPH, 0.35f)
+            machine.noteOn(65)
+        }
+        val big = FloatArray(4_800 * 2)
+        val small = FloatArray(96 * 2)
+        val combined = FloatArray(big.size)
+        one.renderStereo(big, 4_800)
+        repeat(50) { block ->
+            chunks.renderStereo(small, 96)
+            System.arraycopy(small, 0, combined, block * small.size, small.size)
+        }
+        assertArrayEquals(big, combined, .0001f)
+        assertEquals(one.modulationStepPlayhead, chunks.modulationStepPlayhead)
+        assertBounded(big)
     }
 
     private fun upwardCrossings(buffer: FloatArray, startFrame: Int, endFrame: Int): Int {
