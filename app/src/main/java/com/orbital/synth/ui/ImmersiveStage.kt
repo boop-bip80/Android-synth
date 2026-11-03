@@ -25,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -59,13 +60,19 @@ internal fun ImmersiveStage(
     onParameterChange: (ParameterId, Float) -> Unit,
     onExpressiveNoteOn: ((Int, Float) -> Unit)? = null,
     onExit: () -> Unit,
+    /** Optional source for DSP modulation: normalized X, Y, and touch pressure. */
+    onModulationTouchExpression: ((Float, Float, Float) -> Unit)? = null,
 ) {
     val mapper = remember { TouchPerformanceMapper() }
+    var showConfig by remember { mutableStateOf(false) }
+    var stageSettings by remember { mutableStateOf(StageTouchSettings(baseOctave = state.octave)) }
     val haptics = LocalHapticFeedback.current
     val latestOn = rememberUpdatedState(onNoteOn)
     val latestExpressiveOn = rememberUpdatedState(onExpressiveNoteOn)
     val latestOff = rememberUpdatedState(onNoteOff)
     val latestParameter = rememberUpdatedState(onParameterChange)
+    val latestModulationTouch = rememberUpdatedState(onModulationTouchExpression)
+    val lastModulationTouch = remember { FloatArray(3) { Float.NaN } }
     // Dedupe minute pointer jitter before triggering Compose state invalidations.
     // Finger position and the visual renderer still update on every pointer event.
     val lastExpression = remember { FloatArray(4) { Float.NaN } }
@@ -109,17 +116,34 @@ internal fun ImmersiveStage(
         }
     }
 
-    // Retuning the octave first releases old notes, so no hanging keys remain.
-    LaunchedEffect(mapper, state.octave) {
-        deliver(
-            mapper.updateConfig(
-                TouchPerformanceConfig(rootMidiNote = ((state.octave + 1) * 12).coerceIn(0, 127)),
-            ),
-        )
+    fun reportTouchModulation(x: Float, y: Float, pressure: Float, force: Boolean = false) {
+        val vx = if (x.isFinite()) x.coerceIn(0f, 1f) else .5f
+        val vy = if (y.isFinite()) y.coerceIn(0f, 1f) else .5f
+        val vp = if (pressure.isFinite()) pressure.coerceIn(0f, 1f) else .5f
+        if (force || lastModulationTouch[0].isNaN() ||
+            abs(vx - lastModulationTouch[0]) >= .01f ||
+            abs(vy - lastModulationTouch[1]) >= .01f ||
+            abs(vp - lastModulationTouch[2]) >= .01f
+        ) {
+            lastModulationTouch[0] = vx
+            lastModulationTouch[1] = vy
+            lastModulationTouch[2] = vp
+            latestModulationTouch.value?.invoke(vx, vy, vp)
+        }
+    }
+
+    // External octave updates follow the keyboard's octave, but the performer
+    // may choose a different stage octave using the configuration panel.
+    LaunchedEffect(state.octave) {
+        stageSettings = stageSettings.copy(baseOctave = state.octave)
+    }
+    LaunchedEffect(mapper, stageSettings) {
+        deliver(mapper.updateConfig(stageSettings.toTouchConfig()))
     }
     DisposableEffect(mapper) {
         onDispose {
             deliver(mapper.cancelAll())
+            reportTouchModulation(.5f, .5f, .5f, force = true)
         }
     }
 
