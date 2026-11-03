@@ -22,15 +22,9 @@ fun OrbitalSynth.loadPatch(patch: SynthPatch) {
     // from the previously loaded sound. Missing slots are intentionally silent.
     clearOscillatorRack()
     patch.oscillatorSlots.forEachIndexed { index, slot ->
-        setOscillatorSlot(
-            index = index,
-            enabled = slot.enabled,
-            waveform = slot.waveform,
-            level = slot.level,
-            coarseSemitones = slot.coarseSemitones,
-            fineCents = slot.fineCents,
-            morph = slot.morph,
-        )
+        // The full immutable V6 slot includes independent noise blend/color.
+        // Older V1-V5 codecs synthesize neutral zero-noise values.
+        setOscillatorSlot(index, slot)
     }
 
     // V1/V2 patches do not contain modulation. Clear *all* previous routes,
