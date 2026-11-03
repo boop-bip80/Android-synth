@@ -79,10 +79,16 @@ jobs:
           retention-days: 14
 
   emulator:
-    name: API 35 emulator, smoke test and screenshot
+    name: API 35 ${{ matrix.suite }} tests and emulator screenshots
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [general, compact]
+    env:
+      ORBITAL_TEST_SUITE: ${{ matrix.suite }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -120,7 +126,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: orbital-api35-emulator-screenshot
+          name: orbital-api35-${{ matrix.suite }}-emulator-screenshot
           path: |
             artifacts/orbital-emulator.png
             artifacts/orbital-compact-emulator.png
@@ -133,10 +139,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: orbital-api35-emulator-diagnostics
+          name: orbital-api35-${{ matrix.suite }}-emulator-diagnostics
           path: |
             artifacts/emulator-logcat.txt
             artifacts/compact-test-live-logcat.txt
+            artifacts/instrumentation-suite.txt
             artifacts/activity-state.txt
             artifacts/activity-launch.txt
             artifacts/diagnostic-screen.png
@@ -168,7 +175,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: orbital-android-test-results
+          name: orbital-${{ matrix.suite }}-android-test-results
           path: |
             app/build/outputs/androidTest-results/
             app/build/reports/androidTests/
