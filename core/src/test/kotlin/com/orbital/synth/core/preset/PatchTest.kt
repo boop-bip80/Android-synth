@@ -1,5 +1,8 @@
 package com.orbital.synth.core.preset
 
+import com.orbital.synth.core.OrbitalSynth
+import com.orbital.synth.core.OscillatorSlot
+
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import org.junit.Assert.*
@@ -42,6 +45,44 @@ class PatchTest {
         }
     }
 
+    @Test fun additiveOscillatorRackV2RoundTripsAndLoadsIntoAudioEngine() {
+        val layers = listOf(
+            OscillatorSlot(true, .5f, .67f, .44f, -12, 7.5f),
+            OscillatorSlot(true, 1f, 1f, .23f, 7, -13f),
+            OscillatorSlot(),
+        )
+        val original = FactoryPatches.DEFAULT.copy(oscillatorSlots = layers)
+        val encoded = PatchCodec.encode(original)
+        assertTrue(encoded.startsWith("ORBITAL-PATCH/2\n"))
+        assertEquals(original, PatchCodec.decode(encoded))
+        assertEquals(encoded, PatchCodec.encode(PatchCodec.decode(encoded)))
+
+        val synth = OrbitalSynth()
+        synth.loadPatch(original)
+        assertEquals(layers[0], synth.oscillatorSlot(0))
+        assertEquals(layers[1], synth.oscillatorSlot(1))
+        assertFalse(synth.oscillatorSlot(2).enabled)
+        // Activating any original V1 factory patch must silence the entire rack.
+        synth.loadPatch(FactoryPatches.DEFAULT)
+        for (i in 0 until synth.oscillatorSlotCount) {
+            assertFalse(synth.oscillatorSlot(i).enabled)
+        }
+        assertTrue(PatchCodec.encode(FactoryPatches.DEFAULT).startsWith("ORBITAL-PATCH/1\n"))
+    }
+
+    @Test fun corruptedOscillatorPatchIsRejectedBeforeEnteringEngine() {
+        val prefix = PatchCodec.encode(FactoryPatches.DEFAULT)
+            .replaceFirst("ORBITAL-PATCH/1", "ORBITAL-PATCH/2")
+        rejects { PatchCodec.decode(prefix + "osc.0=1,NaN,1,0.3,0,0\n") }
+        rejects { PatchCodec.decode(prefix + "osc.0=1,0,1,2.3,0,0\n") }
+        rejects { PatchCodec.decode(prefix + "osc.0=1,0,1,0.5,999,0\n") }
+        rejects { PatchCodec.decode(prefix + "osc.0=1,0,1,0.5,0,Infinity\n") }
+        rejects { PatchCodec.decode(prefix + "osc.1=1,0,1,0.5,0,0\n") }
+        rejects { PatchCodec.decode(prefix + "osc.0=1,0,1,0.5,0,0\nosc.0=0,0,1,0,0,0\n") }
+        rejects { PatchCodec.decode(prefix + "osc.8=1,0,1,0.5,0,0\n") }
+        rejects { PatchCodec.decode(prefix + "osc.0=maybe,0,1,0.5,0,0\n") }
+    }
+
     @Test fun unicodeAndReservedCharactersRoundTrip() {
         val patch = SynthPatch(
             id = "my-patch", name = "Örbital ♫ / + ? = %", author = "A & B",
@@ -53,7 +94,7 @@ class PatchTest {
 
     @Test fun rejectsUnknownFutureVersion() {
         val encoded = PatchCodec.encode(FactoryPatches.DEFAULT)
-        rejects { PatchCodec.decode(encoded.replace("ORBITAL-PATCH/1", "ORBITAL-PATCH/2")) }
+        rejects { PatchCodec.decode(encoded.replace("ORBITAL-PATCH/1", "ORBITAL-PATCH/3")) }
     }
 
     @Test fun rejectsDuplicateFieldsAndUnknownParameterKeys() {
