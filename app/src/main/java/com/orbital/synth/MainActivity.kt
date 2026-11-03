@@ -18,6 +18,7 @@ import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.performance.ArpeggiatorDirection
 import com.orbital.synth.core.VoiceMode
@@ -90,6 +91,7 @@ class MainActivity : ComponentActivity() {
         refreshPatchChoices()
         val initialSequence = audioOutput.sequencerPatternSelection
         screenState = screenState.copy(
+            fxSlots = fxSlotSnapshot(),
             sequencerTempo = audioOutput.sequencerTempo,
             enabledSteps = initialSequence.enabledSteps,
             sequencerStepCount = initialSequence.stepCount,
@@ -220,6 +222,8 @@ class MainActivity : ComponentActivity() {
                     onModulationLfoChange = ::updateModulationLfo,
                     onModulationRouteChange = ::updateModulationRoute,
                     onModulationRouteClear = ::clearModulationRoute,
+                    onFxSlotChange = ::updateFxSlot,
+                    onFxMoveSlot = ::reorderFxSlot,
                     onModulationTempoChange = { bpm ->
                         if (bpm.isFinite()) updateMusicTempo(bpm.roundToInt())
                     },
@@ -324,6 +328,7 @@ class MainActivity : ComponentActivity() {
             oscillatorSlots = oscillatorSnapshot(),
             modulationLfos = modulationLfoSnapshot(),
             modulationRoutes = modulationRouteSnapshot(),
+            fxSlots = fxSlotSnapshot(),
             presetIndex = patchIndex,
             presetCount = patches.size,
             activePatchId = patch.id,
@@ -527,6 +532,7 @@ class MainActivity : ComponentActivity() {
                         oscillatorSlots = oscillatorSnapshot(),
                         modulationLfos = modulationLfoSnapshot(),
                         modulationRoutes = modulationRouteSnapshot(),
+                        fxSlots = fxSlotSnapshot(),
                         presetIndex = patchIndex,
                         presetCount = FactoryPresets.ALL.size,
                         activePatchId = patch.id,
@@ -591,6 +597,31 @@ class MainActivity : ComponentActivity() {
         if (index !in 0 until synth.modulationRouteCount) return
         synth.clearModulationRoute(index)
         screenState = screenState.copy(modulationRoutes = modulationRouteSnapshot())
+    }
+
+    /** Only this one [OrbitalSynth] belongs to AndroidAudioOutput's PCM worker. */
+    private fun fxSlotSnapshot(): List<FxModuleConfig> =
+        List(synth.fxSlotCount) { index -> synth.fxSlot(index) }
+
+    private fun updateFxSlot(index: Int, config: FxModuleConfig) {
+        if (index !in 0 until synth.fxSlotCount ||
+            !config.wet.isFinite() || !config.depth.isFinite() ||
+            !config.rate.isFinite() || !config.stereo.isFinite()) return
+        synth.setFxSlot(index, config)
+        screenState = screenState.copy(fxSlots = fxSlotSnapshot())
+    }
+
+    /** Optimistically retain the selected processor's position across screen/stage switches.
+     * The DSP history itself is moved at the next audio block boundary.
+     */
+    private fun reorderFxSlot(from: Int, to: Int) {
+        if (from !in 0 until synth.fxSlotCount ||
+            to !in 0 until synth.fxSlotCount || from == to) return
+        val before = screenState.fxSlots.ifEmpty { fxSlotSnapshot() }
+        val next = before.toMutableList()
+        next.add(to, next.removeAt(from))
+        synth.moveFxSlot(from, to)
+        screenState = screenState.copy(fxSlots = next)
     }
 
     /** One BPM authority keeps patterns, arpeggiator and tempo-synced LFOs aligned. */
