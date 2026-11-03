@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ModulationLfoConfig
@@ -134,6 +135,35 @@ class ReferenceSoundControlsTest {
             liveRoute = liveRoute.copy(depth = 0f)
         }
         compose.onNodeWithText("0 LIVE").assertExists()
+    }
+
+    @Test fun upwardKnobSwipeAccumulatesRealDspValueAcrossManyTouchFrames() {
+        var value by mutableStateOf(.25f)
+        var callbacks = 0
+        compose.setContent {
+            ReferenceNeonKnob(
+                label = "WAVE",
+                value = value,
+                tint = OrbitalPalette.Violet,
+                tag = "referenceDragKnob",
+                onValueChange = { next ->
+                    value = next
+                    callbacks++
+                },
+            )
+        }
+        compose.onNodeWithTag("referenceDragKnob").performTouchInput {
+            swipe(
+                start = Offset(center.x, center.y * 1.5f),
+                end = Offset(center.x, center.y * .5f),
+                durationMillis = 420,
+            )
+        }
+        compose.runOnIdle {
+            assertTrue("real host received more than one drag event", callbacks > 1)
+            assertTrue("upward drag must accumulate above initial knob value: $value",
+                value > .40f)
+        }
     }
 
     @Test fun visualKnobAccessibilityCoercesOutOfRangeHostEdits() {
