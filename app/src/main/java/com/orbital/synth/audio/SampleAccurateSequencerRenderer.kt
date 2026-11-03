@@ -2,12 +2,14 @@ package com.orbital.synth.audio
 
 import com.orbital.synth.core.music.NoteEventKind
 import com.orbital.synth.core.music.StepSequencer
+import com.orbital.synth.core.music.TimedNoteSink
 
 /**
  * Executes absolute-sample sequencer events by splitting the synth's render calls
- * at event boundaries. A single preallocated scratch buffer is reused for every
- * partial segment. Only the sequencer's per-block event list allocates; never
- * allocate one object or array per output sample.
+ * at exact event boundaries. A single preallocated scratch buffer is reused for
+ * every partial segment; the scheduler emits primitives to one persistent sink
+ * rather than allocating an event List (including empty Lists) every AudioTrack
+ * block. A callback may still allocate downstream voice-command objects.
  *
  * The client must call this from exactly one audio render thread.
  */
@@ -16,6 +18,28 @@ internal class SampleAccurateSequencerRenderer(
     private val noteOn: (Int, Float) -> Unit,
     private val noteOff: (Int) -> Unit
 ) {
+    // Audio-thread-only context for the immutable, once-created note sink.
+    private var eventOutput = FloatArray(0)
+    private var eventScratch = FloatArray(0)
+    private var eventStart = 0L
+    private var eventFrames = 0
+    private var eventRendered = 0
+    private val sequencerSink = TimedNoteSink { sampleTime, kind, midiNote, velocity ->
+        val offset = (sampleTime - eventStart).toInt()
+        require(offset in eventRendered until eventFrames) {
+            "Sequencer events must be sorted and inside the current audio block"
+        }
+        if (offset > eventRendered) {
+            renderSegment(eventOutput, eventScratch, eventRendered,
+                offset - eventRendered, eventFrames)
+            eventRendered = offset
+        }
+        when (kind) {
+            NoteEventKind.NOTE_ON -> noteOn(midiNote, velocity.coerceIn(1, 127) / 127f)
+            NoteEventKind.NOTE_OFF -> noteOff(midiNote)
+        }
+    }
+
     fun renderBlock(
         sequencer: StepSequencer,
         output: FloatArray,
@@ -29,25 +53,15 @@ internal class SampleAccurateSequencerRenderer(
             return
         }
 
-        val blockStart = sequencer.cursorSample
-        val events = sequencer.advance(frames)
-        var rendered = 0
-        for (event in events) {
-            val eventOffset = (event.sampleTime - blockStart).toInt()
-            require(eventOffset in rendered until frames) {
-                "Sequencer events must be sorted and inside the current audio block"
-            }
-            if (eventOffset > rendered) {
-                renderSegment(output, scratch, rendered, eventOffset - rendered, frames)
-                rendered = eventOffset
-            }
-            when (event.kind) {
-                NoteEventKind.NOTE_ON ->
-                    noteOn(event.midiNote, event.velocity.coerceIn(1, 127) / 127f)
-                NoteEventKind.NOTE_OFF -> noteOff(event.midiNote)
-            }
+        eventOutput = output
+        eventScratch = scratch
+        eventStart = sequencer.cursorSample
+        eventFrames = frames
+        eventRendered = 0
+        sequencer.advanceInto(frames, sequencerSink)
+        if (eventRendered < frames) {
+            renderSegment(output, scratch, eventRendered, frames - eventRendered, frames)
         }
-        if (rendered < frames) renderSegment(output, scratch, rendered, frames - rendered, frames)
     }
 
     private fun renderSegment(
