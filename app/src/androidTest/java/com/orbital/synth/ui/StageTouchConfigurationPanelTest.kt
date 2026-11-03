@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -31,7 +32,7 @@ class StageTouchConfigurationPanelTest {
         compose.onNodeWithTag("stageScale-MAJOR").performClick()
         compose.runOnIdle { assertEquals(TouchScale.MAJOR, state.value.scale) }
         // Dismissing the dialog is a UI action, never an audio note event.
-        compose.onNodeWithTag("stageConfigClose").performClick()
+        compose.onNodeWithTag("stageConfigClose").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(dismissed) }
     }
 }
