@@ -106,9 +106,6 @@ class MainActivity : ComponentActivity() {
         val initialSequence = audioOutput.sequencerPatternSelection
         screenState = screenState.copy(
             fxSlots = fxSlotSnapshot(),
-            // Cold-start safety even before any explicit factory/user patch switch.
-            modulationSteps = synth.modulationSteps,
-            modulationStepPlayhead = synth.modulationStepPlayhead,
             sequencerTempo = audioOutput.sequencerTempo,
             enabledSteps = initialSequence.enabledSteps,
             sequencerStepCount = initialSequence.stepCount,
