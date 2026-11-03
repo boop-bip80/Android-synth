@@ -139,6 +139,9 @@ class OrbitalSynth(
     private var eventOrder = 0L
     private var previousFrequency: Double? = null
     private var lfoPhase = 0.0
+    // JVM PCM parity tests can compare the exact pre-optimization per-frame math.
+    // Worker-owned; never mutate while renderStereo is executing.
+    internal var forceLegacyFramePitchMathForTests: Boolean = false
     private var smoothedMasterGain = 0.62f
     // 15 ms time constant: changing voice counts never jumps the level of held notes.
     private val gainSlewCoefficient = (1.0 - exp(-1.0 / (sampleRate * 0.015))).toFloat()
@@ -539,8 +542,18 @@ class OrbitalSynth(
         val lfoHz = 0.05 * 2.0.pow(lfoRate * 8.0)
         val lfoIncrement = lfoHz / sampleRate
         val modulationDepth = movement * lfoDepth
+        // No audible LFO modulation when depth is EXACTLY zero. Keep advancing its
+        // phase per sample, but avoid transcendental math in the hot path. Pitch
+        // bend is block-snapshotted, so absent pitch routes and vibrato its ratio
+        // also stays bit-for-bit constant through this render block.
+        val useLegacyFrameMath = forceLegacyFramePitchMathForTests
+        val calculateLfo = modulationDepth != 0f || useLegacyFrameMath
         // Bypass the entire new mod clock on legacy patches with zero routes.
         val modulationEnabled = liveModulation.syncBlock(morph, cutoff, resonance)
+        // Query route activation AFTER the block snapshot. A newly connected
+        // pitch cable must be audible in its very first worker-owned block.
+        val blockConstantPitch = modulationDepth == 0f &&
+            !liveModulation.pitchRouteActive && !useLegacyFrameMath
         val filterRoutingActive = modulationEnabled && liveModulation.filterRouteActive
         if (filterRoutingActive != wasFilterRoutingActive) {
             // First update happens immediately when the user plugs a new cable.
@@ -632,12 +645,16 @@ class OrbitalSynth(
             return
         }
 
+        // The silent fast path above avoids this calculation entirely.
+        val blockPitchMultiplier = if (blockConstantPitch) {
+            2.0.pow(pitchBend / 12.0)
+        } else 1.0
         for (frame in 0 until frames) {
             // Sample-rate-independent slew avoids a 29% instantaneous level jump when
             // a second voice joins an already sustained single note.
             smoothedMasterGain +=
                 (targetMasterGain - smoothedMasterGain) * gainSlewCoefficient
-            val lfo = sin(lfoPhase * 2.0 * PI).toFloat()
+            val lfo = if (calculateLfo) sin(lfoPhase * 2.0 * PI).toFloat() else 0f
             lfoPhase += lfoIncrement
             if (lfoPhase >= 1.0) lfoPhase -= 1.0
 
@@ -659,7 +676,7 @@ class OrbitalSynth(
             val vibratoSemitones = (lfo * modulationDepth * 0.5).toDouble()
             val routedPitchSemitones = if (modulationEnabled)
                 liveModulation.pitchSemitones.toDouble() else 0.0
-            val pitchMultiplier = 2.0.pow(
+            val pitchMultiplier = if (blockConstantPitch) blockPitchMultiplier else 2.0.pow(
                 (pitchBend + vibratoSemitones + routedPitchSemitones) / 12.0
             )
 
