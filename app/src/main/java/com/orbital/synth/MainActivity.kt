@@ -15,6 +15,9 @@ import com.orbital.synth.audio.AndroidMidiManager
 import com.orbital.synth.audio.SourceAwareMidiMessageListener
 import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.OscillatorSlot
+import com.orbital.synth.core.ModulationLfoConfig
+import com.orbital.synth.core.ModulationRouteConfig
+import com.orbital.synth.core.dsp.processing.ModSource
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.performance.ArpeggiatorDirection
 import com.orbital.synth.core.VoiceMode
@@ -81,6 +84,7 @@ class MainActivity : ComponentActivity() {
 
         audioOutput = AndroidAudioOutput(applicationContext, synth)
         audioOutput.setArpeggiatorTempo(audioOutput.sequencerTempo)
+        synth.setModulationTempoBpm(audioOutput.sequencerTempo.toFloat())
         userPatches = UserPatchRepository(applicationContext, synth)
         userSequences = SequenceDirectoryStore(filesDir.resolve("sequences").toPath())
         refreshPatchChoices()
@@ -146,6 +150,9 @@ class MainActivity : ComponentActivity() {
                     // so the active ID and enabled grid cannot belong to different patterns.
                     val sequence = audioOutput.sequencerPatternSelection
                     val tempo = audioOutput.sequencerTempo
+                    if (screenState.sequencerTempo != tempo) {
+                        synth.setModulationTempoBpm(tempo.toFloat())
+                    }
                     if (audioOutput.arpeggiatorTempo != tempo) {
                         audioOutput.setArpeggiatorTempo(tempo)
                     }
@@ -210,6 +217,19 @@ class MainActivity : ComponentActivity() {
                     },
                     onParameterChange = ::updateParameter,
                     onOscillatorSlotChange = ::updateOscillatorSlot,
+                    onModulationLfoChange = ::updateModulationLfo,
+                    onModulationRouteChange = ::updateModulationRoute,
+                    onModulationRouteClear = ::clearModulationRoute,
+                    onModulationTempoChange = { bpm ->
+                        if (bpm.isFinite()) updateMusicTempo(bpm.roundToInt())
+                    },
+                    onStageModulationTouch = { x, y, pressure ->
+                        if (x.isFinite() && y.isFinite() && pressure.isFinite()) {
+                            synth.setModulationSource(ModSource.TOUCH_X, x * 2f - 1f)
+                            synth.setModulationSource(ModSource.TOUCH_Y, y * 2f - 1f)
+                            synth.setModulationSource(ModSource.TOUCH_PRESSURE, pressure * 2f - 1f)
+                        }
+                    },
                     onModeChange = ::updatePlayMode,
                     onOctaveChange = { octave ->
                         audioOutput.allNotesOff(TOUCH_SOURCE_ID)
@@ -240,13 +260,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     },
-                    onSequencerTempoChange = { bpm ->
-                        val next = bpm.coerceIn(20, 300)
-                        audioOutput.setSequencerTempo(next)
-                        // Keep live arpeggiation musically locked to the pattern tempo.
-                        audioOutput.setArpeggiatorTempo(next)
-                        screenState = screenState.copy(sequencerTempo = next)
-                    },
+                    onSequencerTempoChange = ::updateMusicTempo,
                     onSequencerLengthChange = { requested ->
                         // Render-worker snapshot remains authoritative. The UI poll
                         // publishes the new length and any truncated step state.
@@ -300,6 +314,8 @@ class MainActivity : ComponentActivity() {
             patchName = patch.name,
             parameters = ParameterId.entries.associateWith { synth.parameter(it) },
             oscillatorSlots = oscillatorSnapshot(),
+            modulationLfos = modulationLfoSnapshot(),
+            modulationRoutes = modulationRouteSnapshot(),
             presetIndex = patchIndex,
             presetCount = patches.size,
             activePatchId = patch.id,
@@ -500,6 +516,8 @@ class MainActivity : ComponentActivity() {
                         patchName = patch.name,
                         parameters = ParameterId.entries.associateWith { synth.parameter(it) },
                         oscillatorSlots = oscillatorSnapshot(),
+                        modulationLfos = modulationLfoSnapshot(),
+                        modulationRoutes = modulationRouteSnapshot(),
                         presetIndex = patchIndex,
                         presetCount = FactoryPresets.ALL.size,
                         activePatchId = patch.id,
@@ -531,6 +549,51 @@ class MainActivity : ComponentActivity() {
             morph = next.morph,
         )
         screenState = screenState.copy(oscillatorSlots = oscillatorSnapshot())
+    }
+
+    private fun modulationLfoSnapshot(): List<ModulationLfoConfig> =
+        List(synth.modulationLfoCount) { index -> synth.modulationLfo(index) }
+
+    private fun modulationRouteSnapshot(): List<ModulationRouteConfig> =
+        List(synth.modulationRouteCount) { index -> synth.modulationRoute(index) }
+
+    private fun updateModulationLfo(index: Int, next: ModulationLfoConfig) {
+        if (index !in 0 until synth.modulationLfoCount ||
+            !next.rateHz.isFinite() || !next.beatsPerCycle.isFinite()) return
+        synth.setModulationLfo(
+            slot = index,
+            enabled = next.enabled,
+            shape = next.shape,
+            rateHz = next.rateHz,
+            beatsPerCycle = next.beatsPerCycle,
+            retriggerOnNote = next.retriggerOnNote,
+        )
+        screenState = screenState.copy(modulationLfos = modulationLfoSnapshot())
+    }
+
+    private fun updateModulationRoute(index: Int, next: ModulationRouteConfig) {
+        if (index !in 0 until synth.modulationRouteCount || !next.depth.isFinite()) return
+        if (next.enabled) {
+            synth.setModulationRoute(index, next.source, next.destination, next.depth, next.curve)
+        } else {
+            synth.clearModulationRoute(index)
+        }
+        screenState = screenState.copy(modulationRoutes = modulationRouteSnapshot())
+    }
+
+    private fun clearModulationRoute(index: Int) {
+        if (index !in 0 until synth.modulationRouteCount) return
+        synth.clearModulationRoute(index)
+        screenState = screenState.copy(modulationRoutes = modulationRouteSnapshot())
+    }
+
+    /** One BPM authority keeps patterns, arpeggiator and tempo-synced LFOs aligned. */
+    private fun updateMusicTempo(requestedBpm: Int) {
+        val bpm = requestedBpm.coerceIn(20, 300)
+        audioOutput.setSequencerTempo(bpm)
+        audioOutput.setArpeggiatorTempo(bpm)
+        synth.setModulationTempoBpm(bpm.toFloat())
+        screenState = screenState.copy(sequencerTempo = bpm)
     }
 
     private fun updateParameter(parameter: ParameterId, value: Float) {
