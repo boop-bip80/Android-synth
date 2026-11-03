@@ -22,7 +22,6 @@ class ReferenceSoundUiModelTest {
         assertEquals(0f, ReferenceSoundUiModel.normalized(Float.NaN), 0f)
         assertEquals(0f, ReferenceSoundUiModel.normalized(Float.NEGATIVE_INFINITY), 0f)
         assertEquals(0f, ReferenceSoundUiModel.normalized(-20f), 0f)
-        assertEquals(1f, ReferenceSoundUiModel.normalized(Float.POSITIVE_INFINITY), 0f)
         // Non-finite inputs are explicitly zero, even positive infinity.
         assertEquals(0f, ReferenceSoundUiModel.normalized(Float.POSITIVE_INFINITY), 0f)
         assertEquals(1f, ReferenceSoundUiModel.normalized(4f), 0f)
@@ -75,7 +74,7 @@ class ReferenceSoundUiModelTest {
                 assertEquals(result,
                     ReferenceSoundUiModel.ribbonAt(u, layer, .44f, .79f), 0f)
                 assertTrue(result.isFinite())
-                assertTrue(result in .04f.. .96f)
+                assertTrue(result in 0.04f..0.96f)
             }
         }
         assertTrue(ReferenceSoundUiModel.ribbonAt(.33f, 2, .1f, .2f) !=
