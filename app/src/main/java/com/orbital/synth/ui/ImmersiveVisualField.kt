@@ -522,6 +522,55 @@ fun ImmersiveVisualField(
             }
         }
 
+        // A fresh tap or actual PCM transient releases 48 bounded, deterministic
+        // photon motes. They fly from the performed pixel (touch) or sounding
+        // nucleus (PCM), never from a random point. Once the event decays, the
+        // entire layer stops drawing; idle battery cost is zero.
+        val gestureBurst = animationsEnabled && pulse > 0L && impact.value < 1f
+        val pcmBurst = animationsEnabled && pcm.transient > .03f &&
+            audioImpact.value < 1f
+        if (gestureBurst || pcmBurst) {
+            val useGesture = gestureBurst &&
+                (!pcmBurst || impact.value <= audioImpact.value)
+            val progress = if (useGesture) impact.value else audioImpact.value
+            val origin = if (useGesture) touch else c
+            val burstLevel = if (useGesture)
+                ImmersiveLightMath.burstEnergy(.86f, pcm.transient)
+            else ImmersiveLightMath.burstEnergy(0f, pcm.transient)
+            val opacity = ImmersiveLightMath.burstOpacity(progress, burstLevel)
+            if (opacity > .003f) {
+                for (seed in ImmersiveLightMath.embers) {
+                    val spread = ImmersiveLightMath.emberDisplacement(
+                        seed, progress, burstLevel, shortEdge,
+                    )
+                    val spin = if (animationsEnabled) animatedPhase * turn * .19f else 0f
+                    val a = seed.angle + spin +
+                        sin(seed.phase * turn + timbre * 2f) * .12f
+                    val point = origin + Offset(
+                        cos(a) * spread,
+                        sin(a) * spread * (.79f + aperture * .16f),
+                    )
+                    val tint = when (seed.hueLane) {
+                        0 -> amber
+                        1 -> livingHue
+                        2 -> ultraviolet
+                        else -> ice
+                    }
+                    val alpha = (opacity * (.26f + seed.phase * .34f)).coerceAtMost(1f)
+                    drawCircle(
+                        color = tint.copy(alpha = alpha * .15f),
+                        radius = seed.radiusScale * (5f + 3f * pcm.peak) * stroke,
+                        center = point,
+                    )
+                    drawCircle(
+                        color = tint.copy(alpha = alpha),
+                        radius = seed.radiusScale * .98f * stroke,
+                        center = point,
+                    )
+                }
+            }
+        }
+
         // Rising measured PCM transients launch independent fading concentric light.
         if (animationsEnabled && audioImpact.value < 1f) {
             val progress = audioImpact.value
