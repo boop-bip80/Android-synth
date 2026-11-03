@@ -102,11 +102,20 @@ class PerformanceTouchLifecycleEpochTest {
         piano.performTouchInput {
             val width = center.x * 2f
             down(1, Offset(width * .0625f, center.y * 1.7f))
-            up(1)
+            // The old finger's late UP is in the *new* host worker epoch.
+            // It must not release the newly attacked identical pitch.
+            up(0)
         }
         compose.runOnIdle {
             assertEquals(
-                "New touch must produce a complete note after prior panic",
+                "Stale UP must not silence a newer same-pitch finger",
+                listOf("ON:60", "OFF:60", "ON:60"), events,
+            )
+        }
+        piano.performTouchInput { up(1) }
+        compose.runOnIdle {
+            assertEquals(
+                "New touch must produce one matching final note-off",
                 listOf("ON:60", "OFF:60", "ON:60", "OFF:60"), events,
             )
         }
@@ -150,7 +159,7 @@ class PerformanceTouchLifecycleEpochTest {
         // may still be present in motion events, but was NOT freshly pressed.
         canvas.performTouchInput {
             down(1, center)
-            up(1)
+            up(0) // Delayed old-session UP must NOT silence pointer 1.
         }
         compose.waitForIdle()
         compose.runOnIdle {
@@ -161,7 +170,17 @@ class PerformanceTouchLifecycleEpochTest {
                 original.size * 2, attacks.size,
             )
             assertEquals(
-                "New FOCUS touch must release without waiting on the stale old finger",
+                "Late old-session UP must not release the new active FOCUS note",
+                original.sorted(), releases.sorted(),
+            )
+        }
+        canvas.performTouchInput { up(1) }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            val attacks = events.filter { it.startsWith("ON:") }.map { it.removePrefix("ON:") }
+            val releases = events.filter { it.startsWith("OFF:") }.map { it.removePrefix("OFF:") }
+            assertEquals(
+                "New FOCUS touch must release only when its own finger goes up",
                 attacks.sorted(), releases.sorted(),
             )
         }
