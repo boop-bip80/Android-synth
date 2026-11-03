@@ -29,6 +29,8 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.OscillatorSlot
+import com.orbital.synth.core.ModulationLfoConfig
+import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.music.SequencerNote
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -90,6 +92,44 @@ class OrbitalScreenTest {
             assertEquals(1, liveSlots.value.count { it.enabled })
             assertTrue(liveSlots.value[0].enabled)
         }
+    }
+
+    @Test fun fxTabConnectsTheConstellationEditorToHostRouteState() {
+        val lfos = mutableStateOf(List(8) { ModulationLfoConfig(enabled = it == 0) })
+        val cables = mutableStateOf(List(64) { ModulationRouteConfig() })
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(
+                    modulationLfos = lfos.value,
+                    modulationRoutes = cables.value,
+                ),
+                onNoteOn = {},
+                onNoteOff = {},
+                onParameterChange = { _, _ -> },
+                onModeChange = {},
+                onOctaveChange = {},
+                onModulationLfoChange = { index, next ->
+                    lfos.value = lfos.value.toMutableList().apply { set(index, next) }
+                },
+                onModulationRouteChange = { index, next ->
+                    cables.value = cables.value.toMutableList().apply { set(index, next) }
+                },
+                onModulationRouteClear = { index ->
+                    cables.value = cables.value.toMutableList().apply {
+                        set(index, ModulationRouteConfig())
+                    }
+                },
+                onModulationTempoChange = {},
+            )
+        }
+        compose.onNodeWithContentDescription("Tab FX").performClick()
+        compose.onNodeWithTag("modulationConstellationPanel").assertExists()
+        compose.onNodeWithContentDescription("Toggle route 1")
+            .performScrollTo().assertIsDisplayed().performClick()
+        compose.runOnIdle { assertTrue(cables.value[0].enabled) }
+        compose.onNodeWithContentDescription("Clear route 1")
+            .performScrollTo().assertIsDisplayed().performClick()
+        compose.runOnIdle { assertTrue(!cables.value[0].enabled) }
     }
 
     @Test fun tabsAndKnobsAreRealSemanticsNodes() {
