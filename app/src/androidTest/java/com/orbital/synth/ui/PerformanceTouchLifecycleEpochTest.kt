@@ -1,0 +1,182 @@
+package com.orbital.synth.ui
+
+import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.orbital.synth.core.ParameterId
+import java.util.concurrent.atomic.AtomicInteger
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import androidx.test.ext.junit.runners.AndroidJUnit4
+
+/**
+ * Actual ActivityScenario ON_STOP / ON_START with an injected finger still down.
+ * The audio host panics on stop, but Compose survives; stale note ownership must
+ * die before a fresh finger may play the same pitch after resume.
+ *
+ * The small host mirrors MainActivity's monotonically increasing UI reset epoch.
+ * No fake Android dispatch, direct synth calls, or sound-wave assertions are used.
+ */
+@RunWith(AndroidJUnit4::class)
+class PerformanceTouchLifecycleEpochTest {
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Composable
+    private fun ResetOnRealActivityStop(
+        stopCount: AtomicInteger,
+        content: @Composable (Long) -> Unit,
+    ) {
+        var epoch by remember { mutableLongStateOf(0L) }
+        val owner = LocalLifecycleOwner.current
+        DisposableEffect(owner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_STOP) {
+                    stopCount.incrementAndGet()
+                    epoch++
+                }
+            }
+            owner.lifecycle.addObserver(observer)
+            onDispose { owner.lifecycle.removeObserver(observer) }
+        }
+        content(epoch)
+    }
+
+    @Test fun heldPianoFingerIsRevokedOnStopAndFreshSamePitchFingerReattacks() {
+        val stops = AtomicInteger()
+        val events = mutableListOf<String>()
+        compose.setContent {
+            ResetOnRealActivityStop(stops) { epoch ->
+                Box(Modifier.width(360.dp)) {
+                    OrbitalKeyboard(
+                        octave = 4,
+                        onNoteOn = { events.add("ON:$it") },
+                        onNoteOff = { events.add("OFF:$it") },
+                        performanceResetEpoch = epoch,
+                    )
+                }
+            }
+        }
+        val piano = compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        )
+        piano.performTouchInput {
+            val width = center.x * 2f
+            down(0, Offset(width * .0625f, center.y * 1.7f))
+        }
+        compose.runOnIdle { assertEquals(listOf("ON:60"), events) }
+
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(1, stops.get())
+            assertEquals(
+                "Stop must release the held original pitch exactly once",
+                listOf("ON:60", "OFF:60"), events,
+            )
+        }
+
+        // Pointer 0 was down before backgrounding. Pointer 1 is a *new* down
+        // at the same pitch; its attack must not be muted by owner 0.
+        piano.performTouchInput {
+            val width = center.x * 2f
+            down(1, Offset(width * .0625f, center.y * 1.7f))
+            up(1)
+        }
+        compose.runOnIdle {
+            assertEquals(
+                "New touch must produce a complete note after prior panic",
+                listOf("ON:60", "OFF:60", "ON:60", "OFF:60"), events,
+            )
+        }
+    }
+
+    @Test fun heldFocusCanvasTouchIsRevokedAcrossStopAndBackDoesNotLeakNotes() {
+        val stops = AtomicInteger()
+        val events = mutableListOf<String>()
+        compose.setContent {
+            ResetOnRealActivityStop(stops) { epoch ->
+                ImmersiveStage(
+                    state = OrbitalUiState(),
+                    onNoteOn = { events.add("ON:$it") },
+                    onNoteOff = { events.add("OFF:$it") },
+                    onParameterChange = { _: ParameterId, _: Float -> },
+                    onExit = {},
+                    performanceResetEpoch = epoch,
+                )
+            }
+        }
+        compose.onNodeWithTag("stageFocusEnter").performClick()
+        val canvas = compose.onNodeWithTag("immersiveCanvas").assertExists()
+        canvas.performTouchInput { down(0, center) }
+        compose.waitForIdle()
+        val original = events.filter { it.startsWith("ON:") }.map { it.removePrefix("ON:") }
+        assertTrue("A genuine FOCUS down must attack at least one mapped note", original.isNotEmpty())
+
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(1, stops.get())
+            val releases = events.filter { it.startsWith("OFF:") }.map { it.removePrefix("OFF:") }
+            assertEquals(
+                "Every original FOCUS contact must be released exactly once after stop",
+                original.sorted(), releases.sorted(),
+            )
+        }
+
+        // A first new pointer must start a new session. The old pointer 0
+        // may still be present in motion events, but was NOT freshly pressed.
+        canvas.performTouchInput {
+            down(1, center)
+            up(1)
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            val attacks = events.filter { it.startsWith("ON:") }.map { it.removePrefix("ON:") }
+            val releases = events.filter { it.startsWith("OFF:") }.map { it.removePrefix("OFF:") }
+            assertEquals(
+                "A stale held FOCUS pointer must not reattack after fresh contact",
+                original.size * 2, attacks.size,
+            )
+            assertEquals(
+                "New FOCUS touch must release without waiting on the stale old finger",
+                attacks.sorted(), releases.sorted(),
+            )
+        }
+
+        // Android Back first reveals controls without trapping the activity or
+        // creating an extra release after the foreground session was drained.
+        compose.activityRule.scenario.onActivity {
+            it.onBackPressedDispatcher.onBackPressed()
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("immersiveExit").assertExists()
+        compose.runOnIdle {
+            val attacks = events.count { it.startsWith("ON:") }
+            val releases = events.count { it.startsWith("OFF:") }
+            assertEquals("Back must not duplicate note-off", attacks, releases)
+        }
+    }
+}
