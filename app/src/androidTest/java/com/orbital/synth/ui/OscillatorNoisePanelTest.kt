@@ -10,7 +10,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -79,7 +78,7 @@ class OscillatorNoisePanelTest {
         }
         compose.onNodeWithTag("oscillatorNoiseCanvas").performScrollTo()
             .performTouchInput {
-                click(Offset(size.width * .8f, size.height * .2f))
+                click(Offset(center.x * 1.6f, center.y * .4f))
             }
         compose.runOnIdle {
             assertTrue(slots[0].noiseColor in 0.73f..0.87f)
