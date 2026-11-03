@@ -34,7 +34,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Validate emulator harness syntax
-        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh && bash -n .github/workflows/ci-immersive-stage.sh && bash -n .github/workflows/ci-oscillator-workbench.sh && bash -n .github/workflows/ci-live-stage-framebuffer.sh && bash -n .github/workflows/ci-stage-bootstrap.sh
+        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-process-restart.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh && bash -n .github/workflows/ci-immersive-stage.sh && bash -n .github/workflows/ci-oscillator-workbench.sh && bash -n .github/workflows/ci-live-stage-framebuffer.sh && bash -n .github/workflows/ci-stage-bootstrap.sh && python3 -m py_compile .github/workflows/ci-verify-android-shards.py
       - name: Host tests, lint, app APK and instrumentation test APK
         run: gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
       - name: Upload debug APK
@@ -86,7 +86,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [general, compact, stage, visuals]
+        suite: [general-0, general-1, compact, stage, visuals, restart]
     env:
       ORBITAL_TEST_SUITE: ${{ matrix.suite }}
     steps:
@@ -103,23 +103,22 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      # GENERAL keeps Gradle's original connectedDebugAndroidTest task and its
-      # complete JUnit/UTP XML. Run its expensive Kotlin/APK prerequisites
-      # before booting QEMU, so test execution does not also compile source
-      # while the emulator occupies several GiB of runner memory.
+      # Each GENERAL shard retains Gradle's connectedDebugAndroidTest and UTP XML,
+      # with separate AndroidX 0/1 shard ownership verified by an aggregate job.
+      # Precompile expensive APK prerequisites before booting QEMU.
       - name: Precompile general test binaries before QEMU
-        if: ${{ matrix.suite == 'general' }}
+        if: ${{ startsWith(matrix.suite, 'general-') }}
         run: gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --console=plain --stacktrace
-      # Both fresh screenshot lanes consume the EXACT APKs produced by the
-      # already-required host/lint job; they must not compile under live QEMU.
+      # Fresh STAGE, VISUALS and independent real-process RESTART lanes consume
+      # EXACT host/lint APKs; never compile while QEMU owns runner RAM.
       - name: Download validated app APK from host build
-        if: ${{ matrix.suite == 'stage' || matrix.suite == 'visuals' }}
+        if: ${{ matrix.suite == 'stage' || matrix.suite == 'visuals' || matrix.suite == 'restart' }}
         uses: actions/download-artifact@v4
         with:
           name: orbital-debug-apk
           path: app/build/outputs/apk/debug
       - name: Download validated instrumented APK from host build
-        if: ${{ matrix.suite == 'stage' || matrix.suite == 'visuals' }}
+        if: ${{ matrix.suite == 'stage' || matrix.suite == 'visuals' || matrix.suite == 'restart' }}
         uses: actions/download-artifact@v4
         with:
           name: orbital-debug-android-test-apk
@@ -142,7 +141,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           # The runner executes each nonempty script line in a separate `sh -c`.
           # Use one Bash command so traps, pipefail and exit codes work together.
-          script: ${{ matrix.suite == 'compact' && 'bash .github/workflows/ci-compact-geometry.sh' || matrix.suite == 'stage' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-live-stage-framebuffer.sh' || matrix.suite == 'visuals' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-immersive-stage.sh && bash .github/workflows/ci-oscillator-workbench.sh && bash .github/workflows/ci-landscape.sh' || 'bash .github/workflows/ci-emulator.sh' }}
+          script: ${{ matrix.suite == 'compact' && 'bash .github/workflows/ci-compact-geometry.sh' || matrix.suite == 'stage' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-live-stage-framebuffer.sh' || matrix.suite == 'visuals' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-immersive-stage.sh && bash .github/workflows/ci-oscillator-workbench.sh && bash .github/workflows/ci-landscape.sh' || matrix.suite == 'restart' && 'bash .github/workflows/ci-process-restart.sh && bash .github/workflows/ci-stage-bootstrap.sh' || 'bash .github/workflows/ci-emulator.sh' }}
       - name: Upload real emulator screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -173,6 +172,10 @@ jobs:
             artifacts/compact-test-live-logcat.txt
             artifacts/instrumentation-suite.txt
             artifacts/step-restart-*.txt
+            artifacts/general-runner-discovery.txt
+            artifacts/general-manifest-*.txt
+            artifacts/general-shard-manifest.tsv
+            artifacts/general-shard-results.tsv
             artifacts/compact-e2e-phase.txt
             artifacts/compact-e2e-summary.txt
             artifacts/compact-350-logcat.txt
@@ -232,7 +235,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload instrumentation results
-        if: always() && matrix.suite == 'general'
+        if: always() && startsWith(matrix.suite, 'general-')
         uses: actions/upload-artifact@v4
         with:
           name: orbital-${{ matrix.suite }}-android-test-results
@@ -241,3 +244,32 @@ jobs:
             app/build/reports/androidTests/
           if-no-files-found: warn
           retention-days: 14
+
+      # Evidence is not just 'two green shards': each reports the exact
+      # AndroidX APK-discovered full test manifest and its own Gradle XML cases.
+      # This is the required artifact input for the disjoint-union gate.
+      - name: Upload runner-discovered manifest and actual shard cases
+        if: always() && startsWith(matrix.suite, 'general-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-${{ matrix.suite }}-coverage
+          path: |
+            artifacts/general-shard-manifest.tsv
+            artifacts/general-shard-results.tsv
+            artifacts/general-runner-discovery.txt
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
+          retention-days: 14
+
+  verify_sharded_coverage:
+    name: Verify exact two-shard AndroidX test method union
+    needs: [build, emulator]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: orbital-general-*-coverage
+          path: artifacts/shard-coverage
+      - name: Require all non-STAGE APK methods exactly once, no extra skips
+        run: python3 .github/workflows/ci-verify-android-shards.py union artifacts/shard-coverage
