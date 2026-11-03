@@ -258,6 +258,22 @@ class PerformanceTouchLifecycleEpochTest {
             afterBack = events.toList()
         }
 
+        // The old finger can still physically MOVE after Back, even though
+        // its previous note lease was canceled. This must not revive the
+        // visual glow, replay the old note, or acquire another ownership.
+        canvas.performTouchInput {
+            moveTo(2, Offset(center.x * .82f, center.y * .75f))
+        }
+        compose.waitForIdle()
+        assertEquals(
+            "Touch idle",
+            compose.onNodeWithTag("immersiveCanvas").fetchSemanticsNode()
+                .config[SemanticsProperties.StateDescription],
+        )
+        compose.runOnIdle {
+            assertEquals("Late MOVE after Back must not revive notes", afterBack, events)
+        }
+
         // The OS may deliver physical UP after Back's explicit cancel; those
         // obsolete finger IDs must not produce duplicate OFF in the new view.
         canvas.performTouchInput {
