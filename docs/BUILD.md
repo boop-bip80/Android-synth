@@ -30,7 +30,7 @@ Only a **completed, successful, first-party `push` run on `main`** of [Android �
 | `API 35 compact tests and emulator screenshots` | Compact 360dp / large-text composition, real controls, accessibility and image evidence |
 | `API 35 stage tests and emulator screenshots` | A genuinely focused app, strict normal keyboard entry, keyboardless FOCUS, live held-note effects, exit, and foreground PNG |
 | `API 35 visuals tests and emulator screenshots` | On-device oscillator workbench, landscape, live visual interaction and real framebuffer captures |
-| `API 35 compact350 tests and emulator screenshots` | Fresh API35 QEMU process running the strict 360 × 350dp short-landscape eight-layer editor regression; exactly one named JUnit PASS, no missing/skipped test. This lane produces diagnostics, not an additional gallery image |
+| `API 35 compact350 tests and emulator screenshots` | Fresh API35 QEMU process running **exactly two named JUnit PASS tests** on the 360 × 350dp short-landscape SOUND screen: (1) OSC far-edge swipe, layer 7 selection and anchored piano; (2) all five ENGINE architectures, a live parameter callback and anchored piano. Missing, skipped, failed or extra cases make this lane red. It produces diagnostics, not an additional gallery image |
 
 Job conclusions for **the exact head SHA** are the release gate. A generated concept image, passing JVM tests alone, five of six green jobs, a stale workflow, an uploaded artifact from a red job, or a screenshot from another commit does not qualify.
 
