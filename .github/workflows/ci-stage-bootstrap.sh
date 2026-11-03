@@ -74,12 +74,12 @@ with open(sys.argv[1], "rb") as frame:
     size = frame.tell()
     frame.seek(-12, 2)
     ending = frame.read(12)
-if header[:8] != b"\\x89PNG\\r\\n\\x1a\\n" or header[12:16] != b"IHDR":
+if header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
     raise SystemExit("Missing Android screenshot PNG header")
 width, height = struct.unpack(">II", header[16:24])
 if width < 600 or height < 1000 or width >= height or size < 4096:
     raise SystemExit(f"Invalid genuine portrait baseline {width}x{height} size={size}")
-if ending != b"\\x00\\x00\\x00\\x00IEND\\xaeB\\x60\\x82":
+if ending != b"\x00\x00\x00\x00IEND\xaeB\x60\x82":
     raise SystemExit("Truncated genuine portrait PNG")
 print(f"PASS genuine foreground normal-app framebuffer {width}x{height}, {size} bytes")
 PY
