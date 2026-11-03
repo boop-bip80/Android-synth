@@ -15,7 +15,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
@@ -154,13 +153,13 @@ class PatchGraphPanelTest {
                 bounds.top > bottom + required ||
                 bounds.bottom < top - required
             viewport.performTouchInput {
-                val maxTravel = size.height * .42f
+                val maxTravel = height.toFloat() * .42f
                 val minTravel = minOf(24f * density, maxTravel)
                 val travel = if (farAway) maxTravel else
                     (edgeDeficit + margin + 12f)
                         .coerceIn(minTravel, maxTravel)
-                val fingerY = if (swipeUp) size.height * .76f
-                    else size.height * .24f
+                val fingerY = if (swipeUp) height.toFloat() * .76f
+                    else height.toFloat() * .24f
                 val fingerEnd = if (swipeUp) fingerY - travel
                     else fingerY + travel
                 swipe(
