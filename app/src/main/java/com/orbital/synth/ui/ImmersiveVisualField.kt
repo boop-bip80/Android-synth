@@ -88,12 +88,11 @@ fun ImmersiveVisualField(
     } else 0f
     val impact = remember { Animatable(1f) }
     val audioImpact = remember { Animatable(1f) }
-    val previousAudioTransient = remember { FloatArray(1) }
-    LaunchedEffect(pcm.transient) {
-        val rising = pcm.transient > .30f &&
-            pcm.transient > previousAudioTransient[0] + .16f
-        previousAudioTransient[0] = pcm.transient
-        if (rising && animationsEnabled) {
+    // Rising-edge threshold avoids restarting/cancelling the 620 ms animation
+    // on every 30 Hz meter update (which would leave a stuck transient ring).
+    val transientHit = pcm.transient > .30f
+    LaunchedEffect(transientHit, animationsEnabled) {
+        if (transientHit && animationsEnabled) {
             audioImpact.snapTo(0f)
             audioImpact.animateTo(1f, tween(durationMillis = 620, easing = LinearEasing))
         }
