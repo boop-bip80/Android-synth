@@ -17,6 +17,7 @@ import com.orbital.synth.core.dsp.processing.StereoDelay
 import com.orbital.synth.core.dsp.processing.StereoReverb
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicIntegerArray
 import java.util.concurrent.atomic.AtomicReferenceArray
 import kotlin.math.PI
@@ -144,6 +145,16 @@ class OrbitalSynth(
     // Reject queued FX moves from a previous patch, even when the UI has
     // already published the next patch's immutable ordered slot snapshots.
     private val fxPatchEpoch = AtomicInteger(0)
+    // Ticket ordering is serialized only between UI/MIDI callers; the audio
+    // worker never locks or allocates while acknowledging completed moves.
+    private val fxMoveEnqueueLock = Any()
+    private val issuedFxMoveTicket = AtomicLong(0)
+    private val appliedFxMoveTicket = AtomicLong(0)
+    private val canceledFxMoveThroughTicket = AtomicLong(0)
+    /** Completed worker reorders, including moves between identical FX configs. */
+    val lastAppliedFxMoveTicket: Long get() = appliedFxMoveTicket.get()
+    /** All tickets at/below this frontier belong to a superseded patch. */
+    val lastCanceledFxMoveTicket: Long get() = canceledFxMoveThroughTicket.get()
     // Preallocated block-wide snapshots prevent a mid-block UI edit from giving
     // different frames different active FX topologies.
     private val blockFxSlots = Array(6) { FxModuleConfig() }
@@ -347,8 +358,11 @@ class OrbitalSynth(
      * exactly the same FX configuration without an intervening render block.
      */
     fun resetFxRackHistoryForPatch() {
-        fxPatchEpoch.incrementAndGet()
-        events.offer(Event.ResetFxRackHistory)
+        synchronized(fxMoveEnqueueLock) {
+            fxPatchEpoch.incrementAndGet()
+            canceledFxMoveThroughTicket.set(issuedFxMoveTicket.get())
+            events.offer(Event.ResetFxRackHistory)
+        }
     }
 
     /**
@@ -357,8 +371,23 @@ class OrbitalSynth(
      * touching the chain or moving module state from the UI thread.
      */
     fun moveFxSlot(from: Int, to: Int) {
+        requestFxSlotMove(from, to)
+    }
+
+    /**
+     * Queue a worker-owned rack reorder. Returns a monotonically increasing
+     * positive ticket (zero means a no-op move). UI editors may hold edits to
+     * moved slots until ticket <= [lastAppliedFxMoveTicket], unless ticket <=
+     * [lastCanceledFxMoveTicket], in which case a newer patch superseded it.
+     */
+    fun requestFxSlotMove(from: Int, to: Int): Long {
         require(from in 0 until fxSlotCount && to in 0 until fxSlotCount)
-        if (from != to) events.offer(Event.MoveFxSlot(from, to, fxPatchEpoch.get()))
+        if (from == to) return 0L
+        return synchronized(fxMoveEnqueueLock) {
+            val ticket = issuedFxMoveTicket.incrementAndGet()
+            events.offer(Event.MoveFxSlot(from, to, fxPatchEpoch.get(), ticket))
+            ticket
+        }
     }
 
     /**
@@ -616,6 +645,9 @@ class OrbitalSynth(
                 is Event.MoveFxSlot -> {
                     if (event.patchEpoch == fxPatchEpoch.get()) {
                         handleFxSlotMove(event.from, event.to)
+                        // Publish completion only after processor history and
+                        // atomic slot snapshots were both reordered.
+                        appliedFxMoveTicket.set(event.ticket)
                     }
                 }
                 is Event.ResetFxRackHistory -> modularFx.clearAll()
@@ -971,7 +1003,7 @@ class OrbitalSynth(
         ) : Event
         data class Mode(val mode: VoiceMode) : Event
         data class MoveFxSlot(
-            val from: Int, val to: Int, val patchEpoch: Int,
+            val from: Int, val to: Int, val patchEpoch: Int, val ticket: Long,
         ) : Event
         data object ResetFxRackHistory : Event
         data class SourceAllNotesOff(val sourceId: Long) : Event
