@@ -121,8 +121,23 @@ jobs:
           local_sha="$(git rev-parse HEAD)"
           remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
           if [[ "$local_sha" != "$remote_sha" ]]; then
-            echo "Main changed during checkout; refusing stale APK." >&2
-            exit 1
+            # The screenshot publisher can commit its verified docs-only child
+            # between checkout and this check. Do not accept a stale checkout
+            # of any other source, and fail on a moving remote during fetch.
+            [[ "$local_sha" == "$source_sha" ]] || {
+              echo "Checkout is stale and not the exact verified source." >&2
+              exit 1
+            }
+            git fetch --no-tags --depth=2 origin refs/heads/main
+            [[ "$(git rev-parse FETCH_HEAD)" == "$remote_sha" ]] || {
+              echo "Main changed while fetching the screenshot bot child." >&2
+              exit 1
+            }
+            # No scripts from fetched main are executed. The existing strict
+            # child check immediately below verifies the parent, author,
+            # changed paths, and exact run provenance before this is accepted.
+            git checkout --detach FETCH_HEAD
+            local_sha="$(git rev-parse HEAD)"
           fi
           if [[ "$source_sha" != "$local_sha" ]]; then
             # The screenshot publisher uses GITHUB_TOKEN; its purely image
