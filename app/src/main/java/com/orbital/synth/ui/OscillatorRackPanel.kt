@@ -44,6 +44,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -137,8 +139,13 @@ fun OscillatorRackPanel(
                             RoundedCornerShape(11.dp),
                         )
                         .clickable(role = Role.Button) { selectedLayer = index }
-                        .semantics { contentDescription =
-                            "Oscillator " + (index + 1) + if (slot.enabled) ", active" else ", empty"
+                        .semantics {
+                            contentDescription =
+                                "Oscillator " + (index + 1) +
+                                    if (slot.enabled) ", active" else ", empty"
+                            selected = focused
+                            stateDescription =
+                                if (focused) "Selected editor layer" else "Unselected editor layer"
                         }
                         .testTag("oscillatorLayer" + index)
                         .heightIn(min = 51.dp)
@@ -216,6 +223,12 @@ fun OscillatorRackPanel(
                             )
                             .clickable(role = Role.Button) {
                                 onSlotChange(selected, layer.copy(waveform = index / 4f))
+                            }
+                            .semantics {
+                                contentDescription = "$label waveform"
+                                selected = active
+                                stateDescription =
+                                    if (active) "Current waveform" else "Not selected waveform"
                             }
                             .testTag("oscillatorWave" + index)
                             .heightIn(min = 48.dp)
