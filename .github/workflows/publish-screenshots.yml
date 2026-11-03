@@ -50,15 +50,6 @@ jobs:
           fi
           echo "fresh=true" >> "$GITHUB_OUTPUT"
 
-      - name: Download successful general screenshots
-        if: steps.freshness.outputs.fresh == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: orbital-api35-general-emulator-screenshot
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-          path: ${{ runner.temp }}/orbital-capture/general
-
       - name: Download successful compact screenshots
         if: steps.freshness.outputs.fresh == 'true'
         uses: actions/download-artifact@v4
@@ -103,7 +94,9 @@ jobs:
           output = Path("docs/screenshots")
           output.mkdir(parents=True, exist_ok=True)
           wanted = (
-              ("general", "orbital-emulator.png", "orbital-portrait.png", "Normal portrait"),
+              # The stage bootstrap requires an actually accessible normal
+              # keybed and rejects the historical 19-20 KiB blank frame.
+              ("stage", "orbital-emulator.png", "orbital-portrait.png", "Normal portrait (strict stage bootstrap)"),
               ("compact", "compact-350-sound.png", "orbital-compact.png", "360 x 350dp compact SOUND"),
               ("stage", "orbital-focus-held-note.png", "orbital-focus-held-note.png", "FOCUS live held-note"),
               ("visuals", "orbital-oscillator-workbench.png", "orbital-oscillator-workbench.png", "OSC1 editing"),
@@ -115,11 +108,21 @@ jobs:
               data = source.read_bytes()  # No fallback or illustrative art.
               if not 4_096 <= len(data) <= 10_000_000:
                   raise SystemExit(f"{source}: implausible screenshot size")
+              # This is the visibly interactive SOUND screen, never the
+              # intentionally black FOCUS idle frame. Reject the known
+              # blank-but-valid Android screencap regression independently
+              # of the upstream UIAutomator semantic gate.
+              if target_name == "orbital-portrait.png" and len(data) < 65_536:
+                  raise SystemExit(f"{source}: blank-sized normal portrait")
               if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
                   raise SystemExit(f"{source}: not an Android PNG")
               width, height = struct.unpack(">II", data[16:24])
               if width < 300 or height < 300:
                   raise SystemExit(f"{source}: invalid display geometry {width}x{height}")
+              if target_name == "orbital-portrait.png" and (
+                  width < 600 or height < 1000 or width >= height
+              ):
+                  raise SystemExit(f"{source}: not a full normal portrait framebuffer")
               # Parse every PNG chunk and validate CRC, rather than trusting a
               # filename or an upload-artifact success notice.
               pos = 8
@@ -145,7 +148,8 @@ jobs:
               target = output / target_name
               shutil.copyfile(source, target)
               digest = hashlib.sha256(data).hexdigest()
-              rows.append(f"| {label} | [{target_name}]({target_name}) | {width} x {height} | `{digest}` |")
+              artifact = f"orbital-api35-{suite}-emulator-screenshot"
+              rows.append(f"| {label} | `{artifact}` | [{target_name}]({target_name}) | {width} x {height} | `{digest}` |")
               print(f"{label}: {width}x{height}, {len(data)} bytes, sha256={digest}")
 
           sha = os.environ["SOURCE_SHA"]
@@ -160,13 +164,14 @@ jobs:
               "",
               f"- Verified source commit: [`{sha}`](https://github.com/boop-bip80/Android-synth/commit/{sha})",
               f"- Successful CI: [run #{run_number}](https://github.com/boop-bip80/Android-synth/actions/runs/{run_id})",
-              "- Source artifact names: orbital-api35-general-emulator-screenshot,",
-              "  orbital-api35-compact-emulator-screenshot,",
+              "- Source artifact names: orbital-api35-compact-emulator-screenshot,",
               "  orbital-api35-stage-emulator-screenshot,",
               "  orbital-api35-visuals-emulator-screenshot.",
+              "- The portrait is from the stage lane's strict real-keyboard normal",
+              "  bootstrap, not the looser general screenshot artifact.",
               "",
-              "| Actual app state | File | Pixels | SHA-256 |",
-              "| --- | --- | ---: | --- |",
+              "| Actual app state | Verified source artifact | File | Pixels | SHA-256 |",
+              "| --- | --- | --- | ---: | --- |",
               *rows,
               "",
               "The concept design remains at [design/orbital-ui-reference.png](../../design/orbital-ui-reference.png).",
