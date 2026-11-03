@@ -206,4 +206,63 @@ class PatchFxV4Test {
         rejects { original.copy(fxSlots = listOf(FxModuleConfig(rate = Float.NEGATIVE_INFINITY))) }
         rejects { original.copy(fxSlots = listOf(FxModuleConfig(stereo = 2f))) }
     }
+    @Test fun patchRecallDiscardsOldDelayHistoryEvenIfSameEffectReenabledWithoutRendering() {
+        val synth = OrbitalSynth(sampleRate = 8_000)
+        val delay = FxModuleConfig(
+            FxModuleType.DELAY, enabled = true,
+            wet = 1f, depth = 1f, rate = 0f, stereo = 0f,
+        )
+        synth.setParameter(com.orbital.synth.core.ParameterId.ATTACK, 0f)
+        synth.setParameter(com.orbital.synth.core.ParameterId.RELEASE, 0f)
+        synth.setParameter(com.orbital.synth.core.ParameterId.FX_AMOUNT, 0f)
+        synth.setFxSlot(0, delay)
+        synth.noteOn(69)
+        synth.renderStereo(FloatArray(3_200 * 2), 3_200)
+        synth.allNotesOff()
+        val oldEchoes = FloatArray(1_600 * 2)
+        synth.renderStereo(oldEchoes, 1_600)
+        assertEquals(0, synth.activeVoiceCount)
+        assertTrue("Regression setup must contain real delay feedback tails",
+            oldEchoes.sumOf { abs(it.toDouble()) } > 0.1)
+
+        // The next patch is legacy and therefore has no FX settings.
+        // Re-enable the SAME delay preset before any render callback runs.
+        // Without a queued DSP history reset, the old delay line still holds
+        // notes even though UI slot snapshots were temporarily cleared.
+        synth.loadPatch(FactoryPatches.DEFAULT)
+        synth.setFxSlot(0, delay)
+        val nextSound = FloatArray(2_800 * 2)
+        synth.renderStereo(nextSound, 2_800)
+        assertArrayEquals(
+            "A patch switch must not resurrect the preceding patch's echoes",
+            FloatArray(nextSound.size), nextSound, 0f,
+        )
+    }
+
+    @Test fun queuedOldFxMovesNeverReorderNewlyRecalledPatchOrDisableFutureMoves() {
+        val synth = OrbitalSynth()
+        val former0 = FxModuleConfig(FxModuleType.TREMOLO, true, .5f)
+        val former1 = FxModuleConfig(FxModuleType.DELAY, true, .8f)
+        val recalled0 = FxModuleConfig(FxModuleType.CHORUS, true, .63f, .5f)
+        val recalled1 = FxModuleConfig(FxModuleType.SATURATION, false, .44f, .9f)
+        synth.setFxSlot(0, former0)
+        synth.setFxSlot(1, former1)
+        synth.moveFxSlot(0, 1) // queued, not yet drained
+        synth.loadPatch(FactoryPatches.DEFAULT.copy(
+            fxSlots = listOf(recalled0, recalled1),
+        ))
+        synth.renderStereo(FloatArray(0), 0)
+        assertEquals("The new patch must win over an obsolete queued move",
+            recalled0, synth.fxSlot(0))
+        assertEquals(recalled1, synth.fxSlot(1))
+        for (index in 2 until synth.fxSlotCount) {
+            assertEquals(FxModuleConfig(), synth.fxSlot(index))
+        }
+
+        synth.moveFxSlot(0, 1)
+        synth.renderStereo(FloatArray(0), 0)
+        assertEquals(recalled1, synth.fxSlot(0))
+        assertEquals(recalled0, synth.fxSlot(1))
+    }
+
 }
