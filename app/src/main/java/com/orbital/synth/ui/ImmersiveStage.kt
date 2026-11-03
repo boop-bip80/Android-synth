@@ -9,8 +9,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -304,11 +302,11 @@ internal fun ImmersiveStage(
                     }
                 }
                 .pointerInput(mapper, performanceResetEpoch) {
-                    // awaitEachGesture completes only after every pointer is up.
-                    // The finally block makes note-off safe under OS gesture
-                    // cancellation, screen changes and recomposition disposal.
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
+                    // Do not use awaitEachGesture here: it waits for EVERY old
+                    // pointer to lift, including fingers held over a stopped
+                    // AudioTrack worker. A brand-new contact must be admitted
+                    // immediately after the epoch cancels the old note leases.
+                    awaitPointerEventScope {
                         val activeIds = mutableSetOf<Long>()
                         fun normalizeX(x: Float): Float =
                             (x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
@@ -355,31 +353,27 @@ internal fun ImmersiveStage(
                                 }
                             }
                         }
-                        start(
-                            down.id.value,
-                            down.position.x,
-                            down.position.y,
-                            down.pressure,
-                            down.uptimeMillis,
-                        )
-                        down.consume()
                         try {
-                            var pressed: Boolean
-                            do {
+                            while (true) {
                                 val pointerEvent = awaitPointerEvent()
                                 pointerEvent.changes.forEach { change ->
                                     val id = change.id.value
-                                    if (change.pressed) {
-                                        if (id !in activeIds && !change.previousPressed) {
-                                            // Only a genuine DOWN admits a new finger
-                                            // after an Activity onStop epoch reset.
-                                            // A stale held finger seen during another
-                                            // new touch cannot reattack a canceled voice.
+                                    var handled = false
+                                    when {
+                                        change.pressed &&
+                                            !change.previousPressed &&
+                                            !change.isConsumed &&
+                                            id !in activeIds -> {
+                                            // Only a physical fresh DOWN may
+                                            // acquire a voice in this epoch.
+                                            // Held pre-reset pointers are ignored.
                                             start(
                                                 id, change.position.x, change.position.y,
                                                 change.pressure, change.uptimeMillis,
                                             )
-                                        } else if (id in activeIds) {
+                                            handled = true
+                                        }
+                                        change.pressed && id in activeIds -> {
                                             touchX = normalizeX(change.position.x)
                                             touchY = normalizeY(change.position.y)
                                             touchIntensity = change.pressure.coerceIn(.15f, 1f)
@@ -390,20 +384,28 @@ internal fun ImmersiveStage(
                                                     change.uptimeMillis,
                                                 ),
                                             )
+                                            handled = true
                                         }
-                                    } else if (activeIds.remove(id)) {
-                                        deliver(mapper.touchUp(id))
-                                        if (mapper.activePointerCount == 0) {
-                                            reportTouchModulation(.5f, .5f, .5f, force = true)
+                                        !change.pressed && activeIds.remove(id) -> {
+                                            deliver(mapper.touchUp(id))
+                                            if (mapper.activePointerCount == 0) {
+                                                touchIntensity = 0f
+                                                reportTouchModulation(
+                                                    .5f, .5f, .5f, force = true
+                                                )
+                                            }
+                                            handled = true
                                         }
                                     }
-                                    change.consume()
+                                    // Do not consume a stale pointer belonging
+                                    // to the prior worker epoch or to another UI.
+                                    if (handled) change.consume()
                                 }
-                                pressed = pointerEvent.changes.any { it.pressed }
-                            } while (pressed)
+                            }
                         } finally {
-                            // A genuine release has already been removed; a cancelled
-                            // gesture or backgrounding still releases every live key.
+                            // A cancellation, tab change or focus loss revokes
+                            // only this session's owned note leases. Late UP
+                            // events for pre-reset IDs cannot kill new notes.
                             activeIds.forEach { id -> deliver(mapper.touchUp(id)) }
                             activeIds.clear()
                             touchIntensity = 0f
