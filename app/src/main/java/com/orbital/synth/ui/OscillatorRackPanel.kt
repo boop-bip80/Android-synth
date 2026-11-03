@@ -1,11 +1,10 @@
 package com.orbital.synth.ui
 
+import android.view.MotionEvent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,7 +38,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -484,34 +484,33 @@ private fun OscillatorWavePreview(
     onTouch: (morph: Float, level: Float) -> Unit,
 ) {
     val touch by rememberUpdatedState(onTouch)
+    var touchWidthPx by remember { mutableIntStateOf(1) }
+    var touchHeightPx by remember { mutableIntStateOf(1) }
     val shape = (slot.waveform.coerceIn(0f, 1f) * 4f).roundToInt()
     Canvas(
         modifier
             .border(1.dp, accent.copy(alpha = .24f), RoundedCornerShape(12.dp))
             .background(Color(0xFF030814), RoundedCornerShape(12.dp))
             .testTag("oscillatorWaveCanvas")
-            .pointerInput(Unit) {
-                // A single recognizer owns DOWN and MOVE. Two independent
-                // tap/drag recognizers competed for the same pointer; real
-                // API35 XY tap injection never reached the noise callback.
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val id = down.id
-                    fun publish(position: Offset) {
+            .onSizeChanged {
+                touchWidthPx = it.width.coerceAtLeast(1)
+                touchHeightPx = it.height.coerceAtLeast(1)
+            }
+            .pointerInteropFilter { event ->
+                // Android MotionEvent gives real local pixel coordinates and
+                // consumes DOWN so parent vertical scrolling cannot capture
+                // the sound-design stroke. UP/CANCEL terminates cleanly.
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
                         touch(
-                            (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                            (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
+                            (event.x / touchWidthPx).coerceIn(0f, 1f),
+                            (1f - event.y / touchHeightPx).coerceIn(0f, 1f),
                         )
+                        true
                     }
-                    publish(down.position)
-                    down.consume()
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val pointer = event.changes.firstOrNull { it.id == id } ?: break
-                        if (!pointer.pressed) break
-                        publish(pointer.position)
-                        pointer.consume()
-                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL,
+                    MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> true
+                    else -> false
                 }
             },
     ) {
@@ -561,6 +560,8 @@ private fun NoiseSpectrumPad(
     onTouch: (color: Float, blend: Float) -> Unit,
 ) {
     val touch by rememberUpdatedState(onTouch)
+    var touchWidthPx by remember { mutableIntStateOf(1) }
+    var touchHeightPx by remember { mutableIntStateOf(1) }
     Canvas(
         modifier
             .border(1.dp, accent.copy(alpha = .28f), RoundedCornerShape(10.dp))
@@ -570,28 +571,25 @@ private fun NoiseSpectrumPad(
                 contentDescription =
                     "Noise spectrum touch field. Horizontal changes white pink brown color; vertical changes mix."
             }
-            .pointerInput(Unit) {
-                // A single recognizer owns DOWN and MOVE. Two independent
-                // tap/drag recognizers competed for the same pointer; real
-                // API35 XY tap injection never reached the noise callback.
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val id = down.id
-                    fun publish(position: Offset) {
+            .onSizeChanged {
+                touchWidthPx = it.width.coerceAtLeast(1)
+                touchHeightPx = it.height.coerceAtLeast(1)
+            }
+            .pointerInteropFilter { event ->
+                // Android MotionEvent gives real local pixel coordinates and
+                // consumes DOWN so parent vertical scrolling cannot capture
+                // the sound-design stroke. UP/CANCEL terminates cleanly.
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
                         touch(
-                            (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                            (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
+                            (event.x / touchWidthPx).coerceIn(0f, 1f),
+                            (1f - event.y / touchHeightPx).coerceIn(0f, 1f),
                         )
+                        true
                     }
-                    publish(down.position)
-                    down.consume()
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val pointer = event.changes.firstOrNull { it.id == id } ?: break
-                        if (!pointer.pressed) break
-                        publish(pointer.position)
-                        pointer.consume()
-                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL,
+                    MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> true
+                    else -> false
                 }
             },
     ) {
