@@ -133,45 +133,97 @@ class Compact350SoundInstrumentedTest {
 
     /** Save actual device screen pixels for strict CI extraction, not a Compose mock. */
     private fun captureNativeFrame(filename: String) {
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-        val screenshot = checkNotNull(
-            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-        ) { "Real compact350 API35 framebuffer is required" }
-        try {
-            assertTrue("Real Android screen must have physical pixels",
-                screenshot.width >= 360 && screenshot.height >= 350)
-            // A black/blank framebuffer can still be a valid 19KB PNG.
-            // Require genuine chromatic neon pixels sampled from the device's
-            // actual framebuffer, not merely a file with a PNG signature.
-            var chromaticPixels = 0
-            for (y in 0 until screenshot.height step 6) {
-                for (x in 0 until screenshot.width step 6) {
-                    val argb = screenshot.getPixel(x, y)
-                    val red = android.graphics.Color.red(argb)
-                    val green = android.graphics.Color.green(argb)
-                    val blue = android.graphics.Color.blue(argb)
-                    val strongest = maxOf(red, green, blue)
-                    val weakest = minOf(red, green, blue)
-                    if (strongest >= 110 && strongest - weakest >= 35) chromaticPixels++
-                }
-            }
-            assertTrue(
-                "Real OSC8 foreground must contain visible colorful synth controls, " +
-                    "not a blank/emulator transitional framebuffer: pixels=$chromaticPixels",
-                chromaticPixels >= 70,
-            )
-            val image = File(compose.activity.filesDir, filename)
-            FileOutputStream(image).use { out ->
-                assertTrue("Real framebuffer PNG encoder failed",
-                    screenshot.compress(Bitmap.CompressFormat.PNG, 100, out))
-                out.fd.sync()
-            }
-            assertTrue("Native OSC8 screenshot must contain rendered graphics",
-                image.length() > 4096L)
-            Log.i(TAG, "phase=compact-native-png-$filename-${image.length()}-bytes")
-        } finally {
-            screenshot.recycle()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.waitForIdleSync()
+        // Selection semantics do not prove SurfaceFlinger has presented pixels.
+        // Prove this exact Activity owns the physical foreground first.
+        val targetTag = if (filename.contains("osc8-selector")) {
+            "oscillatorLayerSelectorRow"
+        } else {
+            "oscillatorWaveCanvas"
         }
+        RealAndroidFrameCapture(compose, compose.activity).capture(
+            compose.onNodeWithTag(targetTag), "compact350 foreground $filename",
+        ).use { region ->
+            assertTrue("Visible OSC target must occupy actual physical framebuffer",
+                region.width > 8 && region.height > 8)
+        }
+
+        val automation = instrumentation.uiAutomation
+        var lastChromaticPixels = -1
+        var lastMarkerPixels = -1
+        var lastRootPackage: String? = null
+        for (attempt in 0 until 6) {
+            compose.waitForIdle()
+            // A screenshot can precede the next Android compositor frame.
+            Thread.sleep(180L)
+            val screenshot = automation.takeScreenshot()
+            if (screenshot == null) {
+                Log.w(TAG, "phase=compact-native-frame-$filename-$attempt-null")
+                continue
+            }
+            try {
+                assertTrue("Real Android screen must have physical pixels",
+                    screenshot.width >= 360 && screenshot.height >= 350)
+                val rootPackage = runCatching {
+                    automation.rootInActiveWindow?.packageName?.toString()
+                }.getOrNull()
+                var chromaticPixels = 0
+                var markerPixels = 0
+                for (y in 0 until screenshot.height step 6) {
+                    for (x in 0 until screenshot.width step 6) {
+                        val argb = screenshot.getPixel(x, y)
+                        val red = android.graphics.Color.red(argb)
+                        val green = android.graphics.Color.green(argb)
+                        val blue = android.graphics.Color.blue(argb)
+                        val strongest = maxOf(red, green, blue)
+                        val weakest = minOf(red, green, blue)
+                        if (strongest >= 110 && strongest - weakest >= 35) chromaticPixels++
+                        if (x >= screenshot.width * 3 / 4 &&
+                            y >= screenshot.height * 3 / 4 &&
+                            red >= 245 && green <= 10 && blue >= 245
+                        ) markerPixels++
+                    }
+                }
+                lastChromaticPixels = chromaticPixels
+                lastMarkerPixels = markerPixels
+                lastRootPackage = rootPackage
+                val appForeground = rootPackage?.startsWith("com.orbital.synth") == true
+                Log.i(TAG, "phase=compact-native-frame-$filename-attempt-$attempt " +
+                    "chroma=$chromaticPixels marker=$markerPixels root=$rootPackage " +
+                    "real=" + screenshot.width + "x" + screenshot.height)
+                if (appForeground && markerPixels <= 3 && chromaticPixels >= 70) {
+                    val image = File(compose.activity.filesDir, filename)
+                    FileOutputStream(image).use { out ->
+                        assertTrue("Real framebuffer PNG encoder failed",
+                            screenshot.compress(Bitmap.CompressFormat.PNG, 100, out))
+                        out.fd.sync()
+                    }
+                    assertTrue("Native OSC8 screenshot must contain rendered graphics",
+                        image.length() > 4096L)
+                    Log.i(TAG, "phase=compact-native-png-$filename-" +
+                        image.length() + "-bytes")
+                    return
+                }
+
+                // Preserve the latest *real* failing framebuffer in case
+                // all six captures remain transitional/under-saturated.
+                val failure = File(
+                    compose.activity.filesDir, "orbital-compact350-capture-failure.png",
+                )
+                FileOutputStream(failure).use { out ->
+                    screenshot.compress(Bitmap.CompressFormat.PNG, 100, out)
+                    out.fd.sync()
+                }
+            } finally {
+                screenshot.recycle()
+            }
+        }
+        throw AssertionError(
+            "Real OSC8 foreground must contain visible colorful synth controls " +
+                "after six genuine frames: chroma=$lastChromaticPixels (required>=70), " +
+                "marker=$lastMarkerPixels (required<=3), root=$lastRootPackage",
+        )
     }
 
     @Test fun shortLandscapeSoundHasReachableEightLayerEditorAndAnchoredPiano() {

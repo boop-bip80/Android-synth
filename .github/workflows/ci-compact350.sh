@@ -30,6 +30,20 @@ collect_diagnostics() {
   timeout 12s adb logcat -d -t 1500 -v threadtime > artifacts/emulator-logcat.txt 2>&1
   timeout 12s adb shell dumpsys meminfo com.orbital.synth > artifacts/app-memory.txt 2>&1
   timeout 12s adb shell dumpsys activity activities > artifacts/activity-state.txt 2>&1
+  # On a failed assertion, preserve the exact physical Android framebuffer
+  # captured by the test (never a generated/mock image or post-crash substitute).
+  if (( status != 0 )); then
+    if timeout 12s adb exec-out run-as com.orbital.synth \
+        cat files/orbital-compact350-capture-failure.png \
+        > artifacts/diagnostic-screen.png 2>/dev/null &&
+       [[ -s artifacts/diagnostic-screen.png ]]; then
+      sha256sum artifacts/diagnostic-screen.png \
+        > artifacts/compact350-failed-frame-sha256.txt
+      echo 'Preserved real failed compact350 foreground screenshot in diagnostics.'
+    elif [[ ! -s artifacts/diagnostic-screen.png ]]; then
+      rm -f artifacts/diagnostic-screen.png
+    fi
+  fi
   timeout 8s adb devices -l > artifacts/compact350-devices-after.txt 2>&1
   timeout 8s sudo dmesg --ctime > artifacts/compact350-host-kernel.txt 2>&1
   if [[ -s artifacts/emulator-full-logcat.txt ]] &&
