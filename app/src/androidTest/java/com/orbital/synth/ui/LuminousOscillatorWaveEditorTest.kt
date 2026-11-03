@@ -1,18 +1,15 @@
 package com.orbital.synth.ui
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
@@ -44,7 +41,7 @@ class LuminousOscillatorWaveEditorTest {
         var callbacks = 0
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column {
                     LuminousOscillatorWaveEditor(
                         slot = state,
                         onSlotChange = { next ->
@@ -55,7 +52,7 @@ class LuminousOscillatorWaveEditorTest {
                 }
             }
         }
-        compose.onNodeWithTag("oscillatorWaveCanvas").performScrollTo()
+        compose.onNodeWithTag("oscillatorWaveCanvas").assertIsDisplayed()
             .performTouchInput {
                 click(Offset((center.x * 2f) * .82f, (center.y * 2f) * .18f))
             }
@@ -77,7 +74,7 @@ class LuminousOscillatorWaveEditorTest {
         var callbacks = 0
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column {
                     LuminousOscillatorWaveEditor(
                         slot = state,
                         onSlotChange = {
@@ -88,7 +85,7 @@ class LuminousOscillatorWaveEditorTest {
                 }
             }
         }
-        compose.onNodeWithTag("oscillatorWaveCanvas").performScrollTo()
+        compose.onNodeWithTag("oscillatorWaveCanvas").assertIsDisplayed()
             .performTouchInput {
                 swipe(
                     start = Offset((center.x * 2f) * .12f, (center.y * 2f) * .84f),
@@ -124,14 +121,14 @@ class LuminousOscillatorWaveEditorTest {
         var state by mutableStateOf(originalSlot())
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column {
                     LuminousOscillatorWaveEditor(slot = state, onSlotChange = { state = it })
                 }
             }
         }
-        compose.onNodeWithTag("luminousMorphControl").performScrollTo()
+        compose.onNodeWithTag("luminousMorphControl").assertIsDisplayed()
             .performSemanticsAction(SemanticsActions.SetProgress) { it(.64f) }
-        compose.onNodeWithTag("luminousLevelControl").performScrollTo()
+        compose.onNodeWithTag("luminousLevelControl").assertIsDisplayed()
             .performSemanticsAction(SemanticsActions.SetProgress) { it(.91f) }
         compose.waitForIdle()
         compose.runOnIdle {
