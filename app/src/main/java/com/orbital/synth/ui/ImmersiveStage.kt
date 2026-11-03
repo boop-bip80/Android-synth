@@ -24,6 +24,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,16 +63,24 @@ internal fun ImmersiveStage(
     onExit: () -> Unit,
     /** Optional source for DSP modulation: normalized X, Y, and touch pressure. */
     onModulationTouchExpression: ((Float, Float, Float) -> Unit)? = null,
+    /** Restores a previously configured stage without affecting the main keyboard. */
+    initialPerformanceConfig: StageTouchSettings? = null,
+    /** Emit only performer-initiated configuration changes for host persistence. */
+    onPerformanceConfigChange: ((StageTouchSettings) -> Unit)? = null,
 ) {
     val mapper = remember { TouchPerformanceMapper() }
     var showConfig by remember { mutableStateOf(false) }
-    var stageSettings by remember { mutableStateOf(StageTouchSettings(baseOctave = state.octave)) }
+    var stageSettings by remember {
+        mutableStateOf(initialPerformanceConfig ?: StageTouchSettings(baseOctave = state.octave))
+    }
+    var observedHostOctave by remember { mutableIntStateOf(state.octave) }
     val haptics = LocalHapticFeedback.current
     val latestOn = rememberUpdatedState(onNoteOn)
     val latestExpressiveOn = rememberUpdatedState(onExpressiveNoteOn)
     val latestOff = rememberUpdatedState(onNoteOff)
     val latestParameter = rememberUpdatedState(onParameterChange)
     val latestModulationTouch = rememberUpdatedState(onModulationTouchExpression)
+    val latestPerformanceConfigChange = rememberUpdatedState(onPerformanceConfigChange)
     val lastModulationTouch = remember { FloatArray(3) { Float.NaN } }
     // Dedupe minute pointer jitter before triggering Compose state invalidations.
     // Finger position and the visual renderer still update on every pointer event.
@@ -132,10 +141,19 @@ internal fun ImmersiveStage(
         }
     }
 
-    // External octave updates follow the keyboard's octave, but the performer
-    // may choose a different stage octave using the configuration panel.
+    // A restored stage's custom base octave must survive initial composition.
+    // Only a subsequent, genuine keyboard octave change updates that field.
     LaunchedEffect(state.octave) {
-        stageSettings = stageSettings.copy(baseOctave = state.octave)
+        if (state.octave != observedHostOctave) {
+            observedHostOctave = state.octave
+            stageSettings = stageSettings.copy(baseOctave = state.octave)
+        }
+    }
+    // Accept a newly loaded host preference, without treating restore as a user edit.
+    LaunchedEffect(initialPerformanceConfig) {
+        if (initialPerformanceConfig != null && initialPerformanceConfig != stageSettings) {
+            stageSettings = initialPerformanceConfig
+        }
     }
     LaunchedEffect(mapper, stageSettings) {
         deliver(mapper.updateConfig(stageSettings.toTouchConfig()))
@@ -365,9 +383,18 @@ internal fun ImmersiveStage(
         if (showConfig) {
             StageTouchConfigurationPanel(
                 settings = stageSettings,
-                onChange = { stageSettings = it },
+                onChange = {
+                    if (stageSettings != it) {
+                        stageSettings = it
+                        latestPerformanceConfigChange.value?.invoke(it)
+                    }
+                },
                 onDismiss = { showConfig = false },
-                onReset = { stageSettings = StageTouchSettings(baseOctave = state.octave) },
+                onReset = {
+                    val reset = StageTouchSettings(baseOctave = state.octave)
+                    stageSettings = reset
+                    latestPerformanceConfigChange.value?.invoke(reset)
+                },
             )
         }
     }
