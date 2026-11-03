@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -104,7 +105,7 @@ fun ImmersiveVisualField(
         }
     }
 
-    Canvas(modifier) {
+    Canvas(modifier.testTag("immersiveVisualField")) {
         val width = size.width
         val height = size.height
         val shortEdge = min(width, height)
