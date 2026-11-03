@@ -4,13 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-ci-${{ github.workflow }}-${{ github.ref }}
+  # A merged PR close event has github.ref=refs/heads/main. Normalize every
+  # PR event to its original PR merge ref so closing a PR cannot cancel main.
+  group: android-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.number) || github.ref }}
   # Latest main push wins: obsolete validations must not indefinitely block
   # the exact head SHA needed for the gated APK release. PRs continue to cancel
   # only stale runs of their own pull-request ref. Manual dispatch is noncancelling.
@@ -19,6 +22,10 @@ concurrency:
 jobs:
   build:
     name: Kotlin tests, lint and debug APK
+    # Closed PR events request cancellation in that PR's existing group, but
+    # launch no Android jobs. Real GitHub cancellation must still be observed;
+    # static policy tests alone do not prove scheduler behavior.
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -36,7 +43,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Validate emulator harness syntax
-        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-process-restart.sh && bash -n .github/workflows/ci-compact350.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh && bash -n .github/workflows/ci-immersive-stage.sh && bash -n .github/workflows/ci-oscillator-workbench.sh && bash -n .github/workflows/ci-live-stage-framebuffer.sh && bash -n .github/workflows/ci-stage-bootstrap.sh && python3 -m py_compile .github/workflows/ci-verify-android-shards.py
+        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-process-restart.sh && bash -n .github/workflows/ci-compact350.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh && bash -n .github/workflows/ci-immersive-stage.sh && bash -n .github/workflows/ci-oscillator-workbench.sh && bash -n .github/workflows/ci-live-stage-framebuffer.sh && bash -n .github/workflows/ci-stage-bootstrap.sh && python3 -m py_compile .github/workflows/ci-verify-android-shards.py && python3 .github/workflows/ci-verify-execution-policy.py
       - name: Host tests, lint, app APK and instrumentation test APK
         run: gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
       - name: Upload debug APK
@@ -111,10 +118,10 @@ jobs:
       - name: Precompile general test binaries before QEMU
         if: ${{ startsWith(matrix.suite, 'general-') || matrix.suite == 'compact350' }}
         run: gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --console=plain --stacktrace
-      # Fresh STAGE, VISUALS and independent real-process RESTART lanes consume
+      # COMPACT, STAGE, VISUALS and independent real-process RESTART consume
       # EXACT host/lint APKs; never compile while QEMU owns runner RAM.
       - name: Download validated app APK from host build
-        if: ${{ matrix.suite == 'stage' || matrix.suite == 'visuals' || matrix.suite == 'restart' }}
+        if: ${{ matrix.suite == 'compact' || matrix.suite == 'stage' || matrix.suite == 'visuals' || matrix.suite == 'restart' }}
         uses: actions/download-artifact@v4
         with:
           name: orbital-debug-apk
@@ -183,6 +190,7 @@ jobs:
             artifacts/general-shard-results.tsv
             artifacts/compact-e2e-phase.txt
             artifacts/compact-e2e-summary.txt
+            artifacts/compact-apk-provenance.txt
             artifacts/compact-350-logcat.txt
             artifacts/compact-350-launch.txt
             artifacts/compact-350-window.txt
