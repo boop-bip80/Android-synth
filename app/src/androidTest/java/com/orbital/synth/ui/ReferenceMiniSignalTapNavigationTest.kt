@@ -10,13 +10,12 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
-import androidx.compose.ui.test.assertDoesNotExist
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
@@ -26,8 +25,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.click
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -108,6 +107,34 @@ class ReferenceMiniSignalTapNavigationTest {
         compose.waitForIdle()
     }
 
+    /**
+     * No Compose test-only auto-scroll: touch the SAME real editor viewport a
+     * human uses. The 3px inset avoids nested LFO horizontal shape chips.
+     * Keep the target assertion strict after at most six bounded swipes.
+     */
+    private fun physicallyRevealGardenAction(tag: String) {
+        val editor = compose.onNodeWithTag("soundEditorScroll").assertIsDisplayed()
+        repeat(6) {
+            val target = compose.onNodeWithTag(tag)
+            val shown = try {
+                target.assertIsDisplayed()
+                true
+            } catch (_: AssertionError) {
+                false
+            }
+            if (shown) return
+            editor.performTouchInput {
+                swipe(
+                    start = Offset(3f, size.height * .79f),
+                    end = Offset(3f, size.height * .21f),
+                    durationMillis = 280,
+                )
+            }
+            compose.waitForIdle()
+        }
+        compose.onNodeWithTag(tag).assertIsDisplayed()
+    }
+
     @Test fun portraitMiniCardsRemainFourReal48dpPlusHitTargetsAndKeysRemainVisible() {
         var width by mutableIntStateOf(411)
         setHost(width = { width })
@@ -180,13 +207,17 @@ class ReferenceMiniSignalTapNavigationTest {
         compose.onNodeWithText("TRIAN").assertExists()
         tapCard("referenceMiniLfo")
         compose.onNodeWithContentDescription("Tab FX").assertIsDisplayed()
-        compose.onNodeWithTag("lfoGardenNode5").assertIsDisplayed()
+        // The exact first-enabled node must already be in the real viewport:
+        // no test scroll can disguise a broken product BringIntoView.
+        compose.onNodeWithTag("lfoGardenNode5")
+            .assertIsDisplayed().performTouchInput { click(center) }
         compose.onNodeWithText("SOURCE  06  /  TRIANGLE").assertExists()
         // This is the SAME eight-LFO editor visualized in the mini trace,
         // not the unrelated legacy DSP LFO_RATE / LFO_DEPTH sliders.
         compose.onNodeWithTag("lfoConfigurationGarden").assertExists()
+        physicallyRevealGardenAction("lfoGardenShapeSINE")
         compose.onNodeWithTag("lfoGardenShapeSINE")
-            .performScrollTo().performTouchInput { click(center) }
+            .performTouchInput { click(center) }
         compose.runOnIdle {
             assertTrue("Genuine lane-six shape callback must reach host", laneWrites.any {
                 it.first == 5 && it.second.shape == LfoShape.SINE
