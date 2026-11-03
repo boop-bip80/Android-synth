@@ -103,6 +103,11 @@ class LiveStepHostTest {
         val dryPcm = FloatArray(activePcm.size)
         synth.renderStereo(activePcm, 5_000)
         dry.renderStereo(dryPcm, 5_000)
+        // 5,000 samples at 8 kHz/120 BPM span five quarter-beat pads.
+        // The public index comes from the audio worker, not an animated UI timer.
+        val workerPlayhead = synth.modulationStepPlayhead
+        assertTrue("Actual audio-clock STEP playhead never advanced: " + workerPlayhead,
+            workerPlayhead in 3..7)
         val meanDifference = activePcm.indices.sumOf { index ->
             abs((activePcm[index] - dryPcm[index]).toDouble())
         } / activePcm.size
