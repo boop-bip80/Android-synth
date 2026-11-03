@@ -50,6 +50,7 @@ grep -q 'package:' artifacts/focus-bootstrap-package.txt || {
 printf 'launch-production-MainActivity\n' > "$phase"
 timeout 30s adb shell am start -n com.orbital.synth/.MainActivity   > artifacts/focus-bootstrap-launch.txt
 ready=0
+launcher_anr_recoveries=0
 for attempt in {1..70}; do
   timeout 10s adb shell dumpsys window > artifacts/focus-bootstrap-window.txt 2>&1 || true
   if timeout 8s adb shell pidof com.orbital.synth >/dev/null 2>&1 &&
@@ -57,6 +58,23 @@ for attempt in {1..70}; do
      ! grep -Eq 'mTopFullscreenOpaqueWindowState=.*Splash Screen com[.]orbital[.]synth' artifacts/focus-bootstrap-window.txt; then
     ready=1
     break
+  fi
+  # A fresh API35 Pixel Launcher can ANR while the real ORBITAL surface is
+  # drawn. Recover ONLY this precise external, focused OS dialog. Other ANRs,
+  # consent prompts and splash screens still fail the unchanged focus gate.
+  if (( launcher_anr_recoveries < 2 )) &&
+     grep -Eq 'mCurrentFocus=.*Application Not Responding: com[.]google[.]android[.]apps[.]nexuslauncher([}]|$)' artifacts/focus-bootstrap-window.txt; then
+    if (( launcher_anr_recoveries == 0 )); then
+      printf 'recovery=external_pixel_launcher_anr_back\n' >> "$summary"
+      timeout 10s adb shell input keyevent KEYCODE_BACK || true
+    else
+      printf 'recovery=external_pixel_launcher_anr_force_stop\n' >> "$summary"
+      timeout 15s adb shell am force-stop com.google.android.apps.nexuslauncher || true
+      timeout 30s adb shell am start -n com.orbital.synth/.MainActivity \
+        >> artifacts/focus-bootstrap-launch.txt 2>&1 || true
+    fi
+    launcher_anr_recoveries=$((launcher_anr_recoveries + 1))
+    sleep 2
   fi
   sleep 1
 done
