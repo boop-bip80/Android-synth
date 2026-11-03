@@ -17,7 +17,7 @@ class StageTouchSettingsTest {
         assertEquals(TouchScale.CHROMATIC, config.scale)
         assertEquals(TouchPitchAxis.HORIZONTAL, config.pitchAxis)
         assertTrue(config.glissando)
-        assertEquals(.5f, config.pressureSensitivity)
+        assertEquals(.5f, config.pressureSensitivity, 0f)
     }
 
     @Test fun tonicAndMusicalOctaveRangeFollowScaleDegrees() {
