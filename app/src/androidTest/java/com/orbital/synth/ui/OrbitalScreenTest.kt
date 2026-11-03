@@ -65,7 +65,14 @@ class OrbitalScreenTest {
         }
 
         compose.onNodeWithTag("oscillatorWave2").performScrollTo().performClick()
+        // A new immutable slot revision must be observed before another control
+        // is edited; otherwise a delayed Compose frame can overwrite the wave.
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(.5f, liveSlots.value[0].waveform)
+        }
         compose.onNodeWithTag("oscillatorCoarseUp").performScrollTo().performClick()
+        compose.waitForIdle()
         compose.runOnIdle {
             assertEquals(.5f, liveSlots.value[0].waveform)
             assertEquals(1, liveSlots.value[0].coarseSemitones)
