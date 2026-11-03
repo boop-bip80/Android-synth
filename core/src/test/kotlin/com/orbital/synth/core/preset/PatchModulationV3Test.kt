@@ -94,7 +94,7 @@ class PatchModulationV3Test {
         )
         val encoded = PatchCodec.encode(patch)
         assertTrue(encoded.startsWith("ORBITAL-PATCH/3\n"))
-        assertEquals(5, PatchCodec.CURRENT_VERSION)
+        assertEquals(6, PatchCodec.CURRENT_VERSION)
         assertEquals(patch, PatchCodec.decode(encoded))
         assertEquals(encoded, PatchCodec.encode(PatchCodec.decode(encoded)))
         assertTrue(encoded.length <= 65_536)
