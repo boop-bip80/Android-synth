@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,6 +39,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -175,8 +179,15 @@ fun OscillatorRackPanel(
                 slot = layer,
                 accent = tint,
                 modifier = Modifier.fillMaxWidth().height(96.dp),
+                onTouch = { blend, gain ->
+                    onSlotChange(selected, layer.copy(morph = blend, level = gain))
+                },
             )
 
+            Text(
+                "DRAG THE WAVE  /  X: BLEND    Y: LEVEL",
+                color = tint.copy(alpha = .8f), fontSize = 8.sp, letterSpacing = .55.sp,
+            )
             Text(
                 "WAVEFORM  /  TOUCH A HARMONIC FAMILY",
                 color = OrbitalPalette.Muted,
@@ -353,12 +364,37 @@ private fun OscillatorWavePreview(
     slot: OscillatorSlot,
     accent: Color,
     modifier: Modifier = Modifier,
+    onTouch: (morph: Float, level: Float) -> Unit,
 ) {
+    val touch by rememberUpdatedState(onTouch)
     val shape = (slot.waveform.coerceIn(0f, 1f) * 4f).roundToInt()
     Canvas(
         modifier
             .border(1.dp, accent.copy(alpha = .24f), RoundedCornerShape(12.dp))
-            .background(Color(0xFF030814), RoundedCornerShape(12.dp)),
+            .background(Color(0xFF030814), RoundedCornerShape(12.dp))
+            .testTag("oscillatorWaveCanvas")
+            .pointerInput(Unit) {
+                detectTapGestures { position ->
+                    touch(
+                        (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
+                    )
+                }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(onDragStart = { start ->
+                    touch(
+                        (start.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        (1f - start.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
+                    )
+                }) { change, _ ->
+                    touch(
+                        (change.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        (1f - change.position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
+                    )
+                    change.consume()
+                }
+            },
     ) {
         val centerY = size.height * .5f
         val amplitude = size.height * (.14f + slot.level.coerceIn(0f, 1f) * .24f)
