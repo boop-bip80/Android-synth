@@ -147,4 +147,45 @@ class PatchGraphPanelTest {
         compose.onNodeWithTag("patchGraphNotice")
             .assertTextContains("engaged in the real voice mixer", substring = true)
     }
+
+    @Test fun draggingFxNodeAcrossCanvasReordersActualHostStages() {
+        val stages = mutableStateOf(listOf(
+            FxModuleConfig(FxModuleType.CHORUS, true, .6f),
+            FxModuleConfig(FxModuleType.DELAY, true, .5f),
+            FxModuleConfig(FxModuleType.SATURATION, true, .4f),
+        ))
+        compose.setContent {
+            MaterialTheme {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    PatchGraphPanel(
+                        oscillators = emptyList(),
+                        lfos = List(8) { ModulationLfoConfig() },
+                        routes = List(64) { ModulationRouteConfig() },
+                        fxSlots = stages.value,
+                        onRouteChange = { _, _ -> },
+                        onRouteClear = {},
+                        onMoveFxSlot = { from, to ->
+                            stages.value = stages.value.toMutableList().apply {
+                                add(to, removeAt(from))
+                            }
+                        },
+                    )
+                }
+            }
+        }
+        // Three true FX stages are centered at 1/4, 2/4, 3/4 width, y=0.55.
+        compose.onNodeWithTag("patchGraphCanvas").performTouchInput {
+            swipe(
+                start = Offset(size.width * .25f, size.height * .55f),
+                end = Offset(size.width * .75f, size.height * .55f),
+                durationMillis = 520L,
+            )
+        }
+        compose.runOnIdle {
+            assertEquals(FxModuleType.DELAY, stages.value[0].type)
+            assertEquals(FxModuleType.SATURATION, stages.value[1].type)
+            assertEquals(FxModuleType.CHORUS, stages.value[2].type)
+        }
+    }
+
 }
