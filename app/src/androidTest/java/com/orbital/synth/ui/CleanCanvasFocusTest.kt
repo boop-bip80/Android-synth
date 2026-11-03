@@ -3,7 +3,6 @@ package com.orbital.synth.ui
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -60,11 +59,11 @@ class CleanCanvasFocusTest {
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(0)
         // A HUD-free stage still exposes a TalkBack action to reveal controls.
-        compose.onNodeWithTag("immersiveCanvas").assert(
-            SemanticsMatcher("TalkBack can reveal clean canvas controls") { node ->
-                node.config.getOrNull(SemanticsActions.CustomActions)
-                    ?.any { it.label == "Reveal stage controls" } == true
-            }
+        val revealActions = compose.onNodeWithTag("immersiveCanvas")
+            .fetchSemanticsNode().config[SemanticsActions.CustomActions]
+        assertTrue(
+            "TalkBack must expose a reveal-controls accessibility action",
+            revealActions.any { action -> action.label == "Reveal stage controls" },
         )
 
         systemBack() // In clean canvas, Back reveals chrome, not Activity exit.
