@@ -12,8 +12,8 @@ android {
         applicationId = "com.orbital.synth"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -40,6 +40,9 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Each Compose/UI/audio test gets a fresh Instrumentation process, preventing
+        // cumulative resource state from carrying across the API35 emulator suite.
+        execution = "ANDROIDX_TEST_ORCHESTRATOR"
     }
 }
 
@@ -71,4 +74,6 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    // Stable AndroidX Test Orchestrator (1.6.1); required by execution mode above.
+    androidTestUtil("androidx.test:orchestrator:1.6.1")
 }
