@@ -143,7 +143,7 @@ fun OscillatorRackPanel(
                             contentDescription =
                                 "Oscillator " + (index + 1) +
                                     if (slot.enabled) ", active" else ", empty"
-                            selected = focused
+                            this.selected = focused
                             stateDescription =
                                 if (focused) "Selected editor layer" else "Unselected editor layer"
                         }
@@ -226,7 +226,7 @@ fun OscillatorRackPanel(
                             }
                             .semantics {
                                 contentDescription = "$label waveform"
-                                selected = active
+                                this.selected = active
                                 stateDescription =
                                     if (active) "Current waveform" else "Not selected waveform"
                             }
