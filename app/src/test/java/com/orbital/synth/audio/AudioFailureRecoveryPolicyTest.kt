@@ -30,6 +30,23 @@ class AudioFailureRecoveryPolicyTest {
         assertFalse(policy.claim())
     }
 
+    @Test fun terminalStatusIsConsumedExactlyOnceAndClearedAtSessionBoundary() {
+        val policy = AudioFailureRecoveryPolicy()
+        policy.publishFatalNotice("Output stopped")
+        assertEquals("Output stopped", policy.pendingFatalNotice)
+        assertEquals("Output stopped", policy.consumeFatalNotice())
+        assertNull(policy.consumeFatalNotice())
+        // A second, independent foreground fault can report even the same text.
+        policy.publishFatalNotice("Output stopped")
+        assertEquals("Output stopped", policy.consumeFatalNotice())
+        policy.publishFatalNotice("Previous failure")
+        policy.clearFatalNotice()
+        assertNull(policy.consumeFatalNotice())
+        policy.publishFatalNotice("Old session")
+        policy.resetOnExplicitStop()
+        assertNull(policy.consumeFatalNotice())
+    }
+
     @Test fun explicitStopStartsFreshBoundedForegroundBudget() {
         val policy = AudioFailureRecoveryPolicy()
         assertTrue(policy.claim())

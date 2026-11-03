@@ -105,10 +105,15 @@ class AndroidAudioOutput(
     @Volatile private var workerThread: Thread? = null
     @Volatile private var lastUnderruns = 0
     @Volatile private var lastEncoding = AudioFormat.ENCODING_PCM_FLOAT
-    @Volatile private var fatalFailureNotice: String? = null
 
-    /** Sticky foreground failure after the one bounded retry; suitable for a UI warning. */
-    val fatalErrorMessage: String? get() = fatalFailureNotice
+    /** Current unconsumed terminal error, for diagnostics or a foreground UI notice. */
+    val fatalErrorMessage: String?
+        get() = synchronized(lifecycleLock) { failureRecovery.pendingFatalNotice }
+
+    /** Take a terminal error exactly once from the UI poll (never from the audio callback). */
+    fun consumeFatalErrorNotice(): String? = synchronized(lifecycleLock) {
+        failureRecovery.consumeFatalNotice()
+    }
 
     val isRunning: Boolean get() = running
 
@@ -232,7 +237,7 @@ class AndroidAudioOutput(
             return@synchronized false
         }
         lastEncoding = config.encoding
-        fatalFailureNotice = null
+        failureRecovery.clearFatalNotice()
         playback = config.track
         visualTelemetry.begin()
         running = true
@@ -255,7 +260,6 @@ class AndroidAudioOutput(
             pendingRestartToken = null
             focusState.cancelPlayback()
             failureRecovery.resetOnExplicitStop()
-            fatalFailureNotice = null
             running = false
             visualTelemetry.stop()
             synth.allNotesOff()
@@ -404,10 +408,14 @@ class AndroidAudioOutput(
                 }
                 if (restartAllowed || boundedRecovery) {
                     if (!start()) {
-                        fatalFailureNotice = "Audio output could not restart. Reopen the app to retry."
+                        failureRecovery.publishFatalNotice(
+                            "Audio output could not restart. Reopen the app to retry."
+                        )
                     }
                 } else if (sameForegroundFailure) {
-                    fatalFailureNotice = "Audio output stopped unexpectedly. Reopen the app to retry."
+                    failureRecovery.publishFatalNotice(
+                        "Audio output stopped unexpectedly. Reopen the app to retry."
+                    )
                 }
             }
         }

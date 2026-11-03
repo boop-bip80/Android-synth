@@ -10,6 +10,25 @@ package com.orbital.synth.audio
  */
 internal class AudioFailureRecoveryPolicy {
     private var retryConsumed = false
+    private var fatalNotice: String? = null
+
+    /** Callers serialize reads and writes under AndroidAudioOutput.lifecycleLock. */
+    val pendingFatalNotice: String? get() = fatalNotice
+
+    fun publishFatalNotice(message: String) {
+        require(message.isNotBlank())
+        fatalNotice = message
+    }
+
+    fun consumeFatalNotice(): String? {
+        val notice = fatalNotice
+        fatalNotice = null
+        return notice
+    }
+
+    fun clearFatalNotice() {
+        fatalNotice = null
+    }
 
     fun claimRetry(
         unexpectedFailure: Boolean,
@@ -27,5 +46,6 @@ internal class AudioFailureRecoveryPolicy {
     /** A later explicit foreground session gets one fresh attempt. */
     fun resetOnExplicitStop() {
         retryConsumed = false
+        fatalNotice = null
     }
 }
