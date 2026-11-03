@@ -267,6 +267,14 @@ class ModularFxChain(
             }
             advanceWet()
             if (wet == 0f) {
+                // The last fade frame may coincide with the host block boundary.
+                // The synth then skips this slot on future silent blocks; retire
+                // echo/chorus history NOW, not on a hypothetical next callback.
+                if (targetWet == 0f && !historyCleared) {
+                    chorus.resetForBypass()
+                    delay.resetForBypass()
+                    historyCleared = true
+                }
                 output[0] = left
                 output[1] = right
                 return
