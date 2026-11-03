@@ -80,8 +80,10 @@ object PatchCodec {
         }
 
         val oscillators = mutableListOf<OscillatorSlot>()
-        for ((key, rawValue) in values) {
-            if (!key.startsWith("osc.")) continue
+        val orderedOscillators = values.entries
+            .filter { it.key.startsWith("osc.") }
+            .sortedBy { it.key.removePrefix("osc.").toInt() }
+        for ((key, rawValue) in orderedOscillators) {
             val index = key.removePrefix("osc.").toInt()
             require(index == oscillators.size) { "Oscillator slots must be sequential" }
             val fields = rawValue.split(',')
