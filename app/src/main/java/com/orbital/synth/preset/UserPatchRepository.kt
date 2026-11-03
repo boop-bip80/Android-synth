@@ -126,9 +126,6 @@ class UserPatchRepository internal constructor(
                 modulationSteps = snapshotModulationSteps()?.let {
                     it.copy(values = it.values.toList())
                 },
-                modulationSteps = snapshotModulationSteps()?.let {
-                    it.copy(values = it.values.toList())
-                },
             )
             store.save(patch)
             PatchOutcome.Success(SavedUserPatch(patch, id != base))
@@ -156,6 +153,9 @@ class UserPatchRepository internal constructor(
                 modulationLfos = snapshotModulationLfos().toList(),
                 modulationTempoBpm = snapshotModulationTempo(),
                 fxSlots = snapshotFxSlots().toList(),
+                modulationSteps = snapshotModulationSteps()?.let {
+                    it.copy(values = it.values.toList())
+                },
             )
             store.save(patch)
             PatchOutcome.Success(patch)
