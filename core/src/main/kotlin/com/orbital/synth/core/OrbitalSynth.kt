@@ -588,6 +588,11 @@ class OrbitalSynth(
         if (voices.none { it.active || it.hasTail }) {
             pitchMipReservationWhileSounding = false
             oscillatorPitchMipReservationWhileSounding = 0
+            // A voice can end INSIDE the preceding callback. If a new note is
+            // queued immediately, there is no idle callback/advanceSilence()
+            // to clear its old oscillator slew. Retire those inaudible values
+            // now, using the current route masks already observed by syncBlock.
+            liveModulation.resetOscillatorModulationWhileSilent()
         }
         drainEvents(glideSec, wave, morph)
         if (voices.any { it.active || it.hasTail }) {

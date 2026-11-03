@@ -335,6 +335,107 @@ class OscillatorPerLayerModulationTest {
         }
     }
 
+    @Test fun freshDryNoteAfterWithinBlockReleaseHasNoOldPitchMipOrResidualPcm() {
+        for (depth in floatArrayOf(-0.5f, 0.5f)) {
+            for (otherCableRemains in booleanArrayOf(false, true)) {
+                val dry = pitchReleaseSynth(0f, otherCableRemains)
+                val whole = pitchReleaseSynth(depth, otherCableRemains)
+                val small = pitchReleaseSynth(depth, otherCableRemains)
+                val wide = pitchReleaseSynth(depth, otherCableRemains)
+                val machines = arrayOf(dry, whole, small, wide)
+                for (synth in machines) renderChunks(synth, 6_144, 192)
+                val previouslyRouted = oscillatorMipSnapshot(whole)
+                val previouslyDry = oscillatorMipSnapshot(dry)
+                assertTrue("The old pitched lane must really have reserved different headroom",
+                    previouslyRouted.first[2] != previouslyDry.first[2] ||
+                        previouslyRouted.second[2] != previouslyDry.second[2])
+
+                for (synth in machines) {
+                    synth.clearModulationRoute(0)
+                    synth.allNotesOff()
+                }
+                // RELEASE=0 lasts 960 frames at 48 kHz. One 1024-frame callback
+                // therefore ends the old voice INSIDE the block; it never enters
+                // advanceSilence(), and the removed pitch slew is still nonzero.
+                // A 192-frame host also visits a final 64-frame idle callback.
+                // All variants nevertheless reach the same absolute PCM frame.
+                renderChunks(dry, 1_024, 1_024)
+                renderChunks(whole, 1_024, 1_024)
+                renderChunks(small, 1_024, 192)
+                renderChunks(wide, 1_024, 512)
+                for (synth in machines) {
+                    assertEquals("The release must have ended before the fresh attack",
+                        0, synth.activeVoiceCount)
+                    // Do NOT render an extra idle block before admitting this note.
+                    synth.noteOn(96)
+                }
+
+                val reference = renderChunks(dry, 4_096, 4_096)
+                val allAtOnce = renderChunks(whole, 4_096, 4_096)
+                val by192 = renderChunks(small, 4_096, 192)
+                val by512 = renderChunks(wide, 4_096, 512)
+                assertRawBitsEqual(reference, allAtOnce)
+                assertRawBitsEqual(reference, by192)
+                assertRawBitsEqual(reference, by512)
+                assertTrue("The strict PCM comparison must contain a real sounding note",
+                    reference.any { abs(it) > 0.001f })
+                assertBounded(reference)
+
+                val expected = oscillatorMipSnapshot(dry)
+                for (synth in arrayOf(whole, small, wide)) {
+                    val fresh = oscillatorMipSnapshot(synth)
+                    for (slot in intArrayOf(2, 6)) {
+                        assertEquals("Fresh dry OSC" + (slot + 1) + " must lose the old reservation",
+                            expected.first[slot], fresh.first[slot])
+                        assertEquals(expected.second[slot], fresh.second[slot], 0f)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun freshNoteAfterBriefSilenceReservesOnlyTheCurrentLivePitchLane() {
+        for (releaseChunk in intArrayOf(1_024, 192, 512)) {
+            val changed = pitchReleaseSynth(0.5f, false)
+            renderChunks(changed, 6_144, 192)
+            changed.clearModulationRoute(0)
+            changed.allNotesOff()
+            renderChunks(changed, 1_024, releaseChunk)
+            assertEquals(0, changed.activeVoiceCount)
+
+            // The old OSC3 residual is obsolete, but a newly attached OSC7
+            // cable must still reserve its own +6-semitone headroom immediately.
+            changed.setModulationRoute(
+                0, ModSource.TOUCH_X, ModDestination.OSC7_PITCH, 0.5f,
+            )
+            changed.noteOn(96)
+            changed.renderStereo(FloatArray(192 * 2), 192)
+
+            val expectedSynth = clean(1).apply {
+                for (slot in intArrayOf(2, 6)) setOscillatorSlot(
+                    slot, OscillatorSlot(
+                        enabled = true, waveform = 0.5f, morph = 1f, level = 0.7f,
+                    ),
+                )
+                setModulationSource(ModSource.TOUCH_X, 1f)
+                setModulationRoute(
+                    0, ModSource.TOUCH_X, ModDestination.OSC7_PITCH, 0.5f,
+                )
+                noteOn(96)
+            }
+            expectedSynth.renderStereo(FloatArray(192 * 2), 192)
+            val expected = oscillatorMipSnapshot(expectedSynth)
+            val actual = oscillatorMipSnapshot(changed)
+            for (slot in intArrayOf(2, 6)) {
+                assertEquals("A silent reset must retain only the current live lane's mip",
+                    expected.first[slot], actual.first[slot])
+                assertEquals(expected.second[slot], actual.second[slot], 0f)
+            }
+            assertTrue("The newly routed OSC7 must really reserve more headroom than dry OSC3",
+                actual.first[6] != actual.first[2] || actual.second[6] != actual.second[2])
+        }
+    }
+
     private fun pitchReleaseSynth(depth: Float, otherCableRemains: Boolean) = clean(1).apply {
         for (slot in intArrayOf(2, 6)) setOscillatorSlot(
             slot, OscillatorSlot(enabled = true, waveform = 0.5f, morph = 1f, level = 0.7f),
@@ -350,14 +451,16 @@ class OscillatorPerLayerModulationTest {
     }
 
     private fun renderChunks(synth: OrbitalSynth, frames: Int, chunk: Int): FloatArray {
-        require(frames % chunk == 0)
+        require(frames >= 0 && chunk > 0)
         val output = FloatArray(frames * 2)
         val block = FloatArray(chunk * 2)
         var offset = 0
         while (offset < output.size) {
-            synth.renderStereo(block, chunk)
-            System.arraycopy(block, 0, output, offset, block.size)
-            offset += block.size
+            val blockFrames = minOf(chunk, (output.size - offset) / 2)
+            synth.renderStereo(block, blockFrames)
+            val samples = blockFrames * 2
+            System.arraycopy(block, 0, output, offset, samples)
+            offset += samples
         }
         return output
     }

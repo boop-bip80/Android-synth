@@ -458,6 +458,17 @@ internal class LiveModulationHost(sampleRate: Int) {
         }
     }
 
+    /**
+     * All voices and stolen tails are already silent, before new notes are
+     * drained. Retire old oscillator values even when no idle callback occurs.
+     * syncBlock() must first observe the current routes: resetWhileSilent keeps
+     * their masks, while discarding only the previous sounding interval's
+     * values. LFO/STEP clocks and the current matrix configuration are untouched.
+     */
+    fun resetOscillatorModulationWhileSilent() {
+        oscillatorModulation.resetWhileSilent()
+    }
+
     /** Free-running synchronized modulation must keep time through silent blocks. */
     fun advanceSilence(frames: Int) {
         if (liveRouteCount > 0 || hasEnabledRouteClock) rack.advance(frames)
@@ -472,7 +483,7 @@ internal class LiveModulationHost(sampleRate: Int) {
             rack.resetSmoothing()
         }
         // Only called after the voice/FX-tail silence check in OrbitalSynth.
-        oscillatorModulation.resetWhileSilent()
+        resetOscillatorModulationWhileSilent()
     }
 
     private fun currentResidualMask(
