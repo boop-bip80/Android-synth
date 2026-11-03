@@ -46,7 +46,7 @@ class ReferenceSoundHeroTest {
         compose.onNodeWithTag("referenceSoundHero").assertExists()
         compose.onNodeWithTag("referenceSoundHeroOrb").assertExists()
         compose.onNodeWithTag("orbitalPlasmaField").assertExists()
-        compose.onAllNodesWithTag("referenceExpressionRibbon").assertCountEquals(1)
+        assertEquals(1, compose.onAllNodesWithTag("referenceExpressionRibbon").fetchSemanticsNodes().size)
         compose.onNodeWithTag("referenceKnobWAVE").assertExists()
         compose.onNodeWithTag("referenceKnobCUTOFF").assertExists()
         compose.onNodeWithTag("referenceKnobRESONANCE").assertExists()
