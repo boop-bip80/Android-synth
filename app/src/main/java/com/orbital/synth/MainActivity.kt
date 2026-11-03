@@ -148,6 +148,12 @@ class MainActivity : ComponentActivity() {
                 sourcePitchBends.onBend(sourceId, channel, value)
             }
 
+            override fun onSourceControlChange(sourceId: Long, channel: Int, controller: Int, value: Int) {
+                if (controller == 121) sourcePitchBends.onControllerReset(sourceId, channel)
+                // Preserve CC1/71/74/91's existing UI parameter mapping.
+                onControlChange(channel, controller, value)
+            }
+
             override fun onSourceDisconnected(sourceId: Long) {
                 sourcePitchBends.onDisconnect(sourceId)
             }
