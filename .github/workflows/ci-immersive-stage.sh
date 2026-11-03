@@ -221,8 +221,14 @@ import sys
 stage, normal = sys.argv[1:]
 with open(stage,"rb") as f:
     h = f.read(24)
+    f.seek(0,2)
+    byte_count = f.tell()
+    f.seek(-12,2)
+    trailer = f.read(12)
 if len(h)!=24 or h[:8]!=b"\x89PNG\r\n\x1a\n" or h[12:16]!=b"IHDR":
     raise SystemExit("Stage screenshot has no PNG IHDR")
+if byte_count < 4096 or trailer != b"\x00\x00\x00\x00IEND\xaeB\x60\x82":
+    raise SystemExit("Stage screenshot is truncated or lacks the PNG end marker")
 w,h = struct.unpack(">II",h[16:24])
 if w < 600 or h < 1000 or w >= h:
     raise SystemExit(f"Stage screenshot geometry is invalid: {w}x{h}")
