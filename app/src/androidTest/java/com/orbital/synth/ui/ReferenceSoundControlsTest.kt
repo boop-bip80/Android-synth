@@ -137,6 +137,31 @@ class ReferenceSoundControlsTest {
         compose.onNodeWithText("0 LIVE").assertExists()
     }
 
+    @Test fun compactDeckSupportsOrbOverlaidRibbonWithoutHidingRealControls() {
+        compose.setContent {
+            Box(Modifier.width(360.dp)) {
+                ReferenceSoundControls(
+                    parameters = mapOf(
+                        ParameterId.MORPH to .66f,
+                        ParameterId.MOVEMENT to .4f,
+                    ),
+                    lfos = List(8) { ModulationLfoConfig() },
+                    routes = List(64) { ModulationRouteConfig() },
+                    onParameterChange = { _, _ -> },
+                    compact = true,
+                    showExpressionRibbon = false,
+                )
+            }
+        }
+        compose.onNodeWithTag("referenceSoundControls").assertExists()
+        // The host can overlay the XY ribbon on top of the genuine plasma
+        // instead of duplicating a tall, solid card beneath it.
+        compose.onNodeWithTag("referenceExpressionRibbon").assertDoesNotExist()
+        compose.onNodeWithTag("referenceKnobFX_AMOUNT").assertExists()
+        compose.onNodeWithTag("referenceMiniEnv").assertExists()
+        compose.onNodeWithTag("referenceMiniMod").assertExists()
+    }
+
     @Test fun upwardKnobSwipeAccumulatesRealDspValueAcrossManyTouchFrames() {
         var value by mutableStateOf(.25f)
         var callbacks = 0
