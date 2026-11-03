@@ -164,6 +164,7 @@ private val MainGradient = Brush.verticalGradient(
  * Public UI entry point. Everything audible crosses the supplied callbacks;
  * UI and DSP never secretly instantiate separate audio engines.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun OrbitalScreen(
     state: OrbitalUiState,
@@ -2783,6 +2784,7 @@ private enum class CompactFxPage(val caption: String) {
  * subtree in one eager scrolling column. Page it by effect family, keeping
  * every parameter editable and the 82dp piano keyboard anchored below.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun FxPanel(
     parameter: (ParameterId) -> Float,
