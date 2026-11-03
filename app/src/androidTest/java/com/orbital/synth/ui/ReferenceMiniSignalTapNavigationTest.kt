@@ -223,6 +223,42 @@ class ReferenceMiniSignalTapNavigationTest {
         }
     }
 
+    @Test fun physicalEngineTitleTapRevealsFiveRealEngineChoicesAbovePinnedKeyboard() {
+        val writes = mutableListOf<Pair<ParameterId, Float>>()
+        setHost(width = { 360 }, onEdit = { id, value -> writes += id to value })
+
+        // ENGINE is on the actual first-viewport Hero. A physical tap must
+        // reveal the real architecture editor rather than only flip hidden state.
+        compose.onNodeWithTag("referenceHeroEngineName")
+            .assertIsDisplayed()
+            .performTouchInput { click(center) }
+        compose.waitForIdle()
+
+        val editor = compose.onNodeWithTag("soundEditorScroll")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val selector = compose.onNodeWithTag("referenceEngineActualEditor")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val ladder = compose.onNodeWithContentDescription("Select synth engine LADDER")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("A tapped ENGINE title must reveal all of the usable selector",
+            selector.top >= editor.top - 1f && selector.bottom <= editor.bottom + 1f)
+        assertTrue("The second physical engine option must be >=48dp",
+            ladder.height / density >= 48f && ladder.width / density >= 48f)
+
+        val keyboard = compose.onNodeWithTag("referencePerformanceKeybed")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("Engine reveal must not move/occlude the pinned keyboard",
+            keyboard.top >= editor.bottom - 1f)
+        compose.onNodeWithContentDescription("Select synth engine LADDER")
+            .performTouchInput { click(center) }
+        compose.waitForIdle()
+        assertTrue("LADDER engine tap must write the actual host ENGINE parameter",
+            writes.any { it.first == ParameterId.ENGINE && it.second > 0f })
+        // These represent configured routes, not necessarily connected live
+        // sources; never tell the performer that a saved route is audible.
+        // Previous SOUND caption was falsely annotated LIVE.
+    }
+
     @Test fun envAndDisconnectedCoreLfoTapsOpenActualSlidersAndWriteDspParams() {
         var width by mutableIntStateOf(360)
         val writes = mutableListOf<Pair<ParameterId, Float>>()
