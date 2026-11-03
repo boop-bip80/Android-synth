@@ -161,6 +161,8 @@ fun OrbitalScreen(
     onArpRateChange: ((Int) -> Unit)? = null,
     onArpLatchChange: ((Boolean) -> Unit)? = null,
     onArpSwingChange: ((Float) -> Unit)? = null,
+    /** Optional pressure-aware stage note-on; old integer-note callers remain compatible. */
+    onExpressiveNoteOn: ((Int, Float) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var immersiveMode by remember { mutableStateOf(false) }
@@ -230,6 +232,7 @@ fun OrbitalScreen(
             onNoteOn = onNoteOn,
             onNoteOff = onNoteOff,
             onParameterChange = onParameterChange,
+            onExpressiveNoteOn = onExpressiveNoteOn,
             onExit = { immersiveMode = false },
         )
     } else {
