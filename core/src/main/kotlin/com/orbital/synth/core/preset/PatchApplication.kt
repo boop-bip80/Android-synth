@@ -2,6 +2,8 @@ package com.orbital.synth.core.preset
 
 import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.core.dsp.processing.LfoShape
+import com.orbital.synth.core.dsp.processing.ModSource
 
 /** Convenience adapter for the DSP parameter contract; no Android dependency. */
 fun OrbitalSynth.loadPatch(patch: SynthPatch) {
@@ -28,6 +30,26 @@ fun OrbitalSynth.loadPatch(patch: SynthPatch) {
             fineCents = slot.fineCents,
             morph = slot.morph,
         )
+    }
+
+    // V1/V2 patches do not contain modulation. Clear *all* previous routes,
+    // latches, tempos and LFO shapes before loading any new patch so an older
+    // preset never inherits the previous preset's audible modulation.
+    for (index in 0 until modulationRouteCount) clearModulationRoute(index)
+    for (index in 0 until modulationLfoCount) {
+        setModulationLfo(index, enabled = index == 0, shape = LfoShape.SINE,
+            rateHz = 1f, beatsPerCycle = 0f, retriggerOnNote = false)
+    }
+    for (source in ModSource.entries) setModulationSource(source, 0f)
+    setModulationTempoBpm(patch.modulationTempoBpm)
+    patch.modulationLfos.forEachIndexed { index, config ->
+        setModulationLfo(
+            index, config.enabled, config.shape, config.rateHz,
+            config.beatsPerCycle, config.retriggerOnNote,
+        )
+    }
+    patch.modulationRoutes.forEachIndexed { index, config ->
+        setModulationRouteConfig(index, config)
     }
 }
 
