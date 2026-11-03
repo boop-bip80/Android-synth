@@ -204,6 +204,10 @@ object PatchCodec {
             )
         }
 
+        if (version == 6) require(oscillators.any {
+            it.noiseLevel != 0f || it.noiseColor != 0f
+        }) { "V6 patches must contain explicit colored oscillator state" }
+
         val tempo = if (version >= 3) {
             values["mod.tempo"]?.toFloatOrNull()
                 ?: throw IllegalArgumentException("Missing or invalid modulation tempo")
