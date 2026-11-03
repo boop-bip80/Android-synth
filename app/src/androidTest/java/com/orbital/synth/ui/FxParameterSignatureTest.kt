@@ -123,6 +123,8 @@ class FxParameterSignatureTest {
         assertTrue("Card omitted real FX settings from TalkBack",
             accessible("fxSlot0").contains("configured and enabled") &&
                 accessible("fxSlot0").contains("dry wet"))
+        val beforeScroll = compose.onNodeWithTag("fxSelectedSignature")
+            .fetchSemanticsNode().boundsInRoot
         ensureVisible("fxSelectedSignature")
         val signature = compose.onNodeWithTag("fxSelectedSignature")
             .fetchSemanticsNode().boundsInRoot
@@ -135,8 +137,13 @@ class FxParameterSignatureTest {
         val right = min(darkGlassCapture.width, (signature.right - viewport.left).toInt())
         val top = max(0, (signature.top - viewport.top).toInt())
         val bottom = min(darkGlassCapture.height, (signature.bottom - viewport.top).toInt())
-        assertTrue("360dp signature lacks measured visible framebuffer area",
-            right - left > 64 && bottom - top > 64)
+        assertTrue(
+            "360dp signature lacks measured visible framebuffer area: " +
+                "before=$beforeScroll after=$signature root=$viewport " +
+                "rootShot=${darkGlassCapture.width}x${darkGlassCapture.height} " +
+                "sampleBox=[$left,$top,$right,$bottom]",
+            right - left > 64 && bottom - top > 64,
+        )
         var luminousPixels = 0
         for (y in top until bottom step 4)
             for (x in left until right step 4) {
