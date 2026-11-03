@@ -313,6 +313,7 @@ fun OrbitalScreen(
     // the existing FX edit controls (or the same XY palette), never a dummy.
     var pendingMiniSignal by remember { mutableStateOf<ReferenceMiniSignalDestination?>(null) }
     var miniSignalNavigationEpoch by remember { mutableIntStateOf(0) }
+    var requestedLfoGardenLane by remember { mutableIntStateOf(0) }
     val envelopeEditorRequest = remember { BringIntoViewRequester() }
     val lfoEditorRequest = remember { BringIntoViewRequester() }
     val modulationEditorRequest = remember { BringIntoViewRequester() }
@@ -326,7 +327,9 @@ fun OrbitalScreen(
     ) {
         LfoGardenRevealRequest(
             requester = matchingLfoGardenRequest,
-            laneIndex = state.modulationLfos.indexOfFirst { it.enabled }.coerceAtLeast(0),
+            // Capture the preview's live lane AT the tap, not on every DSP
+            // snapshot recomposition while its bring-into-view is running.
+            laneIndex = requestedLfoGardenLane,
             navigationEpoch = miniSignalNavigationEpoch,
         )
     } else null
@@ -692,6 +695,13 @@ fun OrbitalScreen(
                             if (destination != ReferenceMiniSignalDestination.EXPRESSION &&
                                 destination.canOpen(modulationRackConnected)
                             ) {
+                                if (destination == ReferenceMiniSignalDestination.LFO &&
+                                    modulationRackConnected
+                                ) {
+                                    requestedLfoGardenLane =
+                                        state.modulationLfos.indexOfFirst { it.enabled }
+                                            .coerceAtLeast(0)
+                                }
                                 pendingMiniSignal = destination
                                 miniSignalNavigationEpoch++
                                 selectedTab = Tab.FX
