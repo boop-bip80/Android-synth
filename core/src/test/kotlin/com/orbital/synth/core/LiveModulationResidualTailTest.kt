@@ -218,6 +218,28 @@ class LiveModulationResidualTailTest {
             first < later * .25)
     }
 
+    @Test fun oversizedSingleRenderCallbackCannotKeepExpiredTailDspAlive() {
+        val m = host()
+        m.setSource(ModSource.TOUCH_X, 1f)
+        m.setRoute(0, ModSource.TOUCH_X, ModDestination.PITCH, .4f, ModCurve.LINEAR)
+        m.setRoute(1, ModSource.TOUCH_X, ModDestination.AMP, .4f, ModCurve.LINEAR)
+        assertTrue(sync(m))
+        repeat(700) { m.tick() }
+        assertTrue(abs(m.pitchSemitones) > 1f && m.ampGain > 1.4f)
+        m.setRoute(0, ModSource.TOUCH_X, ModDestination.PITCH, 0f, ModCurve.LINEAR)
+        m.setRoute(1, ModSource.TOUCH_X, ModDestination.AMP, 0f, ModCurve.LINEAR)
+        assertTrue(sync(m))
+        // OrbitalSynth captures modulationEnabled once per callback; deliberately
+        // never sync again here. tick() must switch to its cheap neutral branch
+        // *inside* a very large block after the 120 ms maximum sample tail.
+        repeat(16_000) { m.tick() }
+        assertEquals(0f, m.pitchSemitones, 0f)
+        assertEquals(1f, m.ampGain, 0f)
+        assertFalse(sync(m))
+        assertFalse(m.pitchRouteActive)
+        assertFalse(m.ampRouteActive)
+    }
+
     @Test fun untouchedDrySynthRemainsRawPcmIdenticalWithOnlyDormantRoutes() {
         val dry = configuredSynth()
         val inert = configuredSynth()
