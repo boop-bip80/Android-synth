@@ -81,8 +81,11 @@ import sys
 import xml.etree.ElementTree as ET
 path, label = sys.argv[1:]
 nodes = [n for n in ET.parse(path).iter("node") if n.attrib.get("content-desc") == label]
-if len(nodes) != 1 or nodes[0].attrib.get("clickable") != "true":
-    raise SystemExit(f"Expected exactly one clickable '{label}', found {len(nodes)}")
+if len(nodes) != 1:
+    raise SystemExit(f"Expected exactly one accessible '{label}', found {len(nodes)}")
+# Compose can attach the description to a wrapper node while the click
+# semantics live on its child. We verify the real transition after tapping,
+# rather than requiring the wrapper itself to report clickable=true.
 match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", nodes[0].attrib.get("bounds", ""))
 if not match:
     raise SystemExit(f"Invalid accessibility bounds for '{label}'")
