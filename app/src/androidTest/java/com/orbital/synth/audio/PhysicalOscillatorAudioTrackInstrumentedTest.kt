@@ -10,7 +10,6 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -256,9 +255,20 @@ class PhysicalOscillatorAudioTrackInstrumentedTest {
         synth.setParameter(ParameterId.FX_AMOUNT, 0f)
         synth.setParameter(ParameterId.ENGINE, 0f)
 
+        // The portrait SOUND workbench intentionally keeps the oscillator
+        // editor collapsed until the real ADVANCED disclosure is touched.
+        // Opening it through the same visible Activity is mandatory; otherwise
+        // oscillatorEnable does not exist at all in the Compose semantics tree.
+        revealByFinger("referenceSoundAdvancedToggle", minHeightDp = 48f)
+        compose.onNodeWithTag("referenceSoundAdvancedToggle")
+            .assertIsDisplayed().performTouchInput { click(center) }
+        compose.waitForIdle()
+        Log.i(TAG, "phase=real-finger-opened-oscillator-editor")
+
         // The actual visual rack begins empty. Activate OSC1 by real click.
         revealByFinger("oscillatorEnable", minHeightDp = 44f)
-        compose.onNodeWithTag("oscillatorEnable").performClick()
+        compose.onNodeWithTag("oscillatorEnable")
+            .assertIsDisplayed().performTouchInput { click(center) }
         compose.waitForIdle()
         assertTrue("Physical ADD OSCILLATOR must reach the SAME real synth",
             synth.oscillatorSlot(0).enabled)
