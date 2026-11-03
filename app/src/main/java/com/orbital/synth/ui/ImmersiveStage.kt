@@ -82,8 +82,10 @@ internal fun ImmersiveStage(
     onPerformanceConfigChange: ((StageTouchSettings) -> Unit)? = null,
     /** Meter from real Android AudioTrack output, sampled only while the stage is on-screen. */
     audioVisualSource: (() -> AudioVisualSnapshot)? = null,
+    /** Host revision invalidating all held performance voices on background/recall. */
+    performanceResetEpoch: Long = 0L,
 ) {
-    val mapper = remember { TouchPerformanceMapper() }
+    val mapper = remember(performanceResetEpoch) { TouchPerformanceMapper() }
     var showConfig by remember { mutableStateOf(false) }
     // Explicit opt-in. On a clean canvas there is no synth HUD or keyboard.
     // Android Back (or the screen reader custom action) reveals controls first.
@@ -201,7 +203,7 @@ internal fun ImmersiveStage(
     LaunchedEffect(mapper, stageSettings) {
         deliver(mapper.updateConfig(stageSettings.toTouchConfig()))
     }
-    DisposableEffect(mapper) {
+    DisposableEffect(mapper, performanceResetEpoch) {
         onDispose {
             deliver(mapper.cancelAll())
             reportTouchModulation(.5f, .5f, .5f, force = true)
@@ -293,7 +295,7 @@ internal fun ImmersiveStage(
                         )
                     }
                 }
-                .pointerInput(mapper) {
+                .pointerInput(mapper, performanceResetEpoch) {
                     // awaitEachGesture completes only after every pointer is up.
                     // The finally block makes note-off safe under OS gesture
                     // cancellation, screen changes and recomposition disposal.
@@ -360,12 +362,16 @@ internal fun ImmersiveStage(
                                 pointerEvent.changes.forEach { change ->
                                     val id = change.id.value
                                     if (change.pressed) {
-                                        if (id !in activeIds) {
+                                        if (id !in activeIds && !change.previousPressed) {
+                                            // Only a genuine DOWN admits a new finger
+                                            // after an Activity onStop epoch reset.
+                                            // A stale held finger seen during another
+                                            // new touch cannot reattack a canceled voice.
                                             start(
                                                 id, change.position.x, change.position.y,
                                                 change.pressure, change.uptimeMillis,
                                             )
-                                        } else {
+                                        } else if (id in activeIds) {
                                             touchX = normalizeX(change.position.x)
                                             touchY = normalizeY(change.position.y)
                                             touchIntensity = change.pressure.coerceIn(.15f, 1f)

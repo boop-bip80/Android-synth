@@ -29,6 +29,12 @@ class OscillatorWorkbenchCaptureTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test fun capturesRunningOscillatorEditorAfterUserConfiguration() {
+        // Production SOUND deliberately starts with one uncluttered reference orb.
+        // An actual user opens the deep engine/oscillator workbench before
+        // editing it. Never assert hidden editor nodes as initially visible.
+        compose.onNodeWithTag("referenceSoundHero").assertExists()
+        compose.onNodeWithTag("referenceSoundAdvancedToggle")
+            .performScrollTo().assertIsDisplayed().performClick()
         compose.onNodeWithTag("oscillatorRack").assertExists()
 
         // Compose's actual scroll semantics locate a deeply nested workbench
