@@ -164,4 +164,39 @@ class FullDensityModularAudioRegressionTest {
         synth.renderStereo(FloatArray(4_096 * 2), 4_096)
         assertEquals("Full graph must release all sixteen synth voices", 0, synth.activeVoiceCount)
     }
+
+    @Test fun seventhEffectHotSwitchDoesNotCorruptDensePatchOrStuckNotes() {
+        val original = fullyProgrammedSynth()
+        val switched = fullyProgrammedSynth()
+        for (note in 48..63) {
+            original.noteOn(note, .27f)
+            switched.noteOn(note, .27f)
+        }
+        val warmup = FloatArray(1_024 * 2)
+        original.renderStereo(warmup, 1_024)
+        switched.renderStereo(warmup, 1_024)
+
+        // Initially all six processors run TREMOLO..BITCRUSH. This enables
+        // the seventh type, SATURATION, during an already-playing 16-note chord.
+        assertEquals(7, FxModuleType.entries.size)
+        switched.setFxSlot(5, FxModuleType.SATURATION,
+            enabled = true, wet = .86f, depth = .91f)
+        val unchanged = FloatArray(3_072 * 2)
+        val edited = FloatArray(unchanged.size)
+        original.renderStereo(unchanged, 3_072)
+        switched.renderStereo(edited, 3_072)
+        var difference = 0.0
+        for (i in unchanged.indices) {
+            difference += abs((unchanged[i] - edited[i]).toDouble())
+            assertTrue(edited[i].isFinite())
+            assertTrue(abs(edited[i]) <= 1.00001f)
+        }
+        assertTrue("The seventh FX type must audibly replace BITCRUSH even under full load",
+            difference > 1.0)
+        assertTrue(switched.modulationRoute(63).enabled)
+        assertEquals(16, switched.activeVoiceCount)
+        switched.allNotesOff()
+        switched.renderStereo(FloatArray(4_096 * 2), 4_096)
+        assertEquals(0, switched.activeVoiceCount)
+    }
 }
