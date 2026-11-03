@@ -1,5 +1,6 @@
 package com.orbital.synth.ui
 
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -83,8 +84,9 @@ class OrbitalScreenTest {
     }
 
     @Test fun keyboardRemainsAvailableInCompactHeight() {
+        Log.i("OrbitalCompactTest", "full-width: begin 350dp viewport fixture")
         compose.setContent {
-            Box(Modifier.fillMaxWidth().height(350.dp)) {
+            Box(Modifier.fillMaxWidth().height(350.dp).testTag("fullWidthHeightBudgetViewport")) {
                 OrbitalScreen(
                     state = OrbitalUiState(),
                     onNoteOn = {},
@@ -95,13 +97,30 @@ class OrbitalScreenTest {
                 )
             }
         }
+        Log.i("OrbitalCompactTest", "full-width: setContent returned")
         val keyboard = compose.onNodeWithContentDescription(
             "Multitouch piano keyboard",
             substring = true,
         )
-        keyboard.assertIsDisplayed()
+        fun checkKeyboard(tab: String) {
+            Log.i("OrbitalCompactTest", "full-width/$tab: look up keyboard semantics")
+            val bounds = keyboard.fetchSemanticsNode().boundsInRoot
+            val viewport = compose.onNodeWithTag("fullWidthHeightBudgetViewport")
+                .fetchSemanticsNode().boundsInRoot
+            val density = compose.activity.resources.displayMetrics.density
+            val message = "full-width/$tab keyboard=$bounds viewport=$viewport density=$density"
+            Log.i("OrbitalCompactTest", message)
+            assertTrue("$message: top escapes viewport", bounds.top >= viewport.top)
+            assertTrue("$message: bottom clipped", bounds.bottom <= viewport.bottom + density)
+            assertTrue("$message: keyboard unusably short", bounds.height >= 80f * density)
+            Log.i("OrbitalCompactTest", "full-width/$tab: before assertIsDisplayed")
+            keyboard.assertIsDisplayed()
+            Log.i("OrbitalCompactTest", "full-width/$tab: keyboard visible")
+        }
+        checkKeyboard("SOUND")
+        Log.i("OrbitalCompactTest", "full-width: clicking Tab FX")
         compose.onNodeWithContentDescription("Tab FX").performClick()
-        keyboard.assertIsDisplayed()
+        checkKeyboard("FX")
     }
 
     @Test fun presetArrowsAreAccessibleAndCallNavigation() {
