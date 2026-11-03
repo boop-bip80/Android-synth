@@ -61,7 +61,7 @@ class StageTouchActivityRestartTest {
             scale = TouchScale.BLUES, pressureSensitivity = .72f,
             pitchAxis = TouchPitchAxis.VERTICAL, glissando = false,
         )
-        Files.writeString(preferenceFile, StageTouchSettingsCodec.encode(saved))
+        Files.write(preferenceFile, StageTouchSettingsCodec.encode(saved).toByteArray(Charsets.UTF_8))
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             enterConfiguration()
             // The actual activity may still be restoring on Dispatchers.IO.
@@ -98,7 +98,7 @@ class StageTouchActivityRestartTest {
 
     @Test fun unknownNewerSettingsAreNotSilentlyDowngradedByRealStageEdits() {
         val future = "ORBITAL-STAGE-TOUCH-V873\nfutureControl=1\n"
-        Files.writeString(preferenceFile, future)
+        Files.write(preferenceFile, future.toByteArray(Charsets.UTF_8))
         ActivityScenario.launch(MainActivity::class.java).use {
             enterConfiguration()
             awaitSelected("stageScale-CHROMATIC")
@@ -111,10 +111,10 @@ class StageTouchActivityRestartTest {
                 ),
                 store.notices.value?.result,
             )
-            assertEquals(future, Files.readString(preferenceFile))
+            assertEquals(future, String(Files.readAllBytes(preferenceFile), Charsets.UTF_8))
             assertTrue(
                 "No implicit version downgrade is allowed",
-                Files.readString(preferenceFile).startsWith("ORBITAL-STAGE-TOUCH-V873"),
+                String(Files.readAllBytes(preferenceFile), Charsets.UTF_8).startsWith("ORBITAL-STAGE-TOUCH-V873"),
             )
         }
     }
