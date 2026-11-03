@@ -1,58 +1,105 @@
 package com.orbital.synth.ui
 
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.platform.app.InstrumentationRegistry
 import java.util.ArrayDeque
 
 /**
- * Test-only simulation of a user's first-entry immersive navigation tutorial.
+ * AOSP first-run immersive navigation education belongs to Android SystemUI.
  *
- * Android SystemUI owns the display on a fresh API35 device while its trusted
- * ImmersiveModeConfirmation education window is visible, before the app can
- * ever acquire focus or produce an unobscured physical screenshot.
- *
- * We interact only with that exact focused AOSP window's explicit OK button.
- * This never changes secure settings, dismisses an ANR, or substitutes a fake
- * screenshot. Every caller MUST still assert true Activity window focus and
- * strict black/live framebuffer pixels after returning.
+ * Only when dumpsys confirms the EXACT focused ImmersiveModeConfirmation
+ * window over the real ORBITAL MainActivity do we look for its known OK
+ * control. Never press Back, change secure settings, or dismiss a different
+ * OS dialog. The caller must still verify app focus and real framebuffer.
  */
 internal object AndroidImmersiveTutorial {
+    private const val TAG = "OrbitalImmersiveTutorial"
+    private const val MAX_VISITED_NODES = 180
+
     fun acknowledgeOnlyIfSystemOverlayOwnsFocus(): Boolean {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        val descriptor = automation.executeShellCommand("dumpsys window")
-        val immersivePromptHasFocus =
-            ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { stream ->
-                stream.lineSequence().any { line ->
-                    "mCurrentFocus=" in line && "ImmersiveModeConfirmation" in line
+        val focusedLines = runCatching {
+            val descriptor = automation.executeShellCommand("dumpsys window")
+            ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { input ->
+                input.lineSequence()
+                    .filter { "mCurrentFocus=" in it || "mFocusedApp=" in it }
+                    .take(4)
+                    .toList()
+            }
+        }.getOrElse {
+            Log.w(TAG, "Cannot inspect foreground window: ${it.javaClass.simpleName}")
+            return false
+        }
+        val currentWindow = focusedLines.firstOrNull { "mCurrentFocus=" in it }.orEmpty()
+        val focusedApp = focusedLines.firstOrNull { "mFocusedApp=" in it }.orEmpty()
+        if (!currentWindow.contains(" ImmersiveModeConfirmation}")) return false
+        if (!focusedApp.contains("com.orbital.synth/.MainActivity")) {
+            Log.w(TAG, "Immersive tutorial detected, but ORBITAL is not the focused app: " +
+                focusedApp.trim().take(200))
+            return false
+        }
+
+        // On the fresh API35 emulator the active accessibility root may lag
+        // the new SystemUI dialog. Inspect bounded, real accessibility windows
+        // as well, while retaining the exact OS-focus precondition above.
+        val roots = mutableListOf<AccessibilityNodeInfo>()
+        automation.rootInActiveWindow?.let(roots::add)
+        runCatching { automation.windows }.getOrNull()?.take(12)?.forEach { window ->
+            window.root?.let(roots::add)
+        }
+        if (roots.isEmpty()) {
+            Log.w(TAG, "Confirmed ImmersiveModeConfirmation owns focus; no accessibility root yet")
+            return false
+        }
+
+        val treeEvidence = mutableListOf<String>()
+        var visited = 0
+        for (root in roots) {
+            val nodes = ArrayDeque<AccessibilityNodeInfo>()
+            nodes.add(root)
+            while (nodes.isNotEmpty() && visited < MAX_VISITED_NODES) {
+                val node = nodes.removeFirst()
+                visited++
+                val packageName = node.packageName?.toString()
+                    ?: root.packageName?.toString().orEmpty()
+                val className = node.className?.toString().orEmpty()
+                val resourceId = node.viewIdResourceName.orEmpty()
+                val label = node.text?.toString()?.trim()?.lowercase().orEmpty()
+                val description =
+                    node.contentDescription?.toString()?.trim()?.lowercase().orEmpty()
+                if (treeEvidence.size < 26) {
+                    treeEvidence +=
+                        "pkg=$packageName class=$className id=$resourceId " +
+                            "text=${label.take(36)} desc=${description.take(36)} " +
+                            "clickable=${node.isClickable}"
+                }
+
+                val isSystemDialogNode = packageName == "com.android.systemui" ||
+                    packageName == "android"
+                val exactKnownButtonId = resourceId == "com.android.systemui:id/ok" ||
+                    resourceId == "android:id/button1"
+                val exactKnownButtonLabel =
+                    (label == "got it" || label == "ok" ||
+                        description == "got it" || description == "ok") &&
+                        className == "android.widget.Button"
+                if (isSystemDialogNode && node.isClickable &&
+                    (exactKnownButtonId || exactKnownButtonLabel)) {
+                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.i(TAG, "Exact AOSP immersive OK: clicked=$clicked " +
+                        "id=$resourceId label=$label package=$packageName " +
+                        "visited=$visited")
+                    return clicked
+                }
+                for (index in 0 until node.childCount.coerceAtMost(32)) {
+                    node.getChild(index)?.let(nodes::addLast)
                 }
             }
-        if (!immersivePromptHasFocus) return false
-
-        val root = automation.rootInActiveWindow ?: return false
-        val nodes = ArrayDeque<AccessibilityNodeInfo>()
-        nodes.add(root)
-        var traversed = 0
-        while (nodes.isNotEmpty() && traversed++ < 100) {
-            val node = nodes.removeFirst()
-            val resourceId = node.viewIdResourceName.orEmpty()
-            val label = node.text?.toString()?.trim()?.lowercase().orEmpty()
-            if (node.className?.toString() == "android.widget.Button" &&
-                node.isClickable &&
-                (resourceId == "com.android.systemui:id/ok" ||
-                    label == "got it" || label == "ok")) {
-                val acknowledged = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                println(
-                    "ORBITAL_SYSTEM_IMMERSIVE_CONFIRMATION acknowledged=$acknowledged " +
-                        "buttonId=$resourceId",
-                )
-                return acknowledged
-            }
-            for (index in 0 until node.childCount) {
-                node.getChild(index)?.let(nodes::addLast)
-            }
         }
-        println("ORBITAL_SYSTEM_IMMERSIVE_CONFIRMATION exact OS overlay lacks accessible OK button")
+        Log.w(TAG, "Confirmed focused ImmersiveModeConfirmation but no exact AOSP OK " +
+            "button found; roots=${roots.size} visited=$visited tree=" +
+            treeEvidence.joinToString(" | ").take(3000))
         return false
     }
 }
