@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -185,17 +186,48 @@ class PerformanceTouchLifecycleEpochTest {
             )
         }
 
-        // Android Back first reveals controls without trapping the activity or
-        // creating an extra release after the foreground session was drained.
+        // Back is pressed while TWO distinct live fingers are held in FOCUS.
+        // It must free every mapper lease and reveal the stage controls without
+        // trapping the performer in a hidden-chrome view.
+        canvas.performTouchInput {
+            down(2, Offset(center.x * .75f, center.y * .65f))
+            down(3, Offset(center.x * 1.28f, center.y * 1.32f))
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertTrue(
+                "Two fresh held FOCUS contacts should attack a live note",
+                events.count { it.startsWith("ON:") } > original.size * 2,
+            )
+        }
         compose.activityRule.scenario.onActivity {
             it.onBackPressedDispatcher.onBackPressed()
         }
         compose.waitForIdle()
-        compose.onNodeWithTag("immersiveExit").assertExists()
+        compose.onNodeWithTag("immersiveExit").assertIsDisplayed()
+        var afterBack = emptyList<String>()
         compose.runOnIdle {
-            val attacks = events.count { it.startsWith("ON:") }
-            val releases = events.count { it.startsWith("OFF:") }
-            assertEquals("Back must not duplicate note-off", attacks, releases)
+            val attacks = events.filter { it.startsWith("ON:") }.map { it.removePrefix("ON:") }
+            val releases = events.filter { it.startsWith("OFF:") }.map { it.removePrefix("OFF:") }
+            assertEquals(
+                "Back must release every held FOCUS voice exactly once",
+                attacks.sorted(), releases.sorted(),
+            )
+            afterBack = events.toList()
+        }
+
+        // The OS may deliver physical UP after Back's explicit cancel; those
+        // obsolete finger IDs must not produce duplicate OFF in the new view.
+        canvas.performTouchInput {
+            up(2)
+            up(3)
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(
+                "Late UP events after Back must not release a note twice",
+                afterBack, events,
+            )
         }
     }
 }
