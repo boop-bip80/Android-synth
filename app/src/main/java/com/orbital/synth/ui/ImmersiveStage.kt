@@ -199,6 +199,7 @@ internal fun ImmersiveStage(
                             touchY = normalizeY(y)
                             touchIntensity = pressure.coerceIn(.15f, 1f)
                             pulse += 1L
+                            reportTouchModulation(touchX, touchY, pressure)
                             // A restrained one-shot tactile accent, never a
                             // continuous vibration or a high-frequency haptic loop.
                             if (time - lastHapticAt >= 80L) {
@@ -231,6 +232,7 @@ internal fun ImmersiveStage(
                                             touchX = normalizeX(change.position.x)
                                             touchY = normalizeY(change.position.y)
                                             touchIntensity = change.pressure.coerceIn(.15f, 1f)
+                                            reportTouchModulation(touchX, touchY, change.pressure)
                                             deliver(
                                                 mapper.touchMove(
                                                     id, touchX, touchY, change.pressure,
@@ -240,6 +242,9 @@ internal fun ImmersiveStage(
                                         }
                                     } else if (activeIds.remove(id)) {
                                         deliver(mapper.touchUp(id))
+                                        if (mapper.activePointerCount == 0) {
+                                            reportTouchModulation(.5f, .5f, .5f, force = true)
+                                        }
                                     }
                                     change.consume()
                                 }
@@ -251,6 +256,7 @@ internal fun ImmersiveStage(
                             activeIds.forEach { id -> deliver(mapper.touchUp(id)) }
                             activeIds.clear()
                             touchIntensity = 0f
+                            reportTouchModulation(.5f, .5f, .5f, force = true)
                         }
                     }
                 },
@@ -272,6 +278,7 @@ internal fun ImmersiveStage(
                     .clickable(role = Role.Button) {
                         deliver(mapper.cancelAll())
                         touchIntensity = 0f
+                        reportTouchModulation(.5f, .5f, .5f, force = true)
                         onExit()
                     }
                     .semantics { contentDescription = "Exit immersive performance" }
