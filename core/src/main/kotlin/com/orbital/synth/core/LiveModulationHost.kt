@@ -215,12 +215,12 @@ internal class LiveModulationHost(sampleRate: Int) {
                         ModDestination.PAN -> panCount++
                         else -> {
                             val ordinal = next.destination.ordinal
-                            if (ordinal in ModDestination.OSC1_GAIN.ordinal..
-                                    ModDestination.OSC8_GAIN.ordinal) {
+                            if (ordinal >= ModDestination.OSC1_GAIN.ordinal &&
+                                ordinal <= ModDestination.OSC8_GAIN.ordinal) {
                                 oscillatorGainMask = oscillatorGainMask or
                                     (1 shl (ordinal - ModDestination.OSC1_GAIN.ordinal))
-                            } else if (ordinal in ModDestination.OSC1_PITCH.ordinal..
-                                    ModDestination.OSC8_PITCH.ordinal) {
+                            } else if (ordinal >= ModDestination.OSC1_PITCH.ordinal &&
+                                ordinal <= ModDestination.OSC8_PITCH.ordinal) {
                                 oscillatorPitchMask = oscillatorPitchMask or
                                     (1 shl (ordinal - ModDestination.OSC1_PITCH.ordinal))
                             }
