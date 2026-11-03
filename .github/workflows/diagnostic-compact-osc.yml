@@ -42,3 +42,14 @@ jobs:
           find diagnostics -type f -name '*host-memory*' -print0 | while IFS= read -r -d '' file; do
             tail -n 65 "$file" | cut -c 1-240
           done
+          printf '\n=== PER-TEST LOGCAT AND UTP PHASES ===\n'
+          find results -type f -name 'utp.0.log' -print0 | while IFS= read -r -d '' file; do
+            printf 'UTP %s\n' "$file"
+            tail -n 135 "$file" | cut -c 1-320
+          done
+          find results -type f -name 'logcat-*' -print0 | while IFS= read -r -d '' file; do
+            printf 'LOGCAT %s\n' "$file"
+            grep -En 'OrbitalCompact350|AndroidRuntime|ANR|OutOfMemoryError|FATAL EXCEPTION|SIGSEGV|fatal|TEST|Crash|crash' "$file" | tail -n 125 | cut -c 1-320 || true
+            printf 'END LOGCAT 50:\n'
+            tail -n 50 "$file" | cut -c 1-320
+          done
