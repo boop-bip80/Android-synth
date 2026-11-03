@@ -59,17 +59,24 @@ class PatchDirectoryStore(private val directory: Path) {
         return patch
     }
 
-    fun list(): List<SynthPatch> {
+    /**
+     * Reserve existing on-disk IDs without decoding patch data.
+     * Malformed or newer-version files must keep their filenames reserved so a
+     * save/import cannot overwrite user data merely because it cannot be read.
+     */
+    fun storedIds(): Set<String> {
         rejectSymlinkedBank()
-        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return emptyList()
-        val ids = Files.newDirectoryStream(directory, "*.orbital").use { entries ->
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return emptySet()
+        return Files.newDirectoryStream(directory, "*.orbital").use { entries ->
             entries.map { it.fileName.toString().removeSuffix(".orbital") }
                 .filter(SynthPatch::validId)
-                .sorted()
-                .toList()
+                .toSet()
         }
+    }
+
+    fun list(): List<SynthPatch> {
         // A malformed stored patch is surfaced to callers, never silently discarded.
-        return ids.mapNotNull(::load)
+        return storedIds().sorted().mapNotNull(::load)
     }
 
     fun delete(id: String): Boolean {
