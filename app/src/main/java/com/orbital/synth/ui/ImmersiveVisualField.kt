@@ -249,6 +249,47 @@ fun ImmersiveVisualField(
             radius = radius * .98f,
         )
 
+        // Reactive aurora petals: twelve sculpted Bézier light volumes bloom from
+        // the orbital shell. Their size responds to REAL PCM level/transient and
+        // held-touch intensity; they disappear during idle silence. Each petal
+        // draws a wide low-alpha bloom plus two crisp interference filaments.
+        if (pressure > .01f || pcm.rms > .018f || pcm.transient > .04f) {
+            val phase = if (animationsEnabled) animatedPhase * turn * .085f else 0f
+            for (petal in 0 until ImmersiveLightMath.PETAL_COUNT) {
+                val a = turn * petal / ImmersiveLightMath.PETAL_COUNT + phase +
+                    timbre * .22f
+                val span = .20f + focus * .16f
+                val inner = radius * (.66f + aperture * .10f)
+                val outer = radius * (1.36f + petalFlare * .28f)
+                val begin = c + Offset(cos(a) * inner, sin(a) * inner * .78f)
+                val tipA = a + span
+                val tip = c + Offset(cos(tipA) * outer, sin(tipA) * outer * .78f)
+                val endA = a + span * 2.2f
+                val end = c + Offset(cos(endA) * inner, sin(endA) * inner * .78f)
+                val wing = Path().apply {
+                    moveTo(begin.x, begin.y)
+                    cubicTo(
+                        c.x + cos(a + .08f) * outer * .83f,
+                        c.y + sin(a + .08f) * outer * .70f,
+                        tip.x, tip.y,
+                        end.x, end.y,
+                    )
+                }
+                val tint = when (petal % 4) {
+                    0 -> amber
+                    1 -> livingHue
+                    2 -> ultraviolet
+                    else -> electricBlue
+                }
+                drawPath(wing, tint.copy(alpha = .028f * petalFlare),
+                    style = Stroke(width = 22f * stroke, cap = StrokeCap.Round))
+                drawPath(wing, tint.copy(alpha = .15f * petalFlare),
+                    style = Stroke(width = 3.6f * stroke, cap = StrokeCap.Round))
+                drawPath(wing, ice.copy(alpha = .25f * petalFlare),
+                    style = Stroke(width = .57f * stroke, cap = StrokeCap.Round))
+            }
+        }
+
         // Concentric etched circles and rotating orbital ellipses.
         for (layer in 1..4) {
             val rr = radius * (1f + layer * .13f)
