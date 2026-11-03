@@ -18,6 +18,7 @@ import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.performance.ArpeggiatorDirection
 import com.orbital.synth.core.VoiceMode
@@ -72,6 +73,8 @@ class MainActivity : ComponentActivity() {
     private var pendingStepRevision: Long? = null
     private val pendingStepNotes = mutableMapOf<Int, List<SequencerNote>>()
     private val pendingToggleIntents = SequencerToggleReconciler()
+    /** Main-thread optimistic FX state; worker tickets prevent edits hitting old slot indices. */
+    private val fxRackReconciler = FxRackHostReconciler()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,6 +93,7 @@ class MainActivity : ComponentActivity() {
         refreshPatchChoices()
         val initialSequence = audioOutput.sequencerPatternSelection
         screenState = screenState.copy(
+            fxSlots = fxSlotSnapshot(),
             sequencerTempo = audioOutput.sequencerTempo,
             enabledSteps = initialSequence.enabledSteps,
             sequencerStepCount = initialSequence.stepCount,
@@ -150,6 +154,9 @@ class MainActivity : ComponentActivity() {
                     // so the active ID and enabled grid cannot belong to different patterns.
                     val sequence = audioOutput.sequencerPatternSelection
                     val tempo = audioOutput.sequencerTempo
+                    // Reconcile queued FX reorders only after the SAME audio worker
+                    // has moved both immutable settings and processor history.
+                    reconcileFxRack()
                     if (screenState.sequencerTempo != tempo) {
                         synth.setModulationTempoBpm(tempo.toFloat())
                     }
@@ -220,6 +227,8 @@ class MainActivity : ComponentActivity() {
                     onModulationLfoChange = ::updateModulationLfo,
                     onModulationRouteChange = ::updateModulationRoute,
                     onModulationRouteClear = ::clearModulationRoute,
+                    onFxSlotChange = ::updateFxSlot,
+                    onFxMoveSlot = ::reorderFxSlot,
                     onModulationTempoChange = { bpm ->
                         if (bpm.isFinite()) updateMusicTempo(bpm.roundToInt())
                     },
@@ -313,6 +322,7 @@ class MainActivity : ComponentActivity() {
         if (::audioOutput.isInitialized) audioOutput.arpeggiatorPanic()
         val patch = patches[patchIndex]
         synth.allNotesOff()
+        fxRackReconciler.clear()
         synth.loadPatch(patch)
         // A patch owns its modulation BPM; route it through the one master transport.
         if (::audioOutput.isInitialized) {
@@ -324,6 +334,7 @@ class MainActivity : ComponentActivity() {
             oscillatorSlots = oscillatorSnapshot(),
             modulationLfos = modulationLfoSnapshot(),
             modulationRoutes = modulationRouteSnapshot(),
+            fxSlots = fxSlotSnapshot(),
             presetIndex = patchIndex,
             presetCount = patches.size,
             activePatchId = patch.id,
@@ -489,6 +500,18 @@ class MainActivity : ComponentActivity() {
     /** Save a snapshot under a collision-safe user patch ID; factory data is immutable. */
     private fun saveCurrentPatch(name: String) {
         lifecycleScope.launch {
+            // Patch V4 must contain the acknowledged FX order and all edits made
+            // immediately afterward. This suspends our coroutine, never audio/UI.
+            if (!awaitFxRackSettled(
+                    timeoutMillis = 1_200L,
+                    isPending = { fxRackReconciler.hasPendingMove },
+                    reconcile = ::reconcileFxRack,
+                )
+            ) {
+                screenState = screenState.copy(patchFeedback =
+                    "FX move is still pending in the audio engine. Start audio and retry saving.")
+                return@launch
+            }
             when (val result = userPatches.saveCurrentAs(name)) {
                 is PatchOutcome.Success -> {
                     val saved = result.value.patch
@@ -518,6 +541,7 @@ class MainActivity : ComponentActivity() {
                     val patch = result.value
                     audioOutput.arpeggiatorPanic()
                     synth.allNotesOff()
+                    fxRackReconciler.clear()
                     updateMusicTempo(synth.modulationTempoBpm.roundToInt())
                     val factoryIndex = FactoryPresets.ALL.indexOfFirst { it.id == patch.id }
                     if (factoryIndex >= 0) patchIndex = factoryIndex
@@ -527,6 +551,7 @@ class MainActivity : ComponentActivity() {
                         oscillatorSlots = oscillatorSnapshot(),
                         modulationLfos = modulationLfoSnapshot(),
                         modulationRoutes = modulationRouteSnapshot(),
+                        fxSlots = fxSlotSnapshot(),
                         presetIndex = patchIndex,
                         presetCount = FactoryPresets.ALL.size,
                         activePatchId = patch.id,
@@ -591,6 +616,51 @@ class MainActivity : ComponentActivity() {
         if (index !in 0 until synth.modulationRouteCount) return
         synth.clearModulationRoute(index)
         screenState = screenState.copy(modulationRoutes = modulationRouteSnapshot())
+    }
+
+    /** Only this one [OrbitalSynth] belongs to AndroidAudioOutput's PCM worker. */
+    private fun fxSlotSnapshot(): List<FxModuleConfig> =
+        List(synth.fxSlotCount) { index -> synth.fxSlot(index) }
+
+    private fun updateFxSlot(index: Int, config: FxModuleConfig) {
+        if (index !in 0 until synth.fxSlotCount ||
+            !config.wet.isFinite() || !config.depth.isFinite() ||
+            !config.rate.isFinite() || !config.stereo.isFinite()) return
+        val normalized = config.copy(
+            wet = config.wet.coerceIn(0f, 1f),
+            depth = config.depth.coerceIn(0f, 1f),
+            rate = config.rate.coerceIn(0f, 1f),
+            stereo = config.stereo.coerceIn(0f, 1f),
+        )
+        val before = screenState.fxSlots.ifEmpty { fxSlotSnapshot() }
+        val after = fxRackReconciler.stageEdit(before, index, normalized) { slot, value ->
+            synth.setFxSlot(slot, value)
+        }
+        if (after != screenState.fxSlots) screenState = screenState.copy(fxSlots = after)
+    }
+
+    /** Queue a processor-state reorder, preserving an optimistic UI until worker ack. */
+    private fun reorderFxSlot(from: Int, to: Int) {
+        if (from !in 0 until synth.fxSlotCount ||
+            to !in 0 until synth.fxSlotCount || from == to) return
+        val before = screenState.fxSlots.ifEmpty { fxSlotSnapshot() }
+        val ticket = synth.requestFxSlotMove(from, to)
+        val after = fxRackReconciler.stageMove(before, from, to, ticket)
+        if (after != screenState.fxSlots) screenState = screenState.copy(fxSlots = after)
+    }
+
+    /** Called only on main from the 32ms poll and the suspend SAVE gate. */
+    private fun reconcileFxRack() {
+        val actual = fxSlotSnapshot()
+        val visible = screenState.fxSlots.ifEmpty { actual }
+        val next = fxRackReconciler.reconcile(
+            visible = visible,
+            actual = actual,
+            lastAppliedTicket = synth.lastAppliedFxMoveTicket,
+            lastCanceledTicket = synth.lastCanceledFxMoveTicket,
+            publish = { index, config -> synth.setFxSlot(index, config) },
+        )
+        if (next != screenState.fxSlots) screenState = screenState.copy(fxSlots = next)
     }
 
     /** One BPM authority keeps patterns, arpeggiator and tempo-synced LFOs aligned. */
