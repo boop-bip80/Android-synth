@@ -107,3 +107,28 @@ internal class FxRackHostReconciler {
     ): List<FxModuleConfig> =
         slots.toMutableList().apply { add(to, removeAt(from)) }
 }
+
+
+/**
+ * Suspend the *save coroutine*, never Android's UI or AudioTrack render thread.
+ * The regular 32 ms Activity poll also calls reconcile(); this bounded fast
+ * poll merely prevents V4 patch capture from racing a pending render-worker
+ * FX move and its deferred slider edits.
+ *
+ * If audio is stopped the ticket cannot settle; return false and show honest
+ * feedback instead of silently persisting the wrong FX order.
+ */
+internal suspend fun awaitFxRackSettled(
+    timeoutMillis: Long,
+    isPending: () -> Boolean,
+    reconcile: () -> Unit,
+): Boolean {
+    if (!isPending()) return true
+    return kotlinx.coroutines.withTimeoutOrNull(timeoutMillis.coerceAtLeast(1L)) {
+        while (isPending()) {
+            reconcile()
+            if (isPending()) kotlinx.coroutines.delay(16L)
+        }
+        true
+    } ?: false
+}
