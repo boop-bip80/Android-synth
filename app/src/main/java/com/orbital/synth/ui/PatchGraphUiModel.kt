@@ -7,12 +7,13 @@ import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.dsp.processing.FxModuleType
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import kotlin.math.hypot
 
 /** The exact immutable nodes that exist in the current audio graph. */
 internal enum class PatchNodeKind {
     CORE_OSC, OSC_LAYER, VOICE_MIX, FILTER, VOICE_AMP_PAN, MASTER_FX,
-    FX_SLOT, AUDIO_OUT, LFO, MOD_BUS,
+    FX_SLOT, AUDIO_OUT, LFO, STEP, MOD_BUS,
 }
 
 internal data class PatchGraphNode(
@@ -42,12 +43,14 @@ internal data class PatchGraphCable(
 internal data class PatchGraphSnapshot(
     val nodes: List<PatchGraphNode>,
     val fixedAudio: List<PatchGraphCable>,
-    /** Only existing LFO-origin, live-target routes. No phantom FFT or wiring. */
+    /** Existing LFO/STEP live-target routes, including dormant configured source paths. */
     val patchCables: List<PatchGraphCable>,
     val liveRouteCount: Int,
     val dormantLfoRouteCount: Int,
     val externalSourceRouteCount: Int,
     val reservedRouteCount: Int,
+    val stepRouteCount: Int = 0,
+    val dormantStepRouteCount: Int = 0,
 )
 
 /**
@@ -84,7 +87,7 @@ internal object PatchGraphUiModel {
         source: ModSource,
         destination: ModDestination,
     ): Pair<Int, ModulationRouteConfig>? {
-        if (source !in lfoSources || destination !in liveTargets) return null
+        if ((source !in lfoSources && source != ModSource.STEP) || destination !in liveTargets) return null
         val patch = routes.take(64)
         val existing = patch.indexOfFirst {
             it.enabled && it.source == source && it.destination == destination
@@ -123,6 +126,7 @@ internal object PatchGraphUiModel {
         lfos: List<ModulationLfoConfig>,
         routes: List<ModulationRouteConfig>,
         fxSlots: List<FxModuleConfig>,
+        stepConfig: ModulationStepConfig? = null,
     ): PatchGraphSnapshot {
         val nodes = ArrayList<PatchGraphNode>(36)
         fun node(
@@ -165,6 +169,12 @@ internal object PatchGraphUiModel {
             )
         }
         val out = node("OUT", PatchNodeKind.AUDIO_OUT, "OUT", .5f, .63f)
+        // STEP is a real audio-clocked modulation source only when the host
+        // supplies its immutable config. Disabled sequences stay visible/dim.
+        val stepNode = stepConfig?.let { config ->
+            node("STEP", PatchNodeKind.STEP, "STEP", .08f, .665f,
+                active = config.enabled, source = ModSource.STEP)
+        }
         val lfoNodes = List(8) { i ->
             node(
                 "LFO" + i, PatchNodeKind.LFO, "LFO " + (i + 1),
@@ -205,6 +215,8 @@ internal object PatchGraphUiModel {
         var dormant = 0
         var external = 0
         var reserved = 0
+        var stepRoutes = 0
+        var dormantSteps = 0
         routes.take(64).forEachIndexed { index, route ->
             if (!route.enabled) return@forEachIndexed
             if (route.destination !in liveTargets) {
@@ -212,6 +224,20 @@ internal object PatchGraphUiModel {
                 return@forEachIndexed
             }
             live++
+            if (route.source == ModSource.STEP) {
+                stepRoutes++
+                if (stepNode == null || !stepNode.active) dormantSteps++
+                if (stepNode != null) {
+                    patch += PatchGraphCable(
+                        from = stepNode,
+                        to = targetNodes.first { it.destination == route.destination },
+                        kind = PatchCableKind.MODULATION,
+                        active = stepNode.active,
+                        routeSlot = index,
+                    )
+                }
+                return@forEachIndexed
+            }
             val lfoIndex = lfoIndex(route.source)
             if (lfoIndex < 0) {
                 external++
@@ -233,6 +259,8 @@ internal object PatchGraphUiModel {
             dormantLfoRouteCount = dormant,
             externalSourceRouteCount = external,
             reservedRouteCount = reserved,
+            stepRouteCount = stepRoutes,
+            dormantStepRouteCount = dormantSteps,
         )
     }
 
