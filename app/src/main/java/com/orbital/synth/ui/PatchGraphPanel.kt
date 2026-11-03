@@ -108,6 +108,7 @@ fun PatchGraphPanel(
     var source by remember { mutableStateOf(ModSource.LFO1) }
     var selectedBus by remember { mutableStateOf(ModDestination.MORPH) }
     var selectedRoute by remember { mutableIntStateOf(0) }
+    var routePage by remember { mutableIntStateOf(0) }
     var selectedFx by remember { mutableIntStateOf(0) }
     var notice by remember { mutableStateOf("Touch a live source, then a glowing destination bus. Drag to connect.") }
 
@@ -120,6 +121,7 @@ fun PatchGraphPanel(
             return
         }
         selectedRoute = result.first
+        routePage = result.first / 8
         if (routeBank[result.first] == result.second) {
             notice = "Selected existing live route " + (result.first + 1) + " for editing."
         } else {
@@ -600,24 +602,64 @@ fun PatchGraphPanel(
             color = OrbitalPalette.Text, fontSize = 10.sp, fontWeight = FontWeight.Bold,
         )
         Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                .testTag("patchGraphRouteBank"),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            Modifier.fillMaxWidth().testTag("patchRoutePageControls"),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            routeBank.forEachIndexed { index, route ->
-                val live = route.destination in PatchGraphUiModel.liveTargets
-                PatchChip(
-                    label = (index + 1).toString().padStart(2, '0'),
-                    selected = routeIndex == index,
-                    tint = if (!route.enabled) OrbitalPalette.Muted
-                        else if (live) OrbitalPalette.Teal else OrbitalPalette.Gold,
-                    description = "Select route " + (index + 1) +
-                        if (!route.enabled) ", empty or bypassed"
-                        else if (live) ", live destination" else ", reserved destination",
-                    tag = "patchRoute" + index,
-                ) {
-                    selectedRoute = index
-                    notice = "Editing route " + (index + 1) + "."
+            PatchChip(
+                label = "◀ PREV 8",
+                selected = false,
+                tint = OrbitalPalette.Cyan,
+                description = "Previous eight saved modulation routes",
+                tag = "patchRoutePagePrev",
+                enabled = routePage > 0,
+            ) { routePage = (routePage - 1).coerceAtLeast(0) }
+            Text(
+                "BANK " + (routePage + 1) + " / 8  •  " +
+                    (routePage * 8 + 1).toString().padStart(2, '0') + "–" +
+                    (routePage * 8 + 8).toString().padStart(2, '0'),
+                color = OrbitalPalette.Gold,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                modifier = Modifier.testTag("patchRoutePageStatus"),
+            )
+            PatchChip(
+                label = "NEXT 8 ▶",
+                selected = false,
+                tint = OrbitalPalette.Cyan,
+                description = "Next eight saved modulation routes",
+                tag = "patchRoutePageNext",
+                enabled = routePage < 7,
+            ) { routePage = (routePage + 1).coerceAtMost(7) }
+        }
+        Column(
+            Modifier.fillMaxWidth().testTag("patchGraphRouteBank"),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            repeat(2) { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    repeat(4) { column ->
+                        val index = routePage * 8 + row * 4 + column
+                        val route = routeBank[index]
+                        val live = route.destination in PatchGraphUiModel.liveTargets
+                        Box(Modifier.weight(1f)) {
+                            PatchChip(
+                                label = (index + 1).toString().padStart(2, '0'),
+                                selected = routeIndex == index,
+                                tint = if (!route.enabled) OrbitalPalette.Muted
+                                    else if (live) OrbitalPalette.Teal else OrbitalPalette.Gold,
+                                description = "Select route " + (index + 1) +
+                                    if (!route.enabled) ", empty or bypassed"
+                                    else if (live) ", live destination"
+                                    else ", reserved destination",
+                                tag = "patchRoute" + index,
+                                fill = true,
+                            ) {
+                                selectedRoute = index
+                                notice = "Editing route " + (index + 1) + "."
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -739,22 +781,33 @@ fun PatchGraphPanel(
             Text("No live modular FX slots provided by the host.",
                 color = OrbitalPalette.Muted, fontSize = 11.sp)
         } else {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                    .testTag("patchGraphFxChoices"),
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            Column(
+                Modifier.fillMaxWidth().testTag("patchGraphFxChoices"),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                fxSlots.take(8).forEachIndexed { index, config ->
-                    PatchChip(
-                        label = (index + 1).toString() + " " +
-                            if (config == FxModuleConfig()) "DRY"
-                            else PatchGraphUiModel.slotName(config.type),
-                        selected = index == fxIndex,
-                        tint = if (config.enabled) OrbitalPalette.Gold else OrbitalPalette.Muted,
-                        description = "Select effect slot " + (index + 1) +
-                            if (config.enabled) ", engaged" else ", bypassed",
-                        tag = "patchFx" + index,
-                    ) { selectedFx = index }
+                repeat((fxSlots.take(8).size + 3) / 4) { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        repeat(4) { column ->
+                            val index = row * 4 + column
+                            Box(Modifier.weight(1f)) {
+                                if (index in fxSlots.indices && index < 8) {
+                                    val config = fxSlots[index]
+                                    PatchChip(
+                                        label = (index + 1).toString() + " " +
+                                            if (config == FxModuleConfig()) "DRY"
+                                            else PatchGraphUiModel.slotName(config.type),
+                                        selected = index == fxIndex,
+                                        tint = if (config.enabled) OrbitalPalette.Gold
+                                            else OrbitalPalette.Muted,
+                                        description = "Select effect slot " + (index + 1) +
+                                            if (config.enabled) ", engaged" else ", bypassed",
+                                        tag = "patchFx" + index,
+                                        fill = true,
+                                    ) { selectedFx = index }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
