@@ -217,6 +217,38 @@ class StereoCreativeFxTest {
         }
     }
 
+    @Test fun newFxTypesAlterTheActualOrbitalSynthStereoRenderBus() {
+        for (type in listOf(
+            FxModuleType.REVERB, FxModuleType.PHASER, FxModuleType.BITCRUSH,
+        )) {
+            fun synth() = com.orbital.synth.core.OrbitalSynth(8_000, maxVoices = 4).apply {
+                setParameter(com.orbital.synth.core.ParameterId.WAVE, 0f)
+                setParameter(com.orbital.synth.core.ParameterId.MORPH, 0f)
+                setParameter(com.orbital.synth.core.ParameterId.FX_AMOUNT, 0f)
+                setParameter(com.orbital.synth.core.ParameterId.ATTACK, 0f)
+            }
+            val baseline = synth()
+            val designed = synth()
+            designed.setFxSlot(
+                0, type, enabled = true, wet = 1f,
+                depth = .8f, rate = .56f, stereo = .8f,
+            )
+            baseline.noteOn(69)
+            designed.noteOn(69)
+            val plain = FloatArray(4_096 * 2)
+            val processed = FloatArray(plain.size)
+            baseline.renderStereo(plain, 4_096)
+            designed.renderStereo(processed, 4_096)
+            var change = 0.0
+            for (index in plain.indices) {
+                change += abs((plain[index] - processed[index]).toDouble())
+                assertTrue(processed[index].isFinite() && abs(processed[index]) <= 1f)
+            }
+            assertTrue("New FX type $type must process the real OrbitalSynth PCM bus",
+                change > 10.0)
+        }
+    }
+
     @Test fun patchV4StoresNewFxTypesByStableNamesWithoutDisturbingOldOrdinals() {
         assertEquals(0, FxModuleType.SATURATION.ordinal)
         assertEquals(1, FxModuleType.TREMOLO.ordinal)
