@@ -272,7 +272,7 @@ fun OscillatorRackPanel(
                 NoiseSpectrumPad(
                     slot = layer,
                     accent = tint,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 86.dp),
+                    modifier = Modifier.fillMaxWidth().height(112.dp),
                     onTouch = { color, blend ->
                         onSlotChange(selected, layer.copy(
                             noiseColor = color, noiseLevel = blend,
