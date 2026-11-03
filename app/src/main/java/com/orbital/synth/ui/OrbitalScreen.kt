@@ -115,6 +115,8 @@ data class OrbitalUiState(
     val fxSlots: List<FxModuleConfig> = emptyList(),
     /** User-adjusted performance layout, reused when the keyboardless stage reopens. */
     val stageTouchSettings: StageTouchSettings? = null,
+    /** Changes only when the host invalidates live touch voice ownership. */
+    val performanceResetEpoch: Long = 0L,
     val octave: Int = 4,
     val sequencerRunning: Boolean = false,
     val enabledSteps: Set<Int> = emptySet(),
@@ -198,8 +200,6 @@ fun OrbitalScreen(
     /** Real output PCM telemetry; read only while the immersive stage is visible. */
     onReadAudioVisual: (() -> AudioVisualSnapshot)? = null,
     onStageTouchSettingsChange: ((StageTouchSettings) -> Unit)? = null,
-    /** Incremented by the audio host whenever a lifecycle/panic resets held touch voices. */
-    performanceResetEpoch: Long = 0L,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var immersiveMode by remember { mutableStateOf(false) }
@@ -274,7 +274,7 @@ fun OrbitalScreen(
             initialPerformanceConfig = state.stageTouchSettings,
             onPerformanceConfigChange = onStageTouchSettingsChange,
             audioVisualSource = onReadAudioVisual,
-            performanceResetEpoch = performanceResetEpoch,
+            performanceResetEpoch = state.performanceResetEpoch,
             onExit = { immersiveMode = false },
         )
     } else {
@@ -731,7 +731,7 @@ fun OrbitalScreen(
             onNoteOff = onNoteOff,
             modifier = Modifier.fillMaxWidth(),
             preferredHeight = if (compactHeight) 82.dp else if (compactOrbitLayout) 110.dp else null,
-            performanceResetEpoch = performanceResetEpoch,
+            performanceResetEpoch = state.performanceResetEpoch,
         )
         if (!compactHeight) {
             Row(
