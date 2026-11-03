@@ -89,8 +89,9 @@ timeout 8s adb shell cat /proc/meminfo > artifacts/focus-bootstrap-device-memory
 sleep 2
 
 # Focused can still mean a blank SurfaceFlinger frame while Compose draws.
-# Require the REAL normal keyboard and STAGE entry from Android's current
-# accessibility hierarchy before accepting a normal-app screenshot.
+# Require the REAL normal performance controls and STAGE entry from Android's
+# current accessibility hierarchy before accepting a normal-app screenshot.
+# Both supported keybed variants are exclusive: legacy piano or liquid-glass.
 printf 'verify-live-normal-keyboard-accessibility\n' > "$phase"
 keyboard_ready=0
 for attempt in 1 2 3; do
@@ -102,12 +103,14 @@ for attempt in 1 2 3; do
 import sys
 import xml.etree.ElementTree as ET
 names = [n.attrib.get("content-desc", "") for n in ET.parse(sys.argv[1]).iter("node")]
-keyboard = sum("multitouch piano keyboard" in n.lower() for n in names)
+legacy_keyboard = sum("multitouch piano keyboard" in n.lower() for n in names)
+liquid_keybed = sum(n.lower().startswith("twelve live chromatic liquid-glass keys, octave ") for n in names)
 enter = names.count("Enter immersive performance")
 exit_count = names.count("Exit immersive performance")
-if keyboard != 1 or enter != 1 or exit_count != 0:
-    raise SystemExit(f"Normal app not genuinely interactive: keyboard={keyboard} enter={enter} exit={exit_count}")
-print("PASS real normal MainActivity keyboard+STAGE entry accessibility")
+# Accept exactly one genuinely rendered performance keybed, never neither or both.
+if (legacy_keyboard, liquid_keybed) not in ((1, 0), (0, 1)) or enter != 1 or exit_count != 0:
+    raise SystemExit(f"Normal app not genuinely interactive: legacy={legacy_keyboard} liquid={liquid_keybed} enter={enter} exit={exit_count}")
+print("PASS real normal MainActivity performance keybed+STAGE entry accessibility")
 PY
   then
     keyboard_ready=1
