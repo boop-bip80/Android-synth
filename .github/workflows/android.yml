@@ -136,6 +136,7 @@ jobs:
           name: orbital-api35-emulator-diagnostics
           path: |
             artifacts/emulator-logcat.txt
+            artifacts/compact-test-live-logcat.txt
             artifacts/activity-state.txt
             artifacts/activity-launch.txt
             artifacts/diagnostic-screen.png
