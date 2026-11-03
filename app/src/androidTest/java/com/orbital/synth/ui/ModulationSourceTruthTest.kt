@@ -1,5 +1,7 @@
 package com.orbital.synth.ui
 
+import android.graphics.Color
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -10,18 +12,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -40,7 +41,24 @@ import kotlin.math.min
 /** Physical API35 pixels, real Compose clicks and TalkBack source truth. */
 @RunWith(AndroidJUnit4::class)
 class ModulationSourceTruthTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+    private val realFrames by lazy { RealAndroidFrameCapture(compose, compose.activity) }
+
+    /** Reach the actual on-screen slider with bounded physical Android swipes. */
+    private fun requirePhysicallyVisible(tag: String) {
+        val root = compose.onRoot()
+        repeat(7) { attempt ->
+            compose.waitForIdle()
+            val bounds = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            val viewport = root.fetchSemanticsNode().boundsInRoot
+            if (bounds.width >= 144f && bounds.height >= 144f &&
+                bounds.top >= viewport.top && bounds.bottom <= viewport.bottom
+            ) return
+            if (attempt < 6) root.performTouchInput { swipeUp() }
+        }
+        val bounds = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+        throw AssertionError("Physical 360dp viewport cannot reach " + tag + ": " + bounds)
+    }
 
     private fun accessible(tag: String): String =
         compose.onNodeWithTag(tag).fetchSemanticsNode()
@@ -78,15 +96,20 @@ class ModulationSourceTruthTest {
         compose.onNodeWithTag("patchRoute1").performClick()
         compose.runOnIdle { assertEquals(1, clicked) }
 
-        val frame = compose.onNodeWithTag("patchRoute0").captureToImage().toPixelMap()
-        assertTrue("real Android framebuffer must render a physical 48dp-wide card",
-            frame.width >= 144 && frame.height >= 144)
-        var lightPixels = 0
-        for (y in 0 until frame.height step 4) for (x in 0 until frame.width step 4) {
-            val c = frame[x, y]
-            if (c.red + c.green + c.blue > .35f) lightPixels++
+        // Actual SurfaceFlinger foreground framebuffer, with exact Activity
+        // marker proof; never a Compose PixelCopy image.
+        realFrames.capture(compose.onNodeWithTag("patchRoute0"), "truthful patch cable").use { frame ->
+            assertTrue("real Android framebuffer must render a physical 48dp-wide card",
+                frame.width >= 144 && frame.height >= 144)
+            var lightPixels = 0
+            for (y in 0 until frame.height step 4)
+                for (x in 0 until frame.width step 4) {
+                    val argb = frame.argbAt(x, y)
+                    if (Color.red(argb) + Color.green(argb) + Color.blue(argb) > 89) lightPixels++
+                }
+            assertTrue("source status and static circuit geometry must be visible",
+                lightPixels > 50)
         }
-        assertTrue("source status and static circuit geometry must be visible", lightPixels > 50)
     }
 
     @Test
@@ -117,21 +140,39 @@ class ModulationSourceTruthTest {
             }
         }
         val graph = compose.onNodeWithTag("modulationConstellationVisual")
-        val before = graph.captureToImage().toPixelMap()
-        assertTrue("physical graph must be nonempty on 360dp handset",
-            before.width >= 800 && before.height >= 300)
+        val stepPx = 3
+        var firstWidth = 0
+        var firstHeight = 0
+        var firstStride = 0
+        lateinit var firstSamples: IntArray
+        realFrames.capture(graph, "unwired ENV1 constellation").use { frame ->
+            assertTrue("physical graph must be nonempty on 360dp handset",
+                frame.width >= 800 && frame.height >= 300)
+            firstWidth = frame.width
+            firstHeight = frame.height
+            firstStride = (frame.width + stepPx - 1) / stepPx
+            firstSamples = IntArray(firstStride * ((frame.height + stepPx - 1) / stepPx))
+            for (y in 0 until frame.height step stepPx)
+                for (x in 0 until frame.width step stepPx)
+                    firstSamples[(y / stepPx) * firstStride + x / stepPx] =
+                        frame.argbAt(x, y)
+        }
 
-        // A real immutable route change alters the actual configured graphic,
-        // not a clock-driven fake waveform or invented PCM measurement.
+        // A real immutable route change alters this genuine Android framebuffer:
+        // CONFIG cable artwork only, never an invented PCM/FFT measurement.
         compose.runOnIdle { route = route.copy(source = ModSource.LFO1) }
-        val after = graph.captureToImage().toPixelMap()
-        var changed = 0
-        for (y in 0 until min(before.height, after.height) step 3)
-            for (x in 0 until min(before.width, after.width) step 3)
-                if (before[x, y] != after[x, y]) changed++
-        assertTrue("actual route source changed but graph stayed identical", changed > 50)
+        realFrames.capture(graph, "enabled LFO1 constellation").use { frame ->
+            assertTrue("physical graph must remain visible after route edit",
+                frame.width >= 800 && frame.height >= 300)
+            var changed = 0
+            for (y in 0 until min(firstHeight, frame.height) step stepPx)
+                for (x in 0 until min(firstWidth, frame.width) step stepPx)
+                    if (firstSamples[(y / stepPx) * firstStride + x / stepPx] !=
+                        frame.argbAt(x, y)) changed++
+            assertTrue("actual route source changed but graph stayed identical", changed > 50)
+        }
 
-        compose.onNodeWithTag("modulationRouteEditor").performScrollTo()
+        requirePhysicallyVisible("modulationRouteEditor")
         compose.onNodeWithTag("modulationConnectionState")
             .assertTextContains("DSP GENERATOR CONNECTED", substring = true)
         compose.runOnIdle { route = route.copy(source = ModSource.ENV1) }
@@ -148,7 +189,7 @@ class ModulationSourceTruthTest {
 
         // TalkBack's actual SetProgress action must invoke the same real host
         // route callback as a finger sliding this bipolar depth fader.
-        compose.onNodeWithTag("modulationDepthSlider").performScrollTo()
+        requirePhysicallyVisible("modulationDepthSlider")
         compose.onNodeWithTag("modulationDepthSlider")
             .performSemanticsAction(SemanticsActions.SetProgress) { it(1f) }
         compose.runOnIdle {
