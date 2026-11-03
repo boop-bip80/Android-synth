@@ -37,14 +37,18 @@ class ImmersiveLiveFrameCaptureTest {
         val right = bitmap.width * 88 / 100
         val top = bitmap.height * 20 / 100
         val bottom = bitmap.height * 80 / 100
-        val stepX = (bitmap.width / 90).coerceAtLeast(6)
-        val stepY = (bitmap.height / 125).coerceAtLeast(6)
+        // Near-pixel-resolution scan: the real neon filaments are only 1-3 px.
+        // Row-oriented getPixels avoids thousands of per-pixel JNI read calls.
+        val stepX = 3
+        val stepY = 4
+        val row = IntArray(bitmap.width)
         var samples = 0
         var visible = 0
         var colorful = 0
         for (y in top until bottom step stepY) {
+            bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
             for (x in left until right step stepX) {
-                val pixel = bitmap.getPixel(x, y)
+                val pixel = row[x]
                 val r = Color.red(pixel)
                 val g = Color.green(pixel)
                 val b = Color.blue(pixel)
@@ -88,6 +92,13 @@ class ImmersiveLiveFrameCaptureTest {
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(0)
 
+        // Compose semantics update before SurfaceFlinger presents the next frame.
+        // Force multiple actual UI frames to settle before sampling the idle
+        // stage; an immediate UiAutomation frame may still show the SOUND tab.
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(180L)
+        compose.waitForIdle()
+        Thread.sleep(260L)
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val idleBitmap = checkNotNull(automation.takeScreenshot()) {
             "Android UiAutomation could not capture the real idle stage"
@@ -99,6 +110,9 @@ class ImmersiveLiveFrameCaptureTest {
             idleBitmap.recycle()
         }
 
+        println("ORBITAL_STAGE_IDLE_DRAW_METRICS " + idle)
+        assertTrue("Idle stage appears to be stale bright keyboard/editor instead of black performance canvas: " + idle,
+            idle.visible * 5 < idle.samples * 4)
         val canvas = compose.onNodeWithTag("immersiveCanvas")
         var held = false
         try {
@@ -120,7 +134,10 @@ class ImmersiveLiveFrameCaptureTest {
             }
             assertTrue("No non-silent PCM accepted by AudioTrack during held note",
                 pcm.rms > .002f && pcm.peak > .004f)
-            Thread.sleep(160L)
+            compose.waitForIdle()
+            compose.mainClock.advanceTimeBy(100L)
+            compose.waitForIdle()
+            Thread.sleep(220L)
 
             val liveBitmap = checkNotNull(automation.takeScreenshot()) {
                 "Android UiAutomation failed during the live held-note gesture"
@@ -144,10 +161,10 @@ class ImmersiveLiveFrameCaptureTest {
                     "live_colorful=" + live.colorful + "\n" +
                     "live_dimensions=" + liveBitmap.width + "x" + liveBitmap.height + "\n"
                 )
-                assertTrue("The live stage framebuffer lacks illuminated artwork: idleVisible=" + idle.visible + " liveVisible=" + live.visible + " samples=" + live.samples,
-                    live.visible >= maxOf(75, idle.visible + 20))
-                assertTrue("The held-note frame lacks vivid chromatic ribbons: idleColorful=" + idle.colorful + " liveColorful=" + live.colorful + " samples=" + live.samples,
-                    live.colorful >= maxOf(30, idle.colorful + 10))
+                assertTrue("Held-note frame must illuminate more real pixels than idle: idleVisible=" + idle.visible + " liveVisible=" + live.visible + " samples=" + live.samples,
+                    live.visible >= idle.visible + maxOf(100, live.samples / 400))
+                assertTrue("Held-note frame must add actual vivid chromatic filaments: idleColorful=" + idle.colorful + " liveColorful=" + live.colorful + " samples=" + live.samples,
+                    live.colorful >= idle.colorful + maxOf(50, live.samples / 800))
             } finally {
                 liveBitmap.recycle()
             }
