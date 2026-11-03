@@ -198,6 +198,8 @@ fun OrbitalScreen(
     /** Real output PCM telemetry; read only while the immersive stage is visible. */
     onReadAudioVisual: (() -> AudioVisualSnapshot)? = null,
     onStageTouchSettingsChange: ((StageTouchSettings) -> Unit)? = null,
+    /** Incremented by the audio host whenever a lifecycle/panic resets held touch voices. */
+    performanceResetEpoch: Long = 0L,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var immersiveMode by remember { mutableStateOf(false) }
@@ -272,6 +274,7 @@ fun OrbitalScreen(
             initialPerformanceConfig = state.stageTouchSettings,
             onPerformanceConfigChange = onStageTouchSettingsChange,
             audioVisualSource = onReadAudioVisual,
+            performanceResetEpoch = performanceResetEpoch,
             onExit = { immersiveMode = false },
         )
     } else {
@@ -728,6 +731,7 @@ fun OrbitalScreen(
             onNoteOff = onNoteOff,
             modifier = Modifier.fillMaxWidth(),
             preferredHeight = if (compactHeight) 82.dp else if (compactOrbitLayout) 110.dp else null,
+            performanceResetEpoch = performanceResetEpoch,
         )
         if (!compactHeight) {
             Row(
