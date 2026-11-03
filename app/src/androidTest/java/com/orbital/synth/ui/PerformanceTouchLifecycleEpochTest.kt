@@ -166,12 +166,39 @@ class PerformanceTouchLifecycleEpochTest {
             )
         }
 
-        // A first new pointer must start a new session. The old pointer 0
-        // may still be present in motion events, but was NOT freshly pressed.
-        canvas.performTouchInput {
-            down(1, center)
-            up(0) // Delayed old-session UP must NOT silence pointer 1.
+        // Finger 0 was pressed before the epoch change: a stale MOVE must not
+        // reattack, even if it is still included in the OS pointer stream.
+        canvas.performTouchInput { moveTo(0, Offset(center.x * .7f, center.y * .7f)) }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(
+                "A stale held FOCUS pointer must remain silent after worker reset",
+                original.size, events.count { it.startsWith("ON:") },
+            )
         }
+        assertEquals(
+            "Touch idle",
+            compose.onNodeWithTag("immersiveCanvas").fetchSemanticsNode()
+                .config[SemanticsProperties.StateDescription],
+        )
+
+        // A physically new pointer must be admitted while old 0 is STILL held.
+        // Check its attack BEFORE sending old 0's release; otherwise the test
+        // could pass after silently waiting for all prior fingers to be lifted.
+        canvas.performTouchInput { down(1, center) }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(
+                "A fresh finger must attack before the stale pointer lifts",
+                original.size * 2, events.count { it.startsWith("ON:") },
+            )
+        }
+        assertEquals(
+            "Touch sculpting",
+            compose.onNodeWithTag("immersiveCanvas").fetchSemanticsNode()
+                .config[SemanticsProperties.StateDescription],
+        )
+        canvas.performTouchInput { up(0) }
         compose.waitForIdle()
         compose.runOnIdle {
             val attacks = events.filter { it.startsWith("ON:") }.map { it.removePrefix("ON:") }
