@@ -147,9 +147,18 @@ class FocusSystemBarsTest {
 
         // ON_STOP must restore normal window chrome even if Compose remains
         // mounted while the app is no longer foreground.
+        val activity = compose.activity
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        var restoredBehavior = Int.MIN_VALUE
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            // ActivityScenario.onActivity normally requires a resumed Activity;
+            // inspect this *same* stopped window without resuming it.
+            restoredBehavior = WindowCompat.getInsetsController(
+                activity.window, activity.window.decorView,
+            ).systemBarsBehavior
+        }
         assertEquals("System-bar behavior must be restored on Activity stop",
-            beforeBehavior, behavior())
+            beforeBehavior, restoredBehavior)
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         compose.waitUntil(5_000L) { bars() == Bars(false, false) }
 
