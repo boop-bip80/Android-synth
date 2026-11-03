@@ -227,7 +227,7 @@ internal class LiveModulationHost(sampleRate: Int) {
         val latestRouteRevision = routeRevision.get()
         val changedRoutes = latestRouteRevision != appliedRouteRevision
         if (changedRoutes) {
-            val previouslyLive = liveRouteCount > 0
+            val previouslyLiveGlobalMask = liveGlobalMask
             var count = 0
             var nextGlobalMask = 0
             var pitchCount = 0
@@ -303,31 +303,29 @@ internal class LiveModulationHost(sampleRate: Int) {
             oscillatorModulation.configureMasks(oscillatorGainMask, oscillatorPitchMask)
             appliedRouteRevision = latestRouteRevision
 
-            if (count > 0) {
-                // A quick off/on edit resumes directly from the existing slew
-                // history, without resetting phase or output to a hard step.
-                residualFrames = 0
-                residualMask = 0
-            } else if (previouslyLive) {
-                // Only a *rendered* six-bus signal can produce an audible tail.
-                // The touched mask excludes idle OSC-only routes and never
-                // starts a tail for a cold, zero-depth or reserved patch.
-                residualMask = touchedGlobalMask and currentResidualMask(
-                    baseMorph, baseCutoff, baseResonance,
-                )
-                residualFrames = if (residualMask != 0) maxResidualFrames else 0
-            }
+            // Sustain a release PER GLOBAL BUS even when an unrelated
+            // oscillator or another global route remains active. Without this,
+            // blockConstantPitch / filter / AMP / PAN host flags would bypass
+            // their still-slewing output on the very next audio block.
+            val removedGlobalMask = previouslyLiveGlobalMask and nextGlobalMask.inv()
+            val newAudibleRelease = removedGlobalMask and touchedGlobalMask and
+                currentResidualMask(baseMorph, baseCutoff, baseResonance)
+            // An immediately replugged bus stops being residual and resumes
+            // the still-warm live slew; unrelated residual buses are retained.
+            residualMask = (residualMask and nextGlobalMask.inv()) or newAudibleRelease
+            if (newAudibleRelease != 0) residualFrames = maxResidualFrames
+            if (residualMask == 0) residualFrames = 0
         }
 
         // Every worker block also observes a completed tail, even when the
         // atomic route revision did not change since the preceding block.
-        val tailActive = liveRouteCount == 0 && residualFrames > 0
-        active = liveRouteCount > 0 || tailActive
-        pitchRouteActive = livePitch || (tailActive && (residualMask and RESIDUAL_PITCH) != 0)
+        val releaseActive = residualFrames > 0
+        active = liveRouteCount > 0 || releaseActive
+        pitchRouteActive = livePitch || (releaseActive && (residualMask and RESIDUAL_PITCH) != 0)
         filterRouteActive = liveFilter ||
-            (tailActive && (residualMask and (RESIDUAL_CUTOFF or RESIDUAL_RESONANCE)) != 0)
-        ampRouteActive = liveAmp || (tailActive && (residualMask and RESIDUAL_AMP) != 0)
-        panRouteActive = livePan || (tailActive && (residualMask and RESIDUAL_PAN) != 0)
+            (releaseActive && (residualMask and (RESIDUAL_CUTOFF or RESIDUAL_RESONANCE)) != 0)
+        ampRouteActive = liveAmp || (releaseActive && (residualMask and RESIDUAL_AMP) != 0)
+        panRouteActive = livePan || (releaseActive && (residualMask and RESIDUAL_PAN) != 0)
         if (!active && (wasActive || changedRoutes)) {
             touchedGlobalMask = 0
             residualMask = 0
@@ -417,10 +415,10 @@ internal class LiveModulationHost(sampleRate: Int) {
         ampGain = frameValues[ModDestination.AMP.ordinal] * 2f
         panOffset = (frameValues[ModDestination.PAN.ordinal] - 0.5f) * 2f
         if (liveGlobalMask != 0) touchedGlobalMask = touchedGlobalMask or liveGlobalMask
-        if (liveRouteCount == 0 && residualFrames > 0) {
-            // The matrix is empty: every output above is the actual existing
-            // 8/12 ms slew toward its normalized dry destination. Trim both the
-            // clock and flags as soon as residual is below inaudible epsilon.
+        if (residualFrames > 0) {
+            // Any departed global bus (including one unplugged while other
+            // routes remain live) continues its existing 8/12ms slew to dry.
+            // Retire expired flags promptly without allocating a worker task.
             residualMask = residualMask and currentResidualMask(
                 baseValues[ModDestination.MORPH.ordinal],
                 baseValues[ModDestination.CUTOFF.ordinal],
@@ -467,7 +465,7 @@ internal class LiveModulationHost(sampleRate: Int) {
         if (rack.stepEnabled) visibleStepPlayhead = rack.stepPlayhead
         // With no voices or audible FX tails there is no PCM to declick.
         // Retire global output state before another note or preset recall.
-        if (liveRouteCount == 0 && residualFrames > 0) {
+        if (residualFrames > 0) {
             residualFrames = 0
             residualMask = 0
             touchedGlobalMask = 0
