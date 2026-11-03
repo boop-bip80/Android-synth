@@ -163,48 +163,19 @@ printf '%s\n' 'instrumentation' > artifacts/emulator-phase.txt
 # messages even if emulator-5554 vanishes before EXIT diagnostics can query it.
 adb logcat -v threadtime -s OrbitalCompactTest:I AndroidRuntime:E ActivityManager:W SurfaceFlinger:E HWUI:E libc:F DEBUG:E '*:S' > artifacts/compact-test-live-logcat.txt 2>&1 &
 compact_logcat_pid=$!
-# Both jobs are required. The compact lane runs the two 350dp regression
-# methods first on a fresh emulator. The general lane excludes only those two
-# methods, retaining every other test and exercising portrait/screenshots.
-compact_tests='com.orbital.synth.ui.OrbitalCompactHeightTest,com.orbital.synth.ui.OrbitalScreenTest#keyboardRemainsAvailableInCompactHeight'
-test_suite="${ORBITAL_TEST_SUITE:-general}"
-case "$test_suite" in
-  compact)
-    test_filter="-Pandroid.testInstrumentationRunnerArguments.class=$compact_tests"
-    expected_test_count=2
-    ;;
-  general)
-    test_filter="-Pandroid.testInstrumentationRunnerArguments.notClass=$compact_tests"
-    expected_test_count=35
-    ;;
-  *)
-    printf 'Unknown ORBITAL_TEST_SUITE: %s\n' "$test_suite" >&2
-    exit 1
-    ;;
-esac
-printf 'suite=%s\nfilter=%s\nexpected_at_least=%s\n' \
-  "$test_suite" "$test_filter" "$expected_test_count" \
-  > artifacts/instrumentation-suite.txt
-printf 'ORBITAL instrumentation suite=%s expected_cases=%s\n' "$test_suite" "$expected_test_count"
-timeout 30m gradle :app:connectedDebugAndroidTest "$test_filter" --stacktrace --no-daemon --console=plain
-# Guard against accidental filter misspellings silently executing zero cases.
-# General may grow as new tests are added; the two compact fixtures are fixed.
-python3 - "$test_suite" "$expected_test_count" <<'PY'
+# Every remaining Compose/UI test runs normally on API35. The previous
+# artificial 350dp Box fixtures have been replaced with two stronger real
+# device keyboard/navigation checks in ci-compact-geometry.sh.
+printf 'suite=general\nexpected_at_least=35\n' > artifacts/instrumentation-suite.txt
+timeout 30m gradle :app:connectedDebugAndroidTest --stacktrace --no-daemon --console=plain
+python3 - <<'PY'
 import glob
-import sys
 from xml.etree import ElementTree as ET
-
-suite = sys.argv[1]
-minimum = int(sys.argv[2])
-reports = glob.glob("app/build/outputs/androidTest-results/connected/debug/*.xml")
-cases = sum(len(ET.parse(report).findall(".//testcase")) for report in reports)
-print(f"ORBITAL {suite} instrumentation: {cases} testcases in {len(reports)} XML reports")
-if cases < minimum or (suite == "compact" and cases != minimum):
-    raise SystemExit(
-        f"Suite {suite}: expected {minimum} tests"
-        + (" exactly" if suite == "compact" else " minimum")
-        + f", got {cases}"
-    )
+files = glob.glob("app/build/outputs/androidTest-results/connected/debug/*.xml")
+cases = sum(len(ET.parse(path).findall(".//testcase")) for path in files)
+print(f"ORBITAL general instrumentation: {cases} testcases in {len(files)} XML reports")
+if cases < 35:
+    raise SystemExit(f"Expected at least 35 instrumented tests, got {cases}")
 PY
 
 # Android Gradle Plugin's connected test runner may remove the target APK
