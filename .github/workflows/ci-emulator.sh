@@ -224,7 +224,7 @@ compact_logcat_pid=$!
 # SOUND layout regression prone to long-suite emulator graphics exhaustion.
 # Every other general test stays in this full connected suite. The isolated
 # compact350 lane strictly requires exactly one passing JUnit XML testcase.
-printf 'suite=general\nexpected_at_least=38\nexclusive_stage_class=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest\nexclusive_compact350_class=com.orbital.synth.ui.Compact350SoundInstrumentedTest\n' > artifacts/instrumentation-suite.txt
+printf 'suite=general\nexpected_at_least=120\nexclusive_stage_class=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest\nexclusive_compact350_class=com.orbital.synth.ui.Compact350SoundInstrumentedTest\n' > artifacts/instrumentation-suite.txt
 timeout 30m gradle :app:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.notClass=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest,com.orbital.synth.ui.Compact350SoundInstrumentedTest \
   --stacktrace --no-daemon --console=plain
@@ -241,7 +241,7 @@ excluded = {
 if any(case.attrib.get("classname", "") in excluded
        for path in files for case in ET.parse(path).findall(".//testcase")):
     raise SystemExit("General runner ignored notClass; fresh stage/compact350 lanes own these classes")
-if cases < 38:
+if cases < 120:
     raise SystemExit(f"Expected at least 38 instrumented tests, got {cases}")
 PY
 

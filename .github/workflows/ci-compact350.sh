@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Fresh API35 isolation lane for the *unchanged* short-landscape SOUND assertions.
+# Fresh API35 isolation lane for strict short-landscape SOUND assertions,
+# real oscillator editor scrolling, five ENGINE options and pinned piano notes.
 # The full general suite excludes only this class (plus the separately verified
-# immersive capture class), and this lane independently requires its JUnit XML.
+# immersive capture class), and this lane independently requires both JUnit XML cases.
 set -euo pipefail
 
 mkdir -p artifacts
@@ -69,7 +70,7 @@ test_apk=app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
   echo 'Precompiled exact app and Android test APKs are required.' >&2
   exit 1
 }
-printf 'suite=compact350\nclass=com.orbital.synth.ui.Compact350SoundInstrumentedTest\nexpected_testcases=1\napp_sha256=%s\ntest_apk_sha256=%s\n' \
+printf 'suite=compact350\nclass=com.orbital.synth.ui.Compact350SoundInstrumentedTest\nexpected_testcases=2\napp_sha256=%s\ntest_apk_sha256=%s\n' \
   "$(sha256sum "$app_apk" | cut -d' ' -f1)" \
   "$(sha256sum "$test_apk" | cut -d' ' -f1)" \
   > artifacts/instrumentation-suite.txt
@@ -120,16 +121,19 @@ import xml.etree.ElementTree as ET
 files = glob.glob("app/build/outputs/androidTest-results/connected/**/*.xml", recursive=True)
 cases = [c for path in files for c in ET.parse(path).findall(".//testcase")]
 expected_class = "com.orbital.synth.ui.Compact350SoundInstrumentedTest"
-expected_name = "shortLandscapeSoundHasReachableEightLayerEditorAndAnchoredPiano"
-if len(cases) != 1:
-    raise SystemExit(f"Expected exactly one isolated compact350 testcase; got {len(cases)} in {len(files)} XML files")
-case = cases[0]
-if case.get("classname") != expected_class or case.get("name") != expected_name:
-    raise SystemExit(f"Unexpected/ignored class filter: {case.attrib}")
-if any(case.findall(tag) for tag in ("failure", "error", "skipped")):
-    raise SystemExit("Isolated compact350 testcase failed, errored, or skipped")
-print(f"Compact 350dp SOUND: exactly 1 real-device JUnit PASS ({case.get('time')} seconds)")
+expected_names = {
+    "shortLandscapeSoundHasReachableEightLayerEditorAndAnchoredPiano",
+    "shortLandscapeCanSelectAllFiveArchitecturesWithAnchoredPiano",
+}
+if len(cases) != 2:
+    raise SystemExit(f"Expected exactly two isolated compact350 tests; got {len(cases)} in {len(files)} XML files")
+actual = {(c.get("classname"), c.get("name")) for c in cases}
+if actual != {(expected_class, name) for name in expected_names}:
+    raise SystemExit(f"Unexpected/ignored class filter, expected two distinct methods: {actual}")
+if any(c.findall(tag) for c in cases for tag in ("failure", "error", "skipped")):
+    raise SystemExit("A compact350 test failed, errored, or skipped")
+print("Compact 350dp SOUND: exactly two real-device JUnit PASS cases")
 PY
-printf '%s\n' 'PASS: exactly 1 isolated real API35 JUnit testcase; no failures/skips' \
+printf '%s\n' 'PASS: exactly 2 isolated real API35 JUnit cases; oscillator scroll, five ENGINE choices, piano notes' \
   > artifacts/compact350-junit-summary.txt
 printf '%s\n' 'complete' > artifacts/emulator-phase.txt
