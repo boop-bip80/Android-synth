@@ -1,11 +1,14 @@
 package com.orbital.synth.ui
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.MainActivity
 import com.orbital.synth.core.OrbitalSynth
@@ -48,6 +51,22 @@ class OscillatorNoiseActivityHostTest {
             assertEquals(.75f, slot.waveform, .001f)
             assertEquals(.5f, slot.noiseColor, .001f)
             assertEquals(.55f, slot.noiseLevel, .001f)
+        }
+
+        // The same XY plasma/noise pad is a *real* production touch control,
+        // not only an illustrative Compose callback. Read back the worker's
+        // published slot, and confirm sound-design touches create no stuck notes.
+        compose.onNodeWithTag("oscillatorNoiseCanvas").performScrollTo()
+            .performTouchInput { click(Offset(center.x * .8f, center.y * .6f)) }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            val slot = synth.oscillatorSlot(0)
+            assertTrue("Touch X must reach the worker noise color",
+                slot.noiseColor in 0.35f..0.45f)
+            assertTrue("Touch Y must reach the worker noise mix",
+                slot.noiseLevel in 0.65f..0.75f)
+            assertEquals("Oscillator edit must not synthesize an unowned note",
+                0, synth.activeVoiceCount)
         }
 
         compose.onNodeWithTag("oscillatorNoiseLevel").performScrollTo()
