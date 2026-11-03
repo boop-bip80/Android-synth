@@ -37,6 +37,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * Composes the UI around one long-lived synthesizer and one Android audio output.
@@ -192,6 +193,16 @@ class MainActivity : ComponentActivity() {
                     state = screenState,
                     onNoteOn = { note ->
                         if (note in 0..127) audioOutput.noteOn(TOUCH_SOURCE_ID, 0, note, 127)
+                    },
+                    // Unlike keyboard keys, the immersive field derives a genuine
+                    // 0..1 gesture velocity from finger position/optional pressure.
+                    // Forward its value into the same source-owned AudioTrack path.
+                    onExpressiveNoteOn = { note, velocity ->
+                        if (note in 0..127 && velocity.isFinite()) {
+                            val midiVelocity = (velocity.coerceIn(.01f, 1f) * 127f)
+                                .roundToInt().coerceIn(1, 127)
+                            audioOutput.noteOn(TOUCH_SOURCE_ID, 0, note, midiVelocity)
+                        }
                     },
                     onNoteOff = { note ->
                         if (note in 0..127) audioOutput.noteOff(TOUCH_SOURCE_ID, 0, note)
