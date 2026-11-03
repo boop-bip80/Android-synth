@@ -78,17 +78,24 @@ class LfoConfigurationGardenModelTest {
                 1 -> ModulationRouteConfig(true, ModSource.LFO1, ModDestination.OSC1_GAIN, 1f)
                 2 -> ModulationRouteConfig(true, ModSource.LFO2, ModDestination.PITCH, .5f)
                 3 -> ModulationRouteConfig(false, ModSource.LFO1, ModDestination.AMP, 3f)
+                // OSC1_GAIN became a genuine DSP destination. Keep an ACTUAL
+                // unsupported target to protect the reserved/cable distinction.
+                4 -> ModulationRouteConfig(true, ModSource.LFO1, ModDestination.FOLD, 2f)
                 64 -> ModulationRouteConfig(true, ModSource.LFO1, ModDestination.PAN, 4f)
                 else -> ModulationRouteConfig()
             }
         }
         val one = LfoConfigurationGardenModel.lane(0, ModulationLfoConfig(), routes, 120f)
-        assertEquals(2, one.connectedCount)
+        assertEquals(3, one.connectedCount)
         assertEquals(1, one.reservedCount)
-        assertEquals(1, one.liveCables.size)
+        assertEquals(2, one.liveCables.size)
         assertEquals(0, one.liveCables[0].slot)
         assertEquals(ModDestination.CUTOFF, one.liveCables[0].destination)
         assertEquals(-2f, one.liveCables[0].depth, .0001f)
+        assertEquals(1, one.liveCables[1].slot)
+        assertEquals(ModDestination.OSC1_GAIN, one.liveCables[1].destination)
+        assertEquals(1f, one.liveCables[1].depth, .0001f)
+        assertFalse(one.liveCables.any { it.destination == ModDestination.FOLD })
         assertEquals(2f, one.maxLiveDepth, .0001f)
         val two = LfoConfigurationGardenModel.lane(1, ModulationLfoConfig(), routes, 120f)
         assertEquals(1, two.liveCables.size)
