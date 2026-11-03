@@ -76,7 +76,7 @@ class LfoConfigurationGardenTest {
         assertEquals(1f, lfos[0].rateHz, .001f)
     }
 
-    @Test fun touchingTrueCableDepthEditsOnlyConnectedAudibleDestinationNotLfoAmplitude() {
+    @Test fun touchingTrueDspTargetDepthEditsRouteEvenWhenLfoSourcePaused() {
         val original = List(64) { slot -> when (slot) {
             0 -> ModulationRouteConfig(true, ModSource.LFO1, ModDestination.CUTOFF, .5f)
             1 -> ModulationRouteConfig(true, ModSource.LFO1, ModDestination.OSC1_GAIN, 2f)
@@ -84,7 +84,7 @@ class LfoConfigurationGardenTest {
             else -> ModulationRouteConfig()
         } }
         var routes by mutableStateOf(original)
-        val lfos = List(8) { ModulationLfoConfig(enabled = true) }
+        val lfos = List(8) { ModulationLfoConfig(enabled = false) }
         compose.setContent {
             MaterialTheme {
                 LfoConfigurationGarden(
@@ -98,6 +98,16 @@ class LfoConfigurationGardenTest {
         }
         compose.waitForIdle()
         compose.onNodeWithTag("lfoGardenEditingCable").assertExists()
+        val statusText = compose.onNodeWithTag("lfoGardenCableStatus")
+            .fetchSemanticsNode().config[SemanticsProperties.Text].joinToString(" ")
+        assertTrue(statusText.contains("CONNECTED ROUTES"))
+        assertTrue(statusText.contains("2 CONFIGURED"))
+        assertTrue(statusText.contains("1 DSP TARGETS"))
+        val nodeDescription = compose.onNodeWithTag("lfoGardenNode0")
+            .fetchSemanticsNode().config[SemanticsProperties.ContentDescription]
+            .joinToString(" ")
+        assertTrue(nodeDescription.contains("configured DSP-target outgoing cables"))
+        compose.onNodeWithTag("lfoGardenCableAudibility").assertExists()
         val routeSlider = compose.onNodeWithTag("lfoGardenRouteDepth")
         routeSlider.performSemanticsAction(SemanticsActions.SetProgress) { it(-1.75f) }
         compose.waitForIdle()
