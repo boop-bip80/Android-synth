@@ -23,6 +23,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ParameterId
@@ -192,18 +193,26 @@ class Compact350SoundInstrumentedTest {
             val editorRect = editor.fetchSemanticsNode().boundsInRoot
             val waveRect = wave.fetchSemanticsNode().boundsInRoot
             fullyInView = visible(wave) &&
+                waveRect.height >= 95f * density &&
                 waveRect.top >= editorRect.top - 1f &&
                 waveRect.bottom <= editorRect.bottom + 1f
             if (fullyInView) break
-            Log.i(TAG, "phase=luminous-physical-reveal-$attempt wave=$waveRect editor=$editorRect")
+            // Geometry-directed, bounded, physically timed finger swipe.
+            // If an earlier fling overshot above the editor, reverse travel;
+            // never invoke the flaky Compose performScrollTo automation.
+            val travel = when {
+                waveRect.bottom > editorRect.bottom ->
+                    -(waveRect.bottom - editorRect.bottom + 6f)
+                waveRect.top < editorRect.top ->
+                    editorRect.top - waveRect.top + 6f
+                else -> -editorRect.height * .30f
+            }.coerceIn(-editorRect.height * .45f, editorRect.height * .45f)
+            Log.i(TAG, "phase=luminous-physical-reveal-$attempt wave=$waveRect " +
+                "editor=$editorRect drag=$travel")
             editor.performTouchInput {
-                val x = 3f // Panel gutter: no child Canvas gesture should own this.
-                val bottom = center.y * 1.84f
-                val top = center.y * .20f
-                down(Offset(x, bottom))
-                moveTo(Offset(x, center.y * 1.2f))
-                moveTo(Offset(x, top))
-                up()
+                val start = Offset(3f, center.y - travel * .5f)
+                val end = Offset(3f, center.y + travel * .5f)
+                swipe(start = start, end = end, durationMillis = 340)
             }
             compose.waitForIdle()
         }
