@@ -34,6 +34,22 @@ import org.junit.runner.RunWith
 class ReferenceSoundHeroTest {
     @get:Rule val compose = createComposeRule()
 
+    /**
+     * Inject the second REAL finger at the actual rendered 48dp button rather
+     * than guessing a percentage of the parent image. Patch name, font scale,
+     * HUD height, and window insets can all move it without changing behavior.
+     */
+    private fun nextPatchHitInsideOrb(): Offset {
+        val next = compose.onNodeWithTag("referenceHeroNextPatch")
+            .fetchSemanticsNode().boundsInRoot
+        val orb = compose.onNodeWithTag("referenceSoundHeroOrb")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("Next patch has no real touch target", next.width >= 40f && next.height >= 40f)
+        assertTrue("Next patch hit target is not inside actual orb bounds",
+            next.center.x in orb.left..orb.right && next.center.y in orb.top..orb.bottom)
+        return next.center - orb.topLeft
+    }
+
     @Test fun compactPortraitHasOneRealPlasmaOneOverlaidXYFiveKnobsAndFourTiles() {
         compose.setContent {
             Box(Modifier.width(360.dp)) {
@@ -288,11 +304,12 @@ class ReferenceSoundHeroTest {
             assertTrue("The old ribbon finger must first edit old sound",
                 recorded.any { it.first == "factory:1" })
         }
-        // A remains HELD. Second pointer presses NEXT PATCH button.
+        // A remains HELD. Second pointer touches the actual NEXT button,
+        // proved by its live semantics geometry instead of inferred percent.
+        val nextHit = nextPatchHitInsideOrb()
         field.performTouchInput {
-            val width = center.x * 2f
-            val height = center.y * 2f
-            down(1, Offset(width * .21f, height * .36f))
+            down(1, nextHit)
+            advanceEventTime(120L)
             up(1)
         }
         compose.runOnIdle {
@@ -384,10 +401,10 @@ class ReferenceSoundHeroTest {
         compose.waitForIdle()
         assertEquals("Touch engaged",
             orb.fetchSemanticsNode().config[SemanticsProperties.StateDescription])
+        val nextHit = nextPatchHitInsideOrb()
         field.performTouchInput {
-            val width = center.x * 2f
-            val height = center.y * 2f
-            down(1, Offset(width * .21f, height * .36f))
+            down(1, nextHit)
+            advanceEventTime(120L)
             up(1)
         }
         compose.runOnIdle { assertEquals("B", patchId) }

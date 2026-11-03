@@ -1,5 +1,6 @@
 package com.orbital.synth.ui
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color as PixelColor
 import android.os.ParcelFileDescriptor
@@ -125,6 +126,49 @@ class ReferenceSoundHeroCaptureTest {
             SystemClock.uptimeMillis() < deadline
         ) {
             Thread.sleep(120L)
+        }
+        if (!compose.activity.hasWindowFocus()) {
+            // A fresh API35 Pixel Launcher can ANR while instrumentation is
+            // drawing our real fixture. Recover ONLY that known external OS
+            // window, as the separate strict stage screenshot lane does.
+            // Do not force focus or accept a non-foreground Activity silently.
+            val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+            fun shell(cmd: String): String {
+                val descriptor = automation.executeShellCommand(cmd)
+                return ParcelFileDescriptor.AutoCloseInputStream(descriptor)
+                    .bufferedReader().use { it.readText() }
+            }
+            fun externalLauncherAnr(): Boolean {
+                val dump = shell("dumpsys window")
+                val current = dump.lineSequence()
+                    .firstOrNull { it.contains("mCurrentFocus=") }.orEmpty()
+                return dump.contains(
+                    "Application Not Responding: com.google.android.apps.nexuslauncher",
+                ) && !current.contains("com.orbital.synth.MainActivity")
+            }
+            if (externalLauncherAnr()) {
+                println("REFERENCE_HERO_EXTERNAL_PIXEL_LAUNCHER_ANR_RECOVERY_BACK")
+                shell("input keyevent KEYCODE_BACK")
+                Thread.sleep(500L)
+                if (!compose.activity.hasWindowFocus() && externalLauncherAnr()) {
+                    println("REFERENCE_HERO_EXTERNAL_PIXEL_LAUNCHER_ANR_RECOVERY_STOP")
+                    shell("am force-stop com.google.android.apps.nexuslauncher")
+                }
+                // Reorder the EXISTING MainActivity instance. A fresh
+                // replacement Activity would lack our magenta sentinel and
+                // fail the still-strict SurfaceFlinger pixel provenance check.
+                compose.activity.runOnUiThread {
+                    compose.activity.startActivity(
+                        Intent(compose.activity, MainActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                        },
+                    )
+                }
+                val recoveryDeadline = SystemClock.uptimeMillis() + 8_000L
+                while (!compose.activity.hasWindowFocus() &&
+                    SystemClock.uptimeMillis() < recoveryDeadline
+                ) Thread.sleep(120L)
+            }
         }
         if (!compose.activity.hasWindowFocus()) {
             val details = runCatching {
