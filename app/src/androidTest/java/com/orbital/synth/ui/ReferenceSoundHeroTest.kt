@@ -212,7 +212,7 @@ class ReferenceSoundHeroTest {
         }
     }
 
-    @Test fun orbHeldDragOwnsGlowAndReleasesAfterGesture() {
+    @Test fun orbHeldDragOwnsGlowUntilRealReleaseAndOsCancel() {
         var values by mutableStateOf(mapOf(
             ParameterId.MORPH to .30f, ParameterId.MOVEMENT to .30f,
         ))
@@ -224,21 +224,80 @@ class ReferenceSoundHeroTest {
                 onParameterChange = { p, v -> values = values + (p to v) },
             )
         }
-        compose.onNodeWithTag("referenceHeroOrbInput").performTouchInput {
-            swipe(
-                start = Offset(center.x * .6f, center.y * .8f),
-                end = Offset(center.x * 1.6f, center.y * 1.2f),
-                durationMillis = 340L,
-            )
+        val orb = compose.onNodeWithTag("referenceHeroOrbInput")
+        orb.performTouchInput {
+            down(Offset(center.x * .6f, center.y * .8f))
+            moveTo(Offset(center.x * 1.6f, center.y * 1.2f))
         }
+        compose.waitForIdle()
+        assertEquals(
+            "Touch engaged",
+            orb.fetchSemanticsNode().config[SemanticsProperties.StateDescription],
+        )
         compose.runOnIdle {
             assertEquals(.80f, values[ParameterId.MORPH] ?: -1f, .05f)
             assertTrue((values[ParameterId.MOVEMENT] ?: -1f) > 0f)
         }
-        val status = compose.onNodeWithTag(
-            "referenceHeroOrbInput",
-        ).fetchSemanticsNode().config[SemanticsProperties.StateDescription]
-        assertEquals("Touch ready", status)
+        orb.performTouchInput { up() }
+        compose.waitForIdle()
+        assertEquals("Touch ready",
+            orb.fetchSemanticsNode().config[SemanticsProperties.StateDescription])
+
+        orb.performTouchInput {
+            down(Offset(center.x, center.y))
+            moveTo(Offset(center.x * .4f, center.y * .9f))
+        }
+        compose.waitForIdle()
+        assertEquals("Touch engaged",
+            orb.fetchSemanticsNode().config[SemanticsProperties.StateDescription])
+        orb.performTouchInput { cancel() }
+        compose.waitForIdle()
+        assertEquals("Touch ready",
+            orb.fetchSemanticsNode().config[SemanticsProperties.StateDescription])
+    }
+
+    @Test fun heldXyFingerCannotWriteNewPatchAfterSecondFingerHitsNext() {
+        var patchId by mutableStateOf("factory:1")
+        var navCount = 0
+        val recorded = mutableListOf<Pair<String, ParameterId>>()
+        compose.setContent {
+            ReferenceSoundHero(
+                parameters = mapOf(
+                    ParameterId.MORPH to .42f,
+                    ParameterId.MOVEMENT to .52f,
+                ),
+                lfos = emptyList(),
+                routes = emptyList(),
+                patchName = "SAME DISPLAY NAME",
+                patchId = patchId,
+                onParameterChange = { id, _ -> recorded.add(patchId to id) },
+                onNextPatch = {
+                    navCount++
+                    patchId = "factory:2"
+                },
+            )
+        }
+        compose.onNodeWithTag("referenceSoundHeroOrb").performTouchInput {
+            val width = center.x * 2f
+            val height = center.y * 2f
+            // Pointer A holds overlaid ribbon; pointer B taps the 48dp
+            // NEXT PATCH button while A is STILL DOWN.
+            down(0, Offset(width * .68f, height * .76f))
+            down(1, Offset(width * .21f, height * .36f))
+            up(1)
+            // A now moves far enough to trigger a drag recognizer; it must
+            // not mutate the new patch after the navigation transaction.
+            moveTo(0, Offset(width * .27f, height * .92f))
+            up(0)
+        }
+        compose.runOnIdle {
+            assertEquals(1, navCount)
+            assertEquals("factory:2", patchId)
+            assertFalse(
+                "Old XY touch cannot edit a newly selected patch: $recorded",
+                recorded.any { it.first == "factory:2" },
+            )
+        }
     }
 
 }

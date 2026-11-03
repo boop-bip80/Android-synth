@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -321,18 +322,33 @@ fun ReferenceSoundHero(
                     )
                 }
             }
-            ReferenceExpressionRibbon(
-                morph = safeMorph,
-                movement = safeMovement,
-                onChange = { x, y -> update(x, y) },
-                audioRms = audioRms,
-                transparentBackground = true,
-                height = ribbonHeight,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(horizontal = 7.dp)
-                    .testTag("referenceHeroXYUnderOrb"),
-            )
+            // An XY finger has its own recognizer; dispose it on patch/engine
+            // switches too. Ticket check blocks delayed callbacks even before
+            // Compose processes the new key in the next frame.
+            val ribbonTicket = gate.ticket()
+            key(navigationEpoch, patchId ?: patchName, patchEpoch, engineName) {
+                // Two separate tagged semantics nodes: outer positioning Box
+                // and inner Canvas real interactive "referenceExpressionRibbon".
+                // Never attach two testTags to the *same* Canvas modifier chain.
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 7.dp)
+                        .testTag("referenceHeroXYUnderOrb"),
+                ) {
+                    ReferenceExpressionRibbon(
+                        morph = safeMorph,
+                        movement = safeMovement,
+                        onChange = { x, y ->
+                            if (gate.allows(ribbonTicket)) update(x, y)
+                        },
+                        audioRms = audioRms,
+                        transparentBackground = true,
+                        height = ribbonHeight,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
         }
         // Do not render a second XY card under the orb. All five macros and
         // four tiny previews remain accessible and connected to the host.
