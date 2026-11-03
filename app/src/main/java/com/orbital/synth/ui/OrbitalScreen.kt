@@ -457,14 +457,14 @@ fun OrbitalScreen(
         when (selectedTab) {
             Tab.SOUND -> {
                 if (compactHeight) {
-                    // Keep the <500dp landscape editor usable with its
-                    // existing 82dp real-keyboard performance budget.
-                    // The full eight-layer entry action is the FIRST editor
-                    // child. Avoid depending on an offscreen Compose scroll
-                    // action in a 350dp window; the real piano stays anchored.
-                    if (state.oscillatorSlots.isNotEmpty() &&
-                        onOscillatorSlotChange != null
-                    ) {
+                    // The 350dp viewport is a paged instrument, not a tall
+                    // stack of two editors under a pinned 82dp piano.
+                    // OSC access and LIVE/TONE/VOICE/ENGINE navigation must be
+                    // visible immediately, without an offscreen scroll action.
+                    val canEditOscillators =
+                        state.oscillatorSlots.isNotEmpty() &&
+                            onOscillatorSlotChange != null
+                    if (canEditOscillators) {
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -489,31 +489,33 @@ fun OrbitalScreen(
                             Text(if (compactOscillatorExpanded) "−" else "+",
                                 color = OrbitalPalette.Cyan, fontSize = 18.sp)
                         }
-                        if (compactOscillatorExpanded) {
-                            OscillatorRackPanel(
-                                slots = state.oscillatorSlots,
-                                onSlotChange = onOscillatorSlotChange,
-                            )
-                        }
                     }
-                    // The patch and engine labels remain editable in the
-                    // same editor, but the eight-layer entry action must be
-                    // visible even when safe-drawing insets shrink 350dp.
-                    CompactPatchHeader(
-                        state = state,
-                        onPreviousPatch = onPreviousPatch,
-                        onNextPatch = onNextPatch,
-                        engineName = engineChoice.name,
-                    )
-                    // Keep the full five-engine compact sound controls in the
-                    // same scrollable editor, immediately below the always
-                    // reachable eight-layer oscillator entry point.
-                    CompactSoundPanel(
-                        parameter = parameter,
-                        engineId = engineId,
-                        engineValue = engineValue,
-                        onParameterChange = onParameterChange,
-                    )
+                    if (canEditOscillators && compactOscillatorExpanded) {
+                        // Showing the rack alone bounds the tiny viewport's
+                        // active composable tree. Closing restores patch and
+                        // ENGINE controls without affecting any DSP values.
+                        OscillatorRackPanel(
+                            slots = state.oscillatorSlots,
+                            onSlotChange = onOscillatorSlotChange!!,
+                        )
+                    } else {
+                        // A physical performer can reach ENGINE/VOICE pages
+                        // without scrolling a previously taller patch card.
+                        CompactSoundPanel(
+                            parameter = parameter,
+                            engineId = engineId,
+                            engineValue = engineValue,
+                            onParameterChange = onParameterChange,
+                        )
+                        // Patch navigation remains present below the paged
+                        // control rail, reachable on collapse.
+                        CompactPatchHeader(
+                            state = state,
+                            onPreviousPatch = onPreviousPatch,
+                            onNextPatch = onNextPatch,
+                            engineName = engineChoice.name,
+                        )
+                    }
                 } else {
                     // First viewport: the genuine procedural reference hero,
                     // one overlaid interactive XY, five real macros and four

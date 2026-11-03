@@ -38,18 +38,6 @@ class Compact350SoundInstrumentedTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     companion object { private const val TAG = "OrbitalCompact350" }
 
-    /** Exercise the same physical vertical editor gesture a performer can use. */
-    private fun swipeEditorUp() {
-        compose.onNodeWithTag("soundEditorScroll").performTouchInput {
-            val x = center.x
-            down(Offset(x, center.y * 1.7f))
-            moveTo(Offset(x, center.y * 1.1f))
-            moveTo(Offset(x, center.y * .55f))
-            moveTo(Offset(x, center.y * .3f))
-            up()
-        }
-    }
-
     private fun visible(node: SemanticsNodeInteraction): Boolean =
         try {
             node.assertIsDisplayed()
@@ -57,16 +45,6 @@ class Compact350SoundInstrumentedTest {
         } catch (_: AssertionError) {
             false
         }
-
-    private fun revealByRealVerticalSwipes(node: SemanticsNodeInteraction, label: String) {
-        repeat(8) { attempt ->
-            if (visible(node)) return
-            Log.i(TAG, "phase=vertical-reveal-$label-$attempt")
-            swipeEditorUp()
-        }
-        // Never claim eight layers / ENGINE reachability from assertExists alone.
-        node.assertIsDisplayed()
-    }
 
     private fun swipeSelectorRowLeft(rowTag: String) {
         compose.onNodeWithTag(rowTag).assertIsDisplayed().performTouchInput {
@@ -124,15 +102,14 @@ class Compact350SoundInstrumentedTest {
             .assertIsDisplayed().performClick()
         Log.i(TAG, "phase=after-visible-toggle-click")
         compose.onNodeWithTag("oscillatorRack").assertExists()
-        // Actually reveal the selector rail in the tiny weighted editor,
-        // then swipe its real horizontal scroll region to reach OSC8.
-        // Compose performScrollTo() hung the Android 35 emulator; user touch
-        // gestures both preserve the real interaction and prove reachability.
-        Log.i(TAG, "phase=before-editor-physical-swipe")
-        revealByRealVerticalSwipes(
-            compose.onNodeWithTag("oscillatorLayerSelectorRow"), "osc-selector",
-        )
-        Log.i(TAG, "phase=after-editor-physical-swipe")
+        // Expanded short-height mode is a real *page*: the rack's rail
+        // is immediately visible, while patch/engine pages temporarily
+        // disappear until the permanent OSC toggle collapses the rack.
+        compose.onNodeWithTag("compactPatchHeader").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Sound rack ENGINE").assertDoesNotExist()
+        Log.i(TAG, "phase=before-visible-osc-selector")
+        compose.onNodeWithTag("oscillatorLayerSelectorRow").assertIsDisplayed()
+        Log.i(TAG, "phase=after-visible-osc-selector")
         val eighth = compose.onNodeWithTag("oscillatorLayer7")
         revealByRealHorizontalSwipes(
             eighth, "oscillatorLayerSelectorRow", "oscillator-layer-8",
@@ -143,14 +120,22 @@ class Compact350SoundInstrumentedTest {
         compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
         ).assertIsDisplayed()
+        // Collapse back to the real engine and patch controls. All sound
+        // parameters and the anchored note keyboard remain intact.
+        compose.onNodeWithTag("compactOscillatorToggle")
+            .assertIsDisplayed().performClick()
+        compose.onNodeWithTag("oscillatorRack").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Sound rack ENGINE").assertIsDisplayed()
+        compose.onNodeWithTag("compactPatchHeader").assertExists()
         Log.i(TAG, "phase=finished")
     }
 
 
     /**
-     * Separately proves the actual compact ENGINE page is reachable by a
-     * physical scroll in a 350dp-high viewport and routes all five choices
-     * into the real ParameterId.ENGINE callback while piano remains pinned.
+     * Separately proves ENGINE is reachable immediately without a hidden
+     * vertical scroll in a 350dp-high viewport, and routes all five real
+     * horizontally touched choices into ParameterId.ENGINE while the piano
+     * remains pinned.
      */
     @Test fun shortLandscapeCanSelectAllFiveArchitecturesWithAnchoredPiano() {
         val engineId = ParameterId.entries.first { it.name == "ENGINE" }
@@ -185,23 +170,14 @@ class Compact350SoundInstrumentedTest {
         compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
         ).assertIsDisplayed()
-        Log.i(TAG, "phase=engine-before-physical-swipe")
-        compose.onNodeWithTag("soundEditorScroll").performTouchInput {
-            val x = center.x
-            down(Offset(x, center.y * 1.7f))
-            moveTo(Offset(x, center.y * 1.1f))
-            moveTo(Offset(x, center.y * .55f))
-            moveTo(Offset(x, center.y * .3f))
-            up()
-        }
-        Log.i(TAG, "phase=engine-after-physical-swipe")
+        // The ENGINE tab must be immediately touchable on a real 350dp
+        // landscape screen, before any scroll or offscreen semantics query.
+        // This is stronger than claiming existence of an unseen rack button.
+        Log.i(TAG, "phase=engine-before-visible-page")
         val enginePage = compose.onNodeWithContentDescription("Sound rack ENGINE")
-        revealByRealVerticalSwipes(enginePage, "engine-page")
         enginePage.assertIsDisplayed().performClick()
         Log.i(TAG, "phase=engine-page-open")
-        revealByRealVerticalSwipes(
-            compose.onNodeWithTag("compactEngineOptionsRow"), "engine-choices",
-        )
+        compose.onNodeWithTag("compactEngineOptionsRow").assertIsDisplayed()
         compose.onAllNodesWithContentDescription(
             "Select synthesis architecture", substring = true,
         ).assertCountEquals(5)
