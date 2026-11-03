@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +48,74 @@ import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 
+
+/**
+ * Unit vectors and fixed visual attributes are computed once, not every time
+ * a keyboard press causes the parent Compose tree to redraw its controls.
+ */
+internal object OrbitalVisualGeometry {
+    data class Dust(val direction: Offset, val distance: Float, val gold: Boolean, val alpha: Float)
+    data class Tick(val direction: Offset, val major: Boolean, val accent: Boolean = false)
+
+    val dust = (0 until 64).map { i ->
+        val angle = i * 2.399963229728653
+        val gold = i % 13 == 0
+        Dust(
+            direction = Offset(cos(angle).toFloat(), sin(angle).toFloat()),
+            distance = 1.08f + (i * 31 % 50) / 100f,
+            gold = gold,
+            alpha = if (gold) .68f else .22f + (i % 5) * .045f,
+        )
+    }
+    val ringTicks = (0 until 96).map { i ->
+        val angle = (i * PI * 2.0 / 96.0) - PI / 2
+        Tick(
+            direction = Offset(cos(angle).toFloat(), sin(angle).toFloat()),
+            major = i % 8 == 0,
+            accent = i % 24 == 0,
+        )
+    }
+    val knobTicks = (0..32).map { i ->
+        val angle = Math.toRadians(135.0 + i * 270.0 / 32.0)
+        Tick(
+            direction = Offset(cos(angle).toFloat(), sin(angle).toFloat()),
+            major = i % 4 == 0,
+        )
+    }
+    val junctions = listOf(25.0, 162.0, 277.0).map { degrees ->
+        val angle = Math.toRadians(degrees)
+        Offset(cos(angle).toFloat(), sin(angle).toFloat())
+    }
+    fun ribbonRadii(morph: Float, movement: Float): Array<DoubleArray> {
+        val m = morph.coerceIn(0f, 1f)
+        val motion = movement.coerceIn(0f, 1f)
+        val frequency = 2.75 + m.toDouble() * 2.8
+        return Array(12) { layer ->
+            val phase = motion.toDouble() * PI * 2.0 + layer * .33
+            val shifted = phase * .65
+            val phaseCosine = cos(shifted)
+            val phaseSine = sin(shifted)
+            DoubleArray(OrbitalTraceMath.samples.size) { index ->
+                val twist = OrbitalTraceMath.twist(
+                    OrbitalTraceMath.samples[index],
+                    frequency,
+                    phase,
+                    phaseCosine,
+                    phaseSine,
+                )
+                .37 + layer * .048 + twist * .86
+            }
+        }
+    }
+}
+
+private val graphPanelBrush = Brush.verticalGradient(
+    listOf(Color(0xB8183154), Color(0xC4081427)),
+)
+private val signalPanelBrush = Brush.verticalGradient(
+    listOf(Color(0xFF10223D), Color(0xFF091527)),
+)
+
 /**
  * Native, parameter-driven visualization. The original 2MB concept image is in
  * design/orbital-ui-reference.png; the app draws its own scalable graphics.
@@ -60,6 +129,14 @@ internal fun OrbitalDisplay(
     onExpressionChange: ((Float, Float) -> Unit)? = null,
 ) {
     val expressionCallback by rememberUpdatedState(onExpressionChange)
+    val clampedMorph = morph.coerceIn(0f, 1f)
+    val clampedMovement = movement.coerceIn(0f, 1f)
+    // Sine-heavy harmonic deformation depends on the two expression parameters,
+    // not on canvas size. Reuse it across keyboard, panel and accessibility redraws.
+    // Size multiplication remains in DrawScope to preserve the existing geometry.
+    val ribbonRadii = remember(clampedMorph, clampedMovement) {
+        OrbitalVisualGeometry.ribbonRadii(clampedMorph, clampedMovement)
+    }
     Canvas(
         modifier
             .testTag("orbitalExpression")
@@ -119,8 +196,8 @@ internal fun OrbitalDisplay(
         val c = Offset(size.width * .5f, size.height * .5f)
         val radius = min(size.width, size.height) * .385f
         if (radius <= 0f) return@Canvas
-        val m = morph.coerceIn(0f, 1f)
-        val motion = movement.coerceIn(0f, 1f)
+        val m = clampedMorph
+        val motion = clampedMovement
 
         // The celestial body is calculated from morph and movement rather than
         // animating a disconnected video. No timers, shader allocation or randomness.
@@ -141,18 +218,15 @@ internal fun OrbitalDisplay(
         )
         // Floating dust outside the disc establishes a sense of space without
         // obscuring the gesture surface. Coordinates are deterministic.
-        for (i in 0 until 64) {
-            val angle = i * 2.399963229728653
-            val distance = radius * (1.08f + (i * 31 % 50) / 100f)
+        for (dust in OrbitalVisualGeometry.dust) {
+            val distance = radius * dust.distance
             val p = Offset(
-                c.x + cos(angle).toFloat() * distance,
-                c.y + sin(angle).toFloat() * distance * .87f,
+                c.x + dust.direction.x * distance,
+                c.y + dust.direction.y * distance * .87f,
             )
-            val gold = i % 13 == 0
-            val alpha = if (gold) .68f else .22f + (i % 5) * .045f
             drawCircle(
-                color = (if (gold) OrbitalPalette.Gold else OrbitalPalette.Cyan).copy(alpha = alpha),
-                radius = (if (gold) 1.35f else .65f).dp.toPx(),
+                color = (if (dust.gold) OrbitalPalette.Gold else OrbitalPalette.Cyan).copy(alpha = dust.alpha),
+                radius = (if (dust.gold) 1.35f else .65f).dp.toPx(),
                 center = p,
             )
         }
@@ -242,21 +316,14 @@ internal fun OrbitalDisplay(
 
         // Twelve harmonic ribbons are not a sampled audio spectrum; their phase,
         // density and curvature communicate the actual morph/movement controls.
-        val orbitFrequency = 2.75 + m.toDouble() * 2.8
         val orbitYScale = .70f + m * .19f
         val orbitSamples = OrbitalTraceMath.samples
         for (layer in 0 until 12) {
             val path = Path()
-            val phase = motion.toDouble() * PI * 2.0 + layer * .33
-            val shiftedPhase = phase * .65
-            val phaseCosine = cos(shiftedPhase)
-            val phaseSine = sin(shiftedPhase)
+            val cachedRadii = ribbonRadii[layer]
             for (i in orbitSamples.indices) {
                 val sample = orbitSamples[i]
-                val twist = OrbitalTraceMath.twist(
-                    sample, orbitFrequency, phase, phaseCosine, phaseSine,
-                )
-                val rr = radius.toDouble() * (.37 + layer * .048 + twist * .86)
+                val rr = radius.toDouble() * cachedRadii[i]
                 val x = c.x + sample.cosine.toFloat() * rr.toFloat()
                 val y = c.y + sample.sine.toFloat() * rr.toFloat() * orbitYScale
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
@@ -275,18 +342,15 @@ internal fun OrbitalDisplay(
         }
 
         // Engraved external halo with calibrated, fine tick marks.
-        for (tick in 0 until 96) {
-            val angle = (tick * PI * 2.0 / 96.0) - PI / 2
-            val major = tick % 8 == 0
-            val inner = radius * (if (major) 1.055f else 1.086f)
-            val outer = radius * (if (major) 1.14f else 1.111f)
-            val direction = Offset(cos(angle).toFloat(), sin(angle).toFloat())
-            val tint = if (tick % 24 == 0) OrbitalPalette.Gold else OrbitalPalette.Cyan
+        for (tick in OrbitalVisualGeometry.ringTicks) {
+            val inner = radius * (if (tick.major) 1.055f else 1.086f)
+            val outer = radius * (if (tick.major) 1.14f else 1.111f)
+            val tint = if (tick.accent) OrbitalPalette.Gold else OrbitalPalette.Cyan
             drawLine(
-                tint.copy(alpha = if (major) .53f else .19f),
-                start = c + direction * inner,
-                end = c + direction * outer,
-                strokeWidth = (if (major) .9f else .5f).dp.toPx(),
+                tint.copy(alpha = if (tick.major) .53f else .19f),
+                start = c + tick.direction * inner,
+                end = c + tick.direction * outer,
+                strokeWidth = (if (tick.major) .9f else .5f).dp.toPx(),
             )
         }
         drawCircle(
@@ -323,11 +387,10 @@ internal fun OrbitalDisplay(
             )
         }
         // Glowing orbital junctions and an asymmetrical specular glint.
-        listOf(25.0, 162.0, 277.0).forEachIndexed { index, degrees ->
-            val angle = Math.toRadians(degrees)
+        OrbitalVisualGeometry.junctions.forEachIndexed { index, direction ->
             val p = Offset(
-                c.x + (cos(angle) * radius * 1.11).toFloat(),
-                c.y + (sin(angle) * radius * .68).toFloat(),
+                c.x + direction.x * radius * 1.11f,
+                c.y + direction.y * radius * .68f,
             )
             val tint = if (index == 1) OrbitalPalette.Gold else OrbitalPalette.Cyan
             drawCircle(tint.copy(alpha = .09f), 15.dp.toPx(), p)
@@ -375,7 +438,7 @@ internal fun ModulationGraph(
         modifier
             .border(1.dp, OrbitalPalette.PanelEdge, RoundedCornerShape(16.dp))
             .background(
-                Brush.verticalGradient(listOf(Color(0xB8183154), Color(0xC4081427))),
+                graphPanelBrush,
                 RoundedCornerShape(16.dp),
             ),
     ) {
@@ -486,15 +549,12 @@ internal fun NeonKnob(
                 ),
                 r * .67f, c,
             )
-            for (index in 0..32) {
-                val a = Math.toRadians((135.0 + index * 270.0 / 32.0))
-                val direction = Offset(cos(a).toFloat(), sin(a).toFloat())
-                val major = index % 4 == 0
+            for (tick in OrbitalVisualGeometry.knobTicks) {
                 drawLine(
-                    tint.copy(alpha = if (major) .31f else .16f),
-                    start = c + direction * r * 1.13f,
-                    end = c + direction * r * (if (major) 1.27f else 1.21f),
-                    strokeWidth = (if (major) .8f else .5f).dp.toPx(),
+                    tint.copy(alpha = if (tick.major) .31f else .16f),
+                    start = c + tick.direction * r * 1.13f,
+                    end = c + tick.direction * r * (if (tick.major) 1.27f else 1.21f),
+                    strokeWidth = (if (tick.major) .8f else .5f).dp.toPx(),
                 )
             }
             val arcPosition = Offset(c.x - r * 1.08f, c.y - r * 1.08f)
@@ -551,7 +611,7 @@ internal fun SignalTile(
         modifier
             .border(1.dp, OrbitalPalette.PanelEdge, RoundedCornerShape(12.dp))
             .background(
-                Brush.verticalGradient(listOf(Color(0xFF10223D), Color(0xFF091527))),
+                signalPanelBrush,
                 RoundedCornerShape(12.dp),
             )
             .padding(9.dp),
