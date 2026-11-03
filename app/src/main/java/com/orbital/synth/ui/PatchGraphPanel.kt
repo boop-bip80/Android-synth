@@ -489,12 +489,12 @@ fun PatchGraphPanel(
         Text(
             graph.patchCables.size.toString() + " LFO/STEP CABLES DRAWN IN " +
                 targetBank.label + " • " +
-                graph.hiddenLiveRouteCount + " LIVE ROUTES IN OTHER BANKS • " +
+                graph.hiddenLiveRouteCount + " CONFIGURED DSP ROUTES IN OTHER BANKS • " +
                 graph.stepRouteCount + " STEP ROUTES (" +
                 graph.dormantStepRouteCount + " DORMANT) • " +
                 graph.externalSourceRouteCount + " OTHER SOURCES NOT DRAWN • " +
                 graph.dormantLfoRouteCount + " DORMANT LFO SOURCES • " +
-                graph.dormantOscillatorTargetRouteCount + " BYPASSED OSC TARGETS • " +
+                graph.dormantOscillatorTargetRouteCount + " SILENT OSC TARGETS • " +
                 graph.reservedRouteCount + " RESERVED (NOT AUDIBLE)",
             color = OrbitalPalette.Muted,
             fontSize = 9.sp,
@@ -615,7 +615,7 @@ fun PatchGraphPanel(
                                     selectedBus = PatchGraphUiModel.visibleTargets(bankChoice).first()
                                 }
                                 notice = "Showing real DSP destination bank " +
-                                    bankChoice.label + ". Other live routes remain saved."
+                                    bankChoice.label + ". Other configured routes remain saved."
                             }
                         }
                     }
@@ -638,8 +638,10 @@ fun PatchGraphPanel(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         targets.forEach { target ->
                             val oscillatorIndex = PatchGraphUiModel.oscillatorTargetIndex(target)
-                            val layerEnabled = oscillatorIndex < 0 ||
-                                oscillators.getOrNull(oscillatorIndex)?.enabled == true
+                            val layerAudible = oscillatorIndex < 0 ||
+                                oscillators.getOrNull(oscillatorIndex)?.let {
+                                    it.enabled && it.level > 0f
+                                } == true
                             val label = if (oscillatorIndex < 0) target.name
                                 else "OSC " + (oscillatorIndex + 1) + " " +
                                     PatchGraphUiModel.targetLabel(target)
@@ -652,8 +654,8 @@ fun PatchGraphPanel(
                                             OrbitalPalette.Gold else OrbitalPalette.Violet,
                                     description = "Connect " + source.name +
                                         " to real DSP " + label +
-                                        (if (layerEnabled) "" else
-                                            "; this oscillator is currently bypassed"),
+                                        (if (layerAudible) "" else
+                                            "; this oscillator is bypassed or level zero"),
                                     tag = "patchBus" + target.name,
                                     fill = true,
                                 ) { connect(source, target) }
@@ -765,9 +767,11 @@ fun PatchGraphPanel(
                     val oscillatorIndex =
                         PatchGraphUiModel.oscillatorTargetIndex(editedRoute.destination)
                     if (oscillatorIndex >= 0 &&
-                        oscillators.getOrNull(oscillatorIndex)?.enabled != true
+                        oscillators.getOrNull(oscillatorIndex)?.let {
+                            it.enabled && it.level > 0f
+                        } != true
                     ) "REAL DSP TARGET • OSC " + (oscillatorIndex + 1) +
-                        " IS BYPASSED; CABLE DORMANT UNTIL ENABLED"
+                        " BYPASSED OR LEVEL ZERO; CABLE DORMANT UNTIL AUDIBLE"
                     else "REAL PCM TARGET • " +
                         PatchGraphUiModel.destinationEndpoint(editedRoute.destination)
                 } else "RESERVED METADATA • THIS CABLE HAS NO AUDIO EFFECT",
@@ -828,7 +832,7 @@ fun PatchGraphPanel(
                 "All 24 source IDs stay saved/editable. Eight LFOs and STEP are " +
                     "internally generated; TOUCH requires an actual gesture. All 22 " +
                     "destinations reach DSP only when driven at nonzero depth; " +
-                    "disabled oscillator layers stay silent.",
+                    "bypassed or zero-level oscillator layers stay silent.",
                 color = OrbitalPalette.Muted, fontSize = 9.sp,
             )
             Text(
