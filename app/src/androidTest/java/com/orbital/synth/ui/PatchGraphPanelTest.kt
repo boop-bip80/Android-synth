@@ -12,6 +12,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
@@ -228,6 +229,12 @@ class PatchGraphPanelTest {
             assertEquals(ModSource.ENV1, routes.value[0].source)
             assertTrue(routes.value[0].enabled)
         }
+        // A stored ENV1->DSP configuration does not emit modulation in this
+        // Android host. Keep exact count semantics without calling it LIVE.
+        compose.onNodeWithText("1 CONFIGURED DSP ROUTES", substring = true)
+            .assertExists()
+        compose.onNodeWithText(" LIVE BUSES", substring = true)
+            .assertDoesNotExist()
         compose.onNodeWithTag("patchGraphRouteDestination").performScrollTo().performClick()
         compose.onNodeWithTag("patchGraphRouteDestinationOptionRESONANCE").performClick()
         compose.runOnIdle {
