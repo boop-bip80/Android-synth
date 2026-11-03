@@ -4,12 +4,13 @@
 The event table models the checked expression, not GitHub's scheduler. A real
 closed pull request must still show the old run becoming cancelled before
 close-event cancellation can be called verified. All-skipped jobs alone are
-not evidence of that behavior.
+not evidence of that behavior. Versioning only the non-PR group isolates its
+legacy lock namespace; it does not supply additional GitHub runner capacity.
 """
 from pathlib import Path
 import re
 
-GROUP_LINE = "  group: android-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.number) || github.ref }}"
+GROUP_LINE = "  group: android-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.number) || format('v2-{0}', github.ref) }}"
 BUILD_GUARD = "    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}"
 WORKFLOW_NAME = "Android — build, JVM tests and emulator"
 SUITES = ("general-0", "general-1", "compact", "stage", "visuals", "compact350", "restart")
@@ -25,6 +26,8 @@ def modeled_policy(event_name, ref, number=None, action=None):
     if event_name == "pull_request":
         require(isinstance(number, int) and number > 0, "PR event needs its top-level number")
         ref = f"refs/pull/{number}/merge"
+    else:
+        ref = f"v2-{ref}"
     return (
         f"android-ci-{WORKFLOW_NAME}-{ref}",
         event_name != "workflow_dispatch",
@@ -55,7 +58,7 @@ def verify(workflow, compact):
     # Both closed cases must select the old PR group even when GitHub gives a
     # merged close event refs/heads/main. An unrelated PR has its own group.
     cases = (
-        ("main push", "push", "refs/heads/main", None, None, "refs/heads/main", True, True),
+        ("main push", "push", "refs/heads/main", None, None, "v2-refs/heads/main", True, True),
         ("PR opened", "pull_request", "refs/pull/189/merge", 189, "opened", "refs/pull/189/merge", True, True),
         ("PR sync", "pull_request", "refs/pull/189/merge", 189, "synchronize", "refs/pull/189/merge", True, True),
         ("PR reopened", "pull_request", "refs/pull/189/merge", 189, "reopened", "refs/pull/189/merge", True, True),
@@ -63,13 +66,33 @@ def verify(workflow, compact):
         ("PR closed merged", "pull_request", "refs/heads/main", 189, "closed", "refs/pull/189/merge", True, False),
         ("other PR", "pull_request", "refs/pull/192/merge", 192, "opened", "refs/pull/192/merge", True, True),
         ("other PR merged", "pull_request", "refs/heads/main", 192, "closed", "refs/pull/192/merge", True, False),
-        ("manual main", "workflow_dispatch", "refs/heads/main", None, None, "refs/heads/main", False, True),
-        ("manual branch", "workflow_dispatch", "refs/heads/work", None, None, "refs/heads/work", False, True),
+        ("manual main", "workflow_dispatch", "refs/heads/main", None, None, "v2-refs/heads/main", False, True),
+        ("manual branch", "workflow_dispatch", "refs/heads/work", None, None, "v2-refs/heads/work", False, True),
     )
     for label, event, ref, number, action, expected_ref, cancel, build in cases:
         actual = modeled_policy(event, ref, number, action)
         expected = (f"android-ci-{WORKFLOW_NAME}-{expected_ref}", cancel, build)
         require(actual == expected, f"{label}: {actual!r} != {expected!r}")
+
+
+    # The fallback must isolate only the legacy non-PR lock. Rotating all
+    # namespaces or using run_id would strand PR work or disable latest-wins.
+    main_group = modeled_policy("push", "refs/heads/main")[0]
+    require(
+        main_group != f"android-ci-{WORKFLOW_NAME}-refs/heads/main",
+        "Main must leave the legacy concurrency namespace",
+    )
+    require(
+        main_group == modeled_policy("workflow_dispatch", "refs/heads/main")[0],
+        "Manual main validation must share the new main push namespace",
+    )
+    for number in (189, 192, 197):
+        legacy_pr_group = f"android-ci-{WORKFLOW_NAME}-refs/pull/{number}/merge"
+        require(
+            modeled_policy("pull_request", "refs/heads/main", number, "closed")[0] ==
+            legacy_pr_group,
+            "Keep each existing PR group stable across a merged close event",
+        )
 
     jobs = workflow.split("\njobs:\n", 1)[1]
     require(
