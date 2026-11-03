@@ -478,6 +478,34 @@ fun ImmersiveVisualField(
             )
         }
 
+        // Actual PCM dynamics open irregular arc-shaped caustics around the
+        // aperture. These are level-controlled light paths, NOT frequency bins.
+        // Brightness (a waveform-slope proxy) selects color, while RMS/peak
+        // govern size and opacity; no audio -> no caustic draw calls.
+        val audible = (pcm.rms * .62f + pcm.peak * .38f).coerceIn(0f, 1f)
+        if (audible > .014f) {
+            for (arc in 0 until 7) {
+                val rr = radius * (.58f + arc * .094f + pcm.radiusBoost * .45f)
+                val angle = arc * 51.43f + timbre * 70f +
+                    if (animationsEnabled) animatedPhase * 95f else 0f
+                val tint = when (arc % 4) {
+                    0 -> amber
+                    1 -> livingHue
+                    2 -> electricBlue
+                    else -> ultraviolet
+                }
+                drawArc(
+                    color = tint.copy(alpha = (.065f + audible * .36f) * (.65f + arc * .038f)),
+                    startAngle = angle,
+                    sweepAngle = (19f + aperture * 26f + pcm.brightness * 18f),
+                    useCenter = false,
+                    topLeft = Offset(c.x - rr, c.y - rr * .82f),
+                    size = Size(rr * 2f, rr * 1.64f),
+                    style = Stroke(width = (.85f + audible * 1.65f) * stroke, cap = StrokeCap.Round),
+                )
+            }
+        }
+
         // Touch trail is deterministic, bounded and owned by the event-driven stage.
         if (touchTrace.isNotEmpty()) {
             val n = touchTrace.size
