@@ -4,6 +4,7 @@ import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.dsp.processing.LfoShape
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 
 /** Convenience adapter for the DSP parameter contract; no Android dependency. */
 fun OrbitalSynth.loadPatch(patch: SynthPatch) {
@@ -51,6 +52,10 @@ fun OrbitalSynth.loadPatch(patch: SynthPatch) {
     patch.modulationRoutes.forEachIndexed { index, config ->
         setModulationRouteConfig(index, config)
     }
+
+    // STEP clocks are patch state. Older formats must never inherit a prior
+    // sequencer pattern or armed lane from the previously recalled sound.
+    setModulationSteps(patch.modulationSteps ?: ModulationStepConfig())
 
     // A factory/V1/V2/V3 patch must not carry any of the last sound's FX
     // modules forward. The six default positions are always reset first.

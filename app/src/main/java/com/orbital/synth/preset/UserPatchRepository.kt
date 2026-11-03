@@ -6,6 +6,7 @@ import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.dsp.processing.FxModuleConfig
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.preset.FactoryPresets
 import com.orbital.synth.core.preset.PatchCodec
@@ -53,6 +54,7 @@ class UserPatchRepository internal constructor(
     private val snapshotModulationLfos: () -> List<ModulationLfoConfig> = { emptyList() },
     private val snapshotModulationTempo: () -> Float = { 120f },
     private val snapshotFxSlots: () -> List<FxModuleConfig> = { emptyList() },
+    private val snapshotModulationSteps: () -> ModulationStepConfig? = { null },
 ) {
     constructor(context: Context, synth: OrbitalSynth) : this(
         PatchDirectoryStore(
@@ -73,6 +75,7 @@ class UserPatchRepository internal constructor(
         snapshotFxSlots = {
             List(synth.fxSlotCount) { index -> synth.fxSlot(index) }
         },
+        snapshotModulationSteps = { synth.modulationSteps },
     )
 
     private val mutex = Mutex()
@@ -120,6 +123,9 @@ class UserPatchRepository internal constructor(
                 modulationLfos = snapshotModulationLfos().toList(),
                 modulationTempoBpm = snapshotModulationTempo(),
                 fxSlots = snapshotFxSlots().toList(),
+                modulationSteps = snapshotModulationSteps()?.let {
+                    it.copy(values = it.values.toList())
+                },
             )
             store.save(patch)
             PatchOutcome.Success(SavedUserPatch(patch, id != base))
@@ -147,6 +153,9 @@ class UserPatchRepository internal constructor(
                 modulationLfos = snapshotModulationLfos().toList(),
                 modulationTempoBpm = snapshotModulationTempo(),
                 fxSlots = snapshotFxSlots().toList(),
+                modulationSteps = snapshotModulationSteps()?.let {
+                    it.copy(values = it.values.toList())
+                },
             )
             store.save(patch)
             PatchOutcome.Success(patch)

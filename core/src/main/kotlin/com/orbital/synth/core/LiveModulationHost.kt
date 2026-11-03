@@ -5,9 +5,11 @@ import com.orbital.synth.core.dsp.processing.ModCurve
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
 import com.orbital.synth.core.dsp.processing.ModulationRack
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicIntegerArray
 import java.util.concurrent.atomic.AtomicReferenceArray
+import java.util.concurrent.atomic.AtomicReference
 
 /** Immutable UI/editor snapshot: the audio thread never mutates this object. */
 data class ModulationRouteConfig(
@@ -71,6 +73,9 @@ internal class LiveModulationHost(sampleRate: Int) {
     private var appliedLfoRevision = -1
 
     private val expressionBits = AtomicIntegerArray(ModSource.entries.size)
+    private val publishedSteps = AtomicReference(ModulationStepConfig())
+    private var appliedStepConfig: ModulationStepConfig? = null
+    @Volatile private var visibleStepPlayhead = 0
     private val bpmBits = AtomicInteger(java.lang.Float.floatToRawIntBits(120f))
     private var appliedBpmBits = Int.MIN_VALUE
     private val baseValues = FloatArray(ModDestination.entries.size) { 0.5f }
@@ -157,6 +162,14 @@ internal class LiveModulationHost(sampleRate: Int) {
 
     fun tempoBpm(): Float = java.lang.Float.intBitsToFloat(bpmBits.get())
 
+    /** Bounded atomic pattern publish; mutable caller lists never enter DSP. */
+    fun setSteps(config: ModulationStepConfig) {
+        publishedSteps.set(config.copy(values = config.values.toList()))
+    }
+
+    fun steps(): ModulationStepConfig = publishedSteps.get()
+    fun stepPlayhead(): Int = visibleStepPlayhead
+
     /** Input is normalized bipolar -1..1 (including touch, velocity, macros). */
     fun setSource(source: ModSource, value: Float) {
         if (!value.isFinite()) return
@@ -204,13 +217,22 @@ internal class LiveModulationHost(sampleRate: Int) {
             if (!active) rack.resetSmoothing()
         }
 
-        if (!active) return false
+        val nextSteps = publishedSteps.get()
+        if (nextSteps !== appliedStepConfig) {
+            rack.setStepPattern(nextSteps)
+            appliedStepConfig = nextSteps
+            visibleStepPlayhead = rack.stepPlayhead
+        }
 
         val latestTempo = bpmBits.get()
         if (latestTempo != appliedBpmBits) {
             rack.setTempoBpm(java.lang.Float.intBitsToFloat(latestTempo))
             appliedBpmBits = latestTempo
         }
+
+        // A programmed step clock must also tick when it has no routed cables
+        // yet, so the real playhead is available while users draw the pattern.
+        if (!active) return false
 
         val latestLfoRevision = lfoRevision.get()
         if (latestLfoRevision != appliedLfoRevision) {
@@ -258,14 +280,32 @@ internal class LiveModulationHost(sampleRate: Int) {
         // User-programmed AMP route is a 0..2 linear multiplier, neutral at 1.
         ampGain = frameValues[ModDestination.AMP.ordinal] * 2f
         panOffset = (frameValues[ModDestination.PAN.ordinal] - 0.5f) * 2f
+        if (rack.stepEnabled && visibleStepPlayhead != rack.stepPlayhead) {
+            visibleStepPlayhead = rack.stepPlayhead
+        }
     }
 
     fun onNoteOn() {
-        if (active) rack.retrigger()
+        if (active || rack.stepEnabled) {
+            rack.retrigger()
+            visibleStepPlayhead = rack.stepPlayhead
+        }
+    }
+
+    /** Advance just the visual STEP clock if no cable is consuming it yet. */
+    fun tickStepOnly() {
+        if (rack.stepEnabled) {
+            rack.advanceStepOnly(1)
+            if (visibleStepPlayhead != rack.stepPlayhead) {
+                visibleStepPlayhead = rack.stepPlayhead
+            }
+        }
     }
 
     /** Free-running synchronized modulation must keep time through silent blocks. */
     fun advanceSilence(frames: Int) {
         if (active) rack.advance(frames)
+        else if (rack.stepEnabled) rack.advanceStepOnly(frames)
+        if (rack.stepEnabled) visibleStepPlayhead = rack.stepPlayhead
     }
 }
