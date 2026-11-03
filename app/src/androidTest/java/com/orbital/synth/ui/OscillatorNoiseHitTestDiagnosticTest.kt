@@ -58,6 +58,10 @@ class OscillatorNoiseHitTestDiagnosticTest {
         val visible = pad.isDisplayed()
         assertTrue("Pad clipped after performScrollTo: pad=$nodeBounds root=$rootBounds, " +
             "visible=$visible", visible)
+        // 112dp visual artwork must also be a real, finger-sized pointer target;
+        // a 0x0 node is an invisible decoration, not a sound-design surface.
+        assertTrue("Noise pad must expose nonzero 48dp+ touch geometry: pad=$nodeBounds " +
+            "root=$rootBounds", nodeBounds.width > 48f && nodeBounds.height > 48f)
         val pre = callbackCount
         pad.performTouchInput {
             click(Offset(center.x * 1.6f, center.y * .4f))
