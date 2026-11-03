@@ -151,13 +151,57 @@ PY
 printf '%s\n' 'PASS: exactly 2 isolated real API35 JUnit cases; oscillator scroll, five ENGINE choices, piano notes' \
   > artifacts/compact350-junit-summary.txt
 
+# Gradle UTP's connected-test cleanup can clear app-private files after it
+# reports its two JUnit cases. Those two cases above MUST still pass/XML-match.
+# Re-install the EXACT previously SHA-logged debug/test APKs and rerun ONLY
+# the real OSC8 physical screenshot test with direct AndroidJUnitRunner, as
+# proven in STAGE/VISUALS. Capture/stream both PNGs before any UTP cleanup.
+printf '%s\n' 'reinstall-exact-apks-for-direct-real-frame-capture' > artifacts/emulator-phase.txt
+timeout 40s adb install -r "$app_apk"
+timeout 40s adb install -r "$test_apk"
+printf '%s\n' 'direct-extra-real-compact350-screenshot-instrumentation' > artifacts/emulator-phase.txt
+timeout 180s adb shell am instrument -w -r \
+  -e class 'com.orbital.synth.ui.Compact350SoundInstrumentedTest#shortLandscapeSoundHasReachableEightLayerEditorAndAnchoredPiano' \
+  com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
+  | tee artifacts/compact350-direct-capture-instrumentation.txt
+grep -Eq 'OK \(1 test\)' artifacts/compact350-direct-capture-instrumentation.txt || {
+  echo 'Extra genuine physical OSC8 screenshot capture method did not pass.' >&2
+  exit 1
+}
+if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_ABORTED' \
+    artifacts/compact350-direct-capture-instrumentation.txt; then
+  echo 'Direct compact350 instrumented capture reported failure.' >&2
+  exit 1
+fi
+printf '%s\n' 'extra_direct_capture=1_strict_pass' >> artifacts/instrumentation-suite.txt
+# Provenance: the test logs both actual Bitmap PNG lengths and this list
+# confirms the app-private files exist under the same debug package.
+timeout 12s adb shell run-as com.orbital.synth ls -l files \
+  > artifacts/compact350-app-files-before-extract.txt 2>&1 || true
+
 # Test #1 saves TWO genuine UiAutomation framebuffers: selected OSC8
 # chip + anchored piano on the first screen, then physically swiped/sculpted
 # OSC8 glowing waveform. Neither image may be absent/blank/invalid.
 printf '%s\n' 'extract-two-physical-compact-oscillator-screenshots' > artifacts/emulator-phase.txt
 for shot in orbital-compact350-osc8-selector.png orbital-compact350-luminous.png; do
-  timeout 20s adb exec-out run-as com.orbital.synth \
-    cat "files/$shot" > "artifacts/$shot"
+  extracted=0
+  for attempt in 1 2; do
+    if timeout 20s adb exec-out run-as com.orbital.synth \
+        cat "files/$shot" > "artifacts/$shot" &&
+       [[ -s "artifacts/$shot" ]] &&
+       [[ "$(file -b --mime-type "artifacts/$shot")" == "image/png" ]]; then
+      extracted=1
+      break
+    fi
+    printf 'retry=%s,shot=%s,bytes=%s\n' "$attempt" "$shot" \
+      "$(stat -c%s "artifacts/$shot" 2>/dev/null || printf 0)" \
+      >> artifacts/compact350-extract-retries.txt
+    sleep 2
+  done
+  [[ "$extracted" == 1 ]] || {
+    echo "Unable to extract genuine physical compact350 PNG: $shot" >&2
+    exit 1
+  }
 done
 python3 - <<'PY'
 from pathlib import Path
