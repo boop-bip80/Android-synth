@@ -207,6 +207,8 @@ fun OrbitalScreen(
     var soundAdvancedExpanded by remember { mutableStateOf(false) }
     var soundGraphExpanded by remember { mutableStateOf(false) }
     var compactOscillatorExpanded by remember { mutableStateOf(false) }
+    // Preserve the selected short-landscape page while OSC replaces its panel.
+    var compactSoundPage by remember { mutableStateOf(CompactSoundPage.LIVE) }
     var soundVisual by remember { mutableStateOf(AudioVisualSnapshot()) }
     val readLiveAudioVisual by rememberUpdatedState(onReadAudioVisual)
     LaunchedEffect(selectedTab, immersiveMode) {
@@ -502,6 +504,8 @@ fun OrbitalScreen(
                         // A physical performer can reach ENGINE/VOICE pages
                         // without scrolling a previously taller patch card.
                         CompactSoundPanel(
+                            page = compactSoundPage,
+                            onPageChange = { compactSoundPage = it },
                             parameter = parameter,
                             engineId = engineId,
                             engineValue = engineValue,
@@ -2404,12 +2408,13 @@ private enum class CompactSoundPage(val caption: String) {
  */
 @Composable
 private fun CompactSoundPanel(
+    page: CompactSoundPage,
+    onPageChange: (CompactSoundPage) -> Unit,
     parameter: (ParameterId) -> Float,
     engineId: ParameterId?,
     engineValue: Float,
     onParameterChange: (ParameterId, Float) -> Unit,
 ) {
-    var page by remember { mutableStateOf(CompactSoundPage.LIVE) }
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Text(
             "SONIC RACK  /  STAGE VIEW",
@@ -2423,7 +2428,7 @@ private fun CompactSoundPanel(
                 Pill(
                     label = choice.caption,
                     active = page == choice,
-                    onClick = { page = choice },
+                    onClick = { onPageChange(choice) },
                     description = "Sound rack " + choice.name,
                     role = Role.RadioButton,
                 )
