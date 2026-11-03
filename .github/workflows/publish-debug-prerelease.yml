@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 1
+          fetch-depth: 2
 
       - name: Verify source run and every required CI job
         id: source
@@ -85,13 +85,41 @@ jobs:
           [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
           local_sha="$(git rev-parse HEAD)"
           remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
-          if [[ "$source_sha" != "$local_sha" || "$source_sha" != "$remote_sha" ]]; then
-            echo "Stale successful build: source=$source_sha checkout=$local_sha remote=$remote_sha" >&2
+          if [[ "$local_sha" != "$remote_sha" ]]; then
+            echo "Main changed during checkout; refusing stale APK." >&2
             exit 1
           fi
+          if [[ "$source_sha" != "$local_sha" ]]; then
+            # The screenshot publisher uses GITHUB_TOKEN; its purely image
+            # documentation commit does not trigger a new Android CI run.
+            # Allow exactly ONE immediate bot commit with no source changes.
+            parent_sha="$(git rev-parse HEAD^)"
+            author="$(git log -1 --format=%an)"
+            author_email="$(git log -1 --format=%ae)"
+            if [[ "$parent_sha" != "$source_sha" ||
+                  "$author" != "github-actions[bot]" ||
+                  "$author_email" != "41898282+github-actions[bot]@users.noreply.github.com" ]]; then
+              echo "Latest main is not the verified source or its single image-only bot child." >&2
+              exit 1
+            fi
+            mapfile -t changed_paths < <(git diff --name-only HEAD^ HEAD)
+            (( ${#changed_paths[@]} > 0 )) || exit 1
+            for path in "${changed_paths[@]}"; do
+              [[ "$path" == docs/screenshots/* ]] || {
+                echo "Unverified non-screenshot change $path; refusing APK release." >&2
+                exit 1
+              }
+            done
+            grep -Fq "$source_sha" docs/screenshots/PROVENANCE.md &&
+              grep -Fq "actions/runs/$VERIFIED_RUN_ID" docs/screenshots/PROVENANCE.md || {
+                echo "Screenshot bot child has no matching source SHA / run provenance." >&2
+                exit 1
+              }
+          fi
           echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "current_main_sha=$remote_sha" >> "$GITHUB_OUTPUT"
           echo "short=${source_sha:0:12}" >> "$GITHUB_OUTPUT"
-          echo "Validated all five jobs for exact main source $source_sha"
+          echo "Validated all five jobs for sound source $source_sha and current main $remote_sha"
 
       - name: Download only this verified host build APK
         env:
@@ -129,12 +157,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
           SOURCE_SHORT: ${{ steps.source.outputs.short }}
+          VALIDATED_MAIN_SHA: ${{ steps.source.outputs.current_main_sha }}
         shell: bash
         run: |
           set -euo pipefail
           remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
-          if [[ "$remote_sha" != "$SOURCE_SHA" ]]; then
-            echo "Main advanced after verification; refuse a stale APK release." >&2
+          if [[ "$remote_sha" != "$VALIDATED_MAIN_SHA" ]]; then
+            echo "Main advanced after source/provenance verification; refuse stale APK release." >&2
             exit 1
           fi
           tag="orbital-debug-$SOURCE_SHORT"
