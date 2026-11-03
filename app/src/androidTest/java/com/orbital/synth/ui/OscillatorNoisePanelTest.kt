@@ -80,15 +80,21 @@ class OscillatorNoisePanelTest {
             .performTouchInput {
                 click(Offset(center.x * 1.6f, center.y * .4f))
             }
+        compose.waitForIdle()
         compose.runOnIdle {
-            assertTrue(slots[0].noiseColor in 0.73f..0.87f)
-            assertTrue(slots[0].noiseLevel in 0.73f..0.87f)
+            assertTrue("XY color should be 0.8, was ${slots[0].noiseColor}",
+                slots[0].noiseColor in 0.73f..0.87f)
+            assertTrue("XY mix should be 0.8, was ${slots[0].noiseLevel}",
+                slots[0].noiseLevel in 0.73f..0.87f)
         }
         compose.onNodeWithTag("oscillatorWave3").performScrollTo().performClick()
+        compose.waitForIdle()
         compose.runOnIdle {
             assertEquals(.75f, slots[0].waveform, 0f)
-            assertTrue(slots[0].noiseLevel > .7f)
-            assertTrue(slots[0].noiseColor > .7f)
+            assertTrue("Wave edit erased XY mix: ${slots[0].noiseLevel}",
+                slots[0].noiseLevel > .7f)
+            assertTrue("Wave edit erased XY color: ${slots[0].noiseColor}",
+                slots[0].noiseColor > .7f)
         }
     }
 
