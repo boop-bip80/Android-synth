@@ -250,6 +250,7 @@ fun ReferenceSoundHero(
                         val ribbonPixels = ribbonHeight.toPx()
                         awaitPointerEventScope {
                             var ownerId: PointerId? = null
+                            var lastOwnerPosition: Offset? = null
                             var ownerTicket = gate.ticket()
                             var ownerSession = 0L
                             try {
@@ -267,14 +268,24 @@ fun ReferenceSoundHero(
                                                 gate.allows(ownerTicket)
                                             ) fingerPressed = false
                                             ownerId = null
+                                            lastOwnerPosition = null
                                         } else {
-                                            update(
-                                                owner.position.x / size.width,
-                                                ReferenceHeroTouch.movementAt(
-                                                    owner.position.y, size.height.toFloat(),
-                                                    ribbonPixels,
-                                                ),
-                                            )
+                                            // Android batches ALL pointers into a
+                                            // frame. An old A UP may carry held C
+                                            // unchanged; it must not re-emit both
+                                            // CUTOFF and RESONANCE for C. Only a
+                                            // movement of THIS owning finger edits.
+                                            if (lastOwnerPosition != owner.position) {
+                                                lastOwnerPosition = owner.position
+                                                update(
+                                                    owner.position.x / size.width,
+                                                    ReferenceHeroTouch.movementAt(
+                                                        owner.position.y,
+                                                        size.height.toFloat(),
+                                                        ribbonPixels,
+                                                    ),
+                                                )
+                                            }
                                             owner.consume()
                                         }
                                     }
@@ -289,6 +300,7 @@ fun ReferenceSoundHero(
                                         }
                                         if (freshDown != null) {
                                             ownerId = freshDown.id
+                                            lastOwnerPosition = freshDown.position
                                             ownerTicket = gate.ticket()
                                             fingerSession++
                                             ownerSession = fingerSession
