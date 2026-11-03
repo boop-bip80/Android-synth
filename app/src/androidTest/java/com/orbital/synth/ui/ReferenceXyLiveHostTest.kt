@@ -104,8 +104,8 @@ class ReferenceXyLiveHostTest {
         compose.onNodeWithTag("referenceHeroOrbInput").performTouchInput {
             // The seam is 230dp - 88dp = 142dp in the same hero.
             // Slightly above it must be close to ribbon's upper edge.
-            val seam = size.height * (142f / 230f)
-            click(Offset(center.x * 1.5f, seam - size.height * (3f / 230f)))
+            val seam = center.y * 2f * (142f / 230f)
+            click(Offset(center.x * 1.5f, seam - center.y * 2f * (3f / 230f)))
         }
         val orbValue = params[ParameterId.RESONANCE] ?: -1f
         compose.runOnIdle {
