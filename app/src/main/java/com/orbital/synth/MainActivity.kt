@@ -74,8 +74,6 @@ class MainActivity : ComponentActivity() {
 
     private var patchIndex = 0
     private var screenState by mutableStateOf(OrbitalUiState())
-    /** Bumped before audio is stopped so all held UI touch leases expire on resume. */
-    private var performanceResetEpoch by mutableStateOf(0L)
     private lateinit var stageTouchStore: StageTouchSettingsHostStore
     private var stageTouchRestorePending = true
     private var stageTouchEditedBeforeRestore = false
@@ -225,7 +223,6 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 OrbitalScreen(
                     state = screenState,
-                    performanceResetEpoch = performanceResetEpoch,
                     onNoteOn = { note ->
                         if (note in 0..127) audioOutput.noteOn(TOUCH_SOURCE_ID, 0, note, 127)
                     },
@@ -821,14 +818,15 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        // Compose remains mounted across a background/foreground transition.
-        // Invalidate old finger/TalkBack owners before the audio worker panic:
-        // fresh touches after ON_START must attack again even at the same pitch.
-        performanceResetEpoch++
         audioOutput.arpeggiatorPanic()
         synth.allNotesOff()
         audioOutput.setSequencerPlaying(false)
-        screenState = screenState.copy(sequencerRunning = false, sequencerStep = -1)
+        // The audio worker's held notes are panicked, but Compose remains mounted.
+        // Invalidate local finger/TalkBack leases before accepting new touches.
+        screenState = screenState.copy(
+            sequencerRunning = false, sequencerStep = -1,
+            performanceResetEpoch = screenState.performanceResetEpoch + 1L,
+        )
         midiManager.stop()
         audioOutput.stop()
         super.onStop()
