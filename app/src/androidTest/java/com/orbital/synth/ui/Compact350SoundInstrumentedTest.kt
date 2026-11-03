@@ -90,6 +90,11 @@ class Compact350SoundInstrumentedTest {
         val node = compose.onNodeWithTag(tag)
         val editor = compose.onNodeWithTag("soundEditorScroll").assertIsDisplayed()
         val density = compose.activity.resources.displayMetrics.density
+        // The first OSC toggle/selector lies ABOVE the editor after deep wave edits;
+        // wave and precision rails initially lie BELOW it. When Compose clips
+        // offscreen bounds to zero, this remembers which physical way to swipe.
+        var lastKnownAbove = tag == "compactOscillatorToggle" ||
+            tag == "oscillatorLayerSelectorRow"
         for (attempt in 0 until 12) {
             val editorRect = editor.fetchSemanticsNode().boundsInRoot
             val targetRect = node.fetchSemanticsNode().boundsInRoot
@@ -98,16 +103,36 @@ class Compact350SoundInstrumentedTest {
                 targetRect.top >= editorRect.top - 1f &&
                 targetRect.bottom <= editorRect.bottom + 1f
             if (fullyInView) break
+            val requiredPx = minHeightDp * density
+            val hasPhysicalBounds = targetRect.width > 1f && targetRect.height > 1f
+            val clippedAtTop = targetRect.top <= editorRect.top + 1f
+            val clippedAtBottom = targetRect.bottom >= editorRect.bottom - 1f
+            // A physical swipe loses ~12px to touch slop; use at least 30px
+            // for a tiny 3–6px shortfall, but never overshoot the 39px window
+            // that accommodates the complete 96dp wave in this 350dp layout.
+            val fineFingerDrag = (requiredPx - targetRect.height + 14f)
+                .coerceIn(30f, editorRect.height * .21f)
+            if (hasPhysicalBounds && targetRect.height < requiredPx - 1f) {
+                if (clippedAtTop && !clippedAtBottom) lastKnownAbove = true
+                if (clippedAtBottom && !clippedAtTop) lastKnownAbove = false
+            }
             val travel = when {
-                // Fully clipped offscreen semantics report a zero-area Rect(0,0,0,0).
-                // The OSC8 canvas is below the selector: physically swipe UP to reveal it.
-                targetRect.width <= 1f || targetRect.height <= 1f ->
-                    -editorRect.height * .38f
+                // Offscreen Compose semantics can have Rect(0,0,0,0).
+                // Above toggle/selector: finger DOWN. Below wave/rails: UP.
+                !hasPhysicalBounds ->
+                    if (lastKnownAbove) editorRect.height * .38f
+                    else -editorRect.height * .38f
+                targetRect.height < requiredPx - 1f && clippedAtTop && !clippedAtBottom ->
+                    fineFingerDrag
+                targetRect.height < requiredPx - 1f && clippedAtBottom && !clippedAtTop ->
+                    -fineFingerDrag
                 targetRect.bottom > editorRect.bottom ->
-                    -(targetRect.bottom - editorRect.bottom + 6f)
+                    -(targetRect.bottom - editorRect.bottom + 14f).coerceAtLeast(30f)
                 targetRect.top < editorRect.top ->
-                    editorRect.top - targetRect.top + 6f
-                else -> -editorRect.height * .30f
+                    (editorRect.top - targetRect.top + 14f).coerceAtLeast(30f)
+                else ->
+                    if (lastKnownAbove) editorRect.height * .20f
+                    else -editorRect.height * .20f
             }.coerceIn(-editorRect.height * .45f, editorRect.height * .45f)
             Log.i(TAG, "phase=physical-reveal-$tag-$attempt target=$targetRect " +
                 "editor=$editorRect drag=$travel")
@@ -360,11 +385,16 @@ class Compact350SoundInstrumentedTest {
         }
         Log.i(TAG, "phase=compact-luminous-osc8-physical-rails-and-talkback-pass")
 
-        // Neither physical editor swipes nor touch synthesis can dislodge the
-        // live keybed. The permanent OSC toggle remains immediately available.
+        // Neither physical editor swipes nor touch synthesis can dislodge
+        // the live keybed. Return UP the editor with real finger gestures;
+        // the first-row OSC toggle is reachable again without synthetic scroll.
         compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
         ).assertIsDisplayed()
+        Log.i(TAG, "phase=before-physical-return-to-osc-toggle")
+        physicallyRevealWithinCompactEditor(
+            "compactOscillatorToggle", minHeightDp = 48f,
+        )
         // Collapse back to the real engine and patch controls. All sound
         // parameters and the anchored note keyboard remain intact.
         compose.onNodeWithTag("compactOscillatorToggle")
