@@ -82,6 +82,8 @@ internal fun ImmersiveStage(
     onPerformanceConfigChange: ((StageTouchSettings) -> Unit)? = null,
     /** Meter from real Android AudioTrack output, sampled only while the stage is on-screen. */
     audioVisualSource: (() -> AudioVisualSnapshot)? = null,
+    /** An audio host stop/panic invalidates every pre-existing performance contact. */
+    performanceResetEpoch: Long = 0L,
 ) {
     val mapper = remember { TouchPerformanceMapper() }
     var showConfig by remember { mutableStateOf(false) }
@@ -201,7 +203,7 @@ internal fun ImmersiveStage(
     LaunchedEffect(mapper, stageSettings) {
         deliver(mapper.updateConfig(stageSettings.toTouchConfig()))
     }
-    DisposableEffect(mapper) {
+    DisposableEffect(mapper, performanceResetEpoch) {
         onDispose {
             deliver(mapper.cancelAll())
             reportTouchModulation(.5f, .5f, .5f, force = true)
@@ -293,7 +295,7 @@ internal fun ImmersiveStage(
                         )
                     }
                 }
-                .pointerInput(mapper) {
+                .pointerInput(mapper, performanceResetEpoch) {
                     // awaitEachGesture completes only after every pointer is up.
                     // The finally block makes note-off safe under OS gesture
                     // cancellation, screen changes and recomposition disposal.
