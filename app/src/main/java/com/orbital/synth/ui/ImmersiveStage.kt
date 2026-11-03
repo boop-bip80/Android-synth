@@ -9,8 +9,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,6 +85,8 @@ internal fun ImmersiveStage(
     performanceResetEpoch: Long = 0L,
 ) {
     val mapper = remember(performanceResetEpoch) { TouchPerformanceMapper() }
+    // Back/canvas cancel invalidates recognizer IDs as well as mapper notes.
+    var pointerCancelEpoch by remember { mutableIntStateOf(0) }
     var showConfig by remember { mutableStateOf(false) }
     // Explicit opt-in. On a clean canvas there is no synth HUD or keyboard.
     // Android Back (or the screen reader custom action) reveals controls first.
@@ -218,6 +218,7 @@ internal fun ImmersiveStage(
 
     fun cancelPerformanceTouch() {
         deliver(mapper.cancelAll())
+        pointerCancelEpoch++
         touchIntensity = 0f
         reportTouchModulation(.5f, .5f, .5f, force = true)
     }
@@ -303,12 +304,11 @@ internal fun ImmersiveStage(
                         )
                     }
                 }
-                .pointerInput(mapper, performanceResetEpoch) {
-                    // awaitEachGesture completes only after every pointer is up.
-                    // The finally block makes note-off safe under OS gesture
-                    // cancellation, screen changes and recomposition disposal.
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
+                .pointerInput(mapper, performanceResetEpoch, pointerCancelEpoch) {
+                    // Host epochs can remount input while an OS finger remains
+                    // physically held. Never wait for *all* old pointers to lift
+                    // before admitting a genuinely new independent finger DOWN.
+                    awaitPointerEventScope {
                         val activeIds = mutableSetOf<Long>()
                         fun normalizeX(x: Float): Float =
                             (x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
@@ -355,31 +355,24 @@ internal fun ImmersiveStage(
                                 }
                             }
                         }
-                        start(
-                            down.id.value,
-                            down.position.x,
-                            down.position.y,
-                            down.pressure,
-                            down.uptimeMillis,
-                        )
-                        down.consume()
                         try {
-                            var pressed: Boolean
-                            do {
+                            while (true) {
                                 val pointerEvent = awaitPointerEvent()
-                                pointerEvent.changes.forEach { change ->
+                                for (change in pointerEvent.changes) {
                                     val id = change.id.value
-                                    if (change.pressed) {
-                                        if (id !in activeIds && !change.previousPressed) {
-                                            // Only a genuine DOWN admits a new finger
-                                            // after an Activity onStop epoch reset.
-                                            // A stale held finger seen during another
-                                            // new touch cannot reattack a canceled voice.
+                                    val wasActive = id in activeIds
+                                    // Reject stale MOVE from a finger held through
+                                    // Activity STOP or Back. Only Android's true
+                                    // UP->DOWN edge can establish new ownership.
+                                    val freshDown = change.pressed && !change.previousPressed
+                                    when {
+                                        freshDown && !wasActive -> {
                                             start(
                                                 id, change.position.x, change.position.y,
                                                 change.pressure, change.uptimeMillis,
                                             )
-                                        } else if (id in activeIds) {
+                                        }
+                                        change.pressed && wasActive -> {
                                             touchX = normalizeX(change.position.x)
                                             touchY = normalizeY(change.position.y)
                                             touchIntensity = change.pressure.coerceIn(.15f, 1f)
@@ -391,22 +384,32 @@ internal fun ImmersiveStage(
                                                 ),
                                             )
                                         }
-                                    } else if (activeIds.remove(id)) {
-                                        deliver(mapper.touchUp(id))
-                                        if (mapper.activePointerCount == 0) {
-                                            reportTouchModulation(.5f, .5f, .5f, force = true)
+                                        !change.pressed && wasActive -> {
+                                            activeIds.remove(id)
+                                            deliver(mapper.touchUp(id))
+                                            if (activeIds.isEmpty()) {
+                                                touchIntensity = 0f
+                                                touchX = .5f
+                                                touchY = .5f
+                                                reportTouchModulation(.5f, .5f, .5f, force = true)
+                                            }
                                         }
                                     }
-                                    change.consume()
+                                    // Consume only contacts this recognizer owns.
+                                    // Stale physical pointers are completely inert.
+                                    if (wasActive || (freshDown && id in activeIds)) {
+                                        change.consume()
+                                    }
                                 }
-                                pressed = pointerEvent.changes.any { it.pressed }
-                            } while (pressed)
+                            }
                         } finally {
-                            // A genuine release has already been removed; a cancelled
-                            // gesture or backgrounding still releases every live key.
+                            // Cancellation, screen disposal or epoch remount
+                            // releases every locally owned voice exactly once.
                             activeIds.forEach { id -> deliver(mapper.touchUp(id)) }
                             activeIds.clear()
                             touchIntensity = 0f
+                            touchX = .5f
+                            touchY = .5f
                             reportTouchModulation(.5f, .5f, .5f, force = true)
                         }
                     }

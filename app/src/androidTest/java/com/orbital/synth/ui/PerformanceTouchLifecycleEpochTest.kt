@@ -166,6 +166,27 @@ class PerformanceTouchLifecycleEpochTest {
             )
         }
 
+        // A stale pointer still held across the stop can deliver another MOVE
+        // before any new finger appears. It must remain completely silent and
+        // must not reactivate the visual touch lease.
+        canvas.performTouchInput {
+            moveTo(0, Offset(center.x * .85f, center.y * .8f))
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(
+                "Old-session MOVE must not attack or release anything",
+                original.size, events.count { it.startsWith("ON:") },
+            )
+            assertEquals(
+                original.size, events.count { it.startsWith("OFF:") },
+            )
+        }
+        assertEquals(
+            "Touch idle",
+            canvas.fetchSemanticsNode().config[SemanticsProperties.StateDescription],
+        )
+
         // A first new pointer must start a new session. The old pointer 0
         // may still be present in motion events, but was NOT freshly pressed.
         canvas.performTouchInput {
@@ -229,6 +250,20 @@ class PerformanceTouchLifecycleEpochTest {
                 attacks.sorted(), releases.sorted(),
             )
             afterBack = events.toList()
+        }
+
+        // Back cancels the old recognizer. Any continued MOVE from a finger
+        // physically held before Back must stay visually and musically inert.
+        canvas.performTouchInput {
+            moveTo(2, Offset(center.x * .82f, center.y * .75f))
+        }
+        compose.waitForIdle()
+        assertEquals(
+            "Touch idle",
+            canvas.fetchSemanticsNode().config[SemanticsProperties.StateDescription],
+        )
+        compose.runOnIdle {
+            assertEquals("Late MOVE after Back must not revive notes", afterBack, events)
         }
 
         // The OS may deliver physical UP after Back's explicit cancel; those
