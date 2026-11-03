@@ -388,11 +388,19 @@ fun ReferenceNeonKnob(
                     }
                 }
                 .pointerInput(Unit) {
-                    detectDragGestures { change, delta ->
-                        update((current - delta.y * .008f +
-                            delta.x * .002f).coerceIn(0f, 1f))
-                        change.consume()
-                    }
+                    // Maintain a gesture-local accumulator so fast touch
+                    // events remain cumulative even before Compose can
+                    // publish a new immutable host parameter snapshot.
+                    var accumulated = current
+                    detectDragGestures(
+                        onDragStart = { accumulated = current },
+                        onDrag = { change, delta ->
+                            accumulated = (accumulated - delta.y * .008f +
+                                delta.x * .002f).coerceIn(0f, 1f)
+                            update(accumulated)
+                            change.consume()
+                        },
+                    )
                 },
         ) {
             val radius = size.minDimension * .37f
