@@ -78,8 +78,9 @@ class ModulationRouteGridAccessibilityTest {
                 "Could not reach $tag after 22 actual finger swipes: node=$bounds " +
                     "viewport=$visible scroll=${scroll.value}/${scroll.maxValue}",
             )
-            val below = bounds.height > 0f && bounds.top > visible.bottom
-            val above = bounds.height > 0f && bounds.bottom < visible.top
+            // A *partially* clipped 48dp button also needs opposite travel.
+            val below = bounds.height > 0f && bounds.bottom > visible.bottom
+            val above = bounds.height > 0f && bounds.top < visible.top
             val reachedEnd = scroll.maxValue > 0 && scroll.value >= scroll.maxValue - 1
             val swipeDown = above || (bounds.isEmpty && reachedEnd && !below)
             viewport.performTouchInput {
