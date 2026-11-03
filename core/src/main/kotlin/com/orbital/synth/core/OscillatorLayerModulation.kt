@@ -28,6 +28,15 @@ internal class OscillatorLayerModulation(sampleRate: Int) {
 
     private val pitchSemitones = FloatArray(LAYERS)
     private val slew = (1.0 - exp(-1.0 / (sampleRate * 0.008))).toFloat()
+    // Float32 can stop changing before a fixed 1e-5 cutoff is reached:
+    // near +/-6 semitones the 8ms step becomes smaller than half an ULP.
+    // Scale the exact-target snap to the representable signal quantum and
+    // the sample-rate-dependent slew. Evaluated once at construction only,
+    // never in the audio callback; <0.08 cents even at 192 kHz.
+    private val gainSnapThreshold = maxOf(0.00001f,
+        java.lang.Math.ulp(2f) / slew)
+    private val pitchSnapThreshold = maxOf(0.00001f,
+        java.lang.Math.ulp(6f) / slew)
     // Precomputed during synth construction, never on the audio worker. Linear
     // interpolation has <0.000001 relative error over the +/-6 semitone span.
     private val pitchTable = DoubleArray(PITCH_TABLE_STEPS + 1) { index ->
@@ -65,7 +74,7 @@ internal class OscillatorLayerModulation(sampleRate: Int) {
             } else 1f
             val gain = gainMultipliers[i]
             val nextGain = gain + (targetGain - gain) * slew
-            val settledGain = if (abs(targetGain - nextGain) < 0.00001f) targetGain else nextGain
+            val settledGain = if (abs(targetGain - nextGain) <= gainSnapThreshold) targetGain else nextGain
             gainMultipliers[i] = settledGain
 
             val targetSemitones = if (matrixFrame != null && (pitchRouteMask and bit) != 0) {
@@ -73,7 +82,7 @@ internal class OscillatorLayerModulation(sampleRate: Int) {
             } else 0f
             val pitch = pitchSemitones[i]
             val nextPitch = pitch + (targetSemitones - pitch) * slew
-            val settledPitch = if (abs(targetSemitones - nextPitch) < 0.00001f) {
+            val settledPitch = if (abs(targetSemitones - nextPitch) <= pitchSnapThreshold) {
                 targetSemitones
             } else nextPitch
             if (settledPitch != pitch) {
