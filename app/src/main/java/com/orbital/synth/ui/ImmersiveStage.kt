@@ -1,5 +1,8 @@
 package com.orbital.synth.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,7 +41,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -75,6 +80,9 @@ internal fun ImmersiveStage(
 ) {
     val mapper = remember { TouchPerformanceMapper() }
     var showConfig by remember { mutableStateOf(false) }
+    // Explicit opt-in. On a clean canvas there is no synth HUD or keyboard.
+    // Android Back (or the screen reader custom action) reveals controls first.
+    var cleanCanvas by remember { mutableStateOf(false) }
     var stageSettings by remember {
         mutableStateOf(initialPerformanceConfig ?: StageTouchSettings(baseOctave = state.octave))
     }
@@ -187,9 +195,42 @@ internal fun ImmersiveStage(
         }
     }
 
+    fun cancelPerformanceTouch() {
+        deliver(mapper.cancelAll())
+        touchIntensity = 0f
+        reportTouchModulation(.5f, .5f, .5f, force = true)
+    }
+
+    // Back never traps the performer in a control-free surface. Configuration
+    // closes first, focus mode reveals chrome next, normal stage exits last.
+    BackHandler {
+        when {
+            showConfig -> showConfig = false
+            cleanCanvas -> {
+                cancelPerformanceTouch()
+                cleanCanvas = false
+            }
+            else -> {
+                cancelPerformanceTouch()
+                onExit()
+            }
+        }
+    }
+
     val parameter = { id: ParameterId ->
         (state.parameters[id] ?: .5f).coerceIn(0f, 1f)
     }
+    val fieldActive = touchIntensity > .01f ||
+        audioVisual.rms > .004f || audioVisual.peak > .02f
+    // A touch or actual PCM output lights the field immediately. In clean
+    // canvas mode the lingering light fades fully to black when sound stops.
+    val fieldAlpha by animateFloatAsState(
+        targetValue = if (fieldActive) 1f else if (cleanCanvas) 0f else .16f,
+        animationSpec = tween(
+            durationMillis = if (fieldActive) 90 else if (cleanCanvas) 950 else 260
+        ),
+        label = "Immersive canvas luminance",
+    )
     val cyan = Color(0xFF6DEBFF)
     val dim = Color(0xFF9EAFC0)
     Box(
@@ -203,9 +244,7 @@ internal fun ImmersiveStage(
         // harmonic arcs. The background is truly black; visual luminance is tied
         // to the performed gesture rather than to an idle animated wallpaper.
         ImmersiveVisualField(
-            modifier = Modifier.fillMaxSize().alpha(
-                if (touchIntensity > .01f || audioVisual.rms > .004f || audioVisual.peak > .02f) 1f else .16f
-            ),
+            modifier = Modifier.fillMaxSize().alpha(fieldAlpha),
             morph = parameter(ParameterId.MORPH),
             movement = parameter(ParameterId.MOVEMENT),
             cutoff = parameter(ParameterId.CUTOFF),
@@ -226,6 +265,15 @@ internal fun ImmersiveStage(
                 .testTag("immersiveCanvas")
                 .semantics {
                     contentDescription = "Immersive sound field"
+                    if (cleanCanvas) {
+                        customActions = listOf(
+                            CustomAccessibilityAction("Reveal stage controls") {
+                                cancelPerformanceTouch()
+                                cleanCanvas = false
+                                true
+                            }
+                        )
+                    }
                 }
                 .pointerInput(mapper) {
                     // awaitEachGesture completes only after every pointer is up.
@@ -308,6 +356,7 @@ internal fun ImmersiveStage(
                 },
         )
 
+        if (!cleanCanvas) {
         Row(
             Modifier
                 .align(Alignment.TopCenter)
@@ -322,9 +371,7 @@ internal fun ImmersiveStage(
                     .border(1.dp, cyan.copy(alpha = .55f), RoundedCornerShape(24.dp))
                     .background(Color(0xFF06121A).copy(alpha = .93f), RoundedCornerShape(24.dp))
                     .clickable(role = Role.Button) {
-                        deliver(mapper.cancelAll())
-                        touchIntensity = 0f
-                        reportTouchModulation(.5f, .5f, .5f, force = true)
+                        cancelPerformanceTouch()
                         onExit()
                     }
                     .semantics { contentDescription = "Exit immersive performance" }
@@ -348,6 +395,30 @@ internal fun ImmersiveStage(
                     fontSize = 11.sp,
                     letterSpacing = 2.sp,
                 )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        Modifier
+                            .testTag("stageFocusEnter")
+                            .heightIn(min = 48.dp)
+                            .border(1.dp, cyan.copy(alpha = .38f), RoundedCornerShape(13.dp))
+                            .background(Color(0xFF07121C), RoundedCornerShape(13.dp))
+                            .clickable(role = Role.Button) {
+                                cancelPerformanceTouch()
+                                showConfig = false
+                                cleanCanvas = true
+                            }
+                            .semantics {
+                                contentDescription =
+                                    "Enter clean canvas focus mode. Android Back reveals controls"
+                            }
+                            .padding(horizontal = 9.dp, vertical = 12.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("◉ FOCUS", color = cyan, fontSize = 10.sp, letterSpacing = .3.sp)
+                    }
                 Box(
                     Modifier
                         .testTag("stageConfigOpen")
@@ -355,9 +426,7 @@ internal fun ImmersiveStage(
                         .border(1.dp, cyan.copy(alpha = .48f), RoundedCornerShape(13.dp))
                         .background(Color(0xFF101728), RoundedCornerShape(13.dp))
                         .clickable(role = Role.Button) {
-                            deliver(mapper.cancelAll())
-                            touchIntensity = 0f
-                            reportTouchModulation(.5f, .5f, .5f, force = true)
+                            cancelPerformanceTouch()
                             showConfig = true
                         }
                         .semantics { contentDescription = "Configure touch performance stage" }
@@ -365,6 +434,7 @@ internal fun ImmersiveStage(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text("◈ CONFIG", color = cyan, fontSize = 10.sp, letterSpacing = 1.sp)
+                }
                 }
             }
         }
@@ -407,6 +477,7 @@ internal fun ImmersiveStage(
                     (if (stageSettings.glissando) "GLIDE" else "HOLD")),
                 fontSize = 9.sp, color = cyan.copy(alpha = .62f), maxLines = 1,
             )
+        }
         }
         if (showConfig) {
             StageTouchConfigurationPanel(
