@@ -88,8 +88,21 @@ internal class LiveModulationHost(sampleRate: Int) {
     private val baseValues = FloatArray(ModDestination.entries.size) { 0.5f }
     private val frameValues = FloatArray(ModDestination.entries.size) { 0.5f }
 
+    /**
+     * True only when at least one finite, nonzero cable reaches an implemented
+     * audio DSP destination. Editor-only/reserved or zero-depth cables remain
+     * published for patch recall, without activating per-sample matrix work.
+     */
     var active: Boolean = false
         private set
+
+    /**
+     * A configured (even zero-depth/reserved) cable historically kept the
+     * free-running LFO clock advancing. Preserve that clock cheaply when the
+     * audible matrix is asleep so a later depth edit does not restart its phase.
+     * Worker-owned; never published or read from a UI thread.
+     */
+    private var hasEnabledRouteClock = false
     var pitchRouteActive: Boolean = false
         private set
     var filterRouteActive: Boolean = false
@@ -196,17 +209,24 @@ internal class LiveModulationHost(sampleRate: Int) {
             var panCount = 0
             var oscillatorGainMask = 0
             var oscillatorPitchMask = 0
+            var hasAnyEnabledCable = false
             for (i in 0 until ROUTE_COUNT) {
                 val next = publishedRoutes.get(i)
+                // Never let saved but currently unwired destinations, nor zero
+                // depth, consume the 48 kHz matrix/filter/pitch fast paths.
+                // Keep the exact saved editor config in publishedRoutes.
+                val eligible = next.enabled && next.depth.isFinite() &&
+                    next.depth != 0f && isWiredAudioDestination(next.destination)
                 if (next !== appliedRoutes[i]) {
-                    if (next.enabled) {
+                    if (eligible) {
                         rack.matrix.setRoute(i, next.source, next.destination, next.depth, next.curve)
                     } else {
                         rack.matrix.clearRoute(i)
                     }
                     appliedRoutes[i] = next
                 }
-                if (next.enabled) {
+                if (next.enabled) hasAnyEnabledCable = true
+                if (eligible) {
                     count++
                     when (next.destination) {
                         ModDestination.PITCH -> pitchCount++
@@ -229,6 +249,7 @@ internal class LiveModulationHost(sampleRate: Int) {
                 }
             }
             active = count > 0
+            hasEnabledRouteClock = hasAnyEnabledCable
             pitchRouteActive = pitchCount > 0
             filterRouteActive = filterCount > 0
             ampRouteActive = ampCount > 0
@@ -253,7 +274,9 @@ internal class LiveModulationHost(sampleRate: Int) {
 
         // A programmed step clock must also tick when it has no routed cables
         // yet, so the real playhead is available while users draw the pattern.
-        if (!active) return false
+        // A zero-depth cable must not keep the costly matrix alive, but its
+        // LFO still needs current phase/rate/retrigger before a depth edit.
+        if (!active && !hasEnabledRouteClock) return false
 
         val latestLfoRevision = lfoRevision.get()
         if (latestLfoRevision != appliedLfoRevision) {
@@ -274,6 +297,8 @@ internal class LiveModulationHost(sampleRate: Int) {
             }
             appliedLfoRevision = latestLfoRevision
         }
+
+        if (!active) return false
 
         for (source in ModSource.entries) {
             rack.setSource(
@@ -308,31 +333,54 @@ internal class LiveModulationHost(sampleRate: Int) {
     }
 
     fun onNoteOn() {
-        if (active || rack.stepEnabled) {
+        if (active || hasEnabledRouteClock || rack.stepEnabled) {
             rack.retrigger()
             visibleStepPlayhead = rack.stepPlayhead
         }
     }
 
-    /** Advance just the visual STEP clock if no cable is consuming it yet. */
+    /**
+     * No effective DSP cable: preserve legacy free-running LFO/STEP clocks
+     * without any trig, matrix, destination smoothing, or heap allocation.
+     */
     fun tickStepOnly() {
-        // When the last cable disappears, all eight buses still return to exact
-        // neutral over 8 ms while the voices continue playing.
+        // When the last OSC cable disappears, its gain and pitch still return
+        // to exact neutral over 8 ms while the voices continue playing.
         if (oscillatorModulation.active) oscillatorModulation.next(null)
-        if (rack.stepEnabled) {
+        if (hasEnabledRouteClock) {
+            rack.advance(1)
+        } else if (rack.stepEnabled) {
             rack.advanceStepOnly(1)
-            if (visibleStepPlayhead != rack.stepPlayhead) {
-                visibleStepPlayhead = rack.stepPlayhead
-            }
+        }
+        if (rack.stepEnabled && visibleStepPlayhead != rack.stepPlayhead) {
+            visibleStepPlayhead = rack.stepPlayhead
         }
     }
 
     /** Free-running synchronized modulation must keep time through silent blocks. */
     fun advanceSilence(frames: Int) {
-        if (active) rack.advance(frames)
+        if (active || hasEnabledRouteClock) rack.advance(frames)
         else if (rack.stepEnabled) rack.advanceStepOnly(frames)
         if (rack.stepEnabled) visibleStepPlayhead = rack.stepPlayhead
         // Only called after the voice/FX-tail silence check in OrbitalSynth.
         oscillatorModulation.resetWhileSilent()
+    }
+
+    /**
+     * Only these 22 normalized buses currently drive synthesis code. Other
+     * stable ModDestination ordinals remain serializable for future engines.
+     */
+    private fun isWiredAudioDestination(destination: ModDestination): Boolean {
+        return when (destination) {
+            ModDestination.PITCH, ModDestination.MORPH, ModDestination.CUTOFF,
+            ModDestination.RESONANCE, ModDestination.AMP, ModDestination.PAN -> true
+            else -> {
+                val ordinal = destination.ordinal
+                (ordinal >= ModDestination.OSC1_GAIN.ordinal &&
+                    ordinal <= ModDestination.OSC8_GAIN.ordinal) ||
+                    (ordinal >= ModDestination.OSC1_PITCH.ordinal &&
+                        ordinal <= ModDestination.OSC8_PITCH.ordinal)
+            }
+        }
     }
 }
