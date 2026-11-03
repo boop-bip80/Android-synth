@@ -57,11 +57,13 @@ internal fun ImmersiveStage(
     onNoteOn: (Int) -> Unit,
     onNoteOff: (Int) -> Unit,
     onParameterChange: (ParameterId, Float) -> Unit,
+    onExpressiveNoteOn: ((Int, Float) -> Unit)? = null,
     onExit: () -> Unit,
 ) {
     val mapper = remember { TouchPerformanceMapper() }
     val haptics = LocalHapticFeedback.current
     val latestOn = rememberUpdatedState(onNoteOn)
+    val latestExpressiveOn = rememberUpdatedState(onExpressiveNoteOn)
     val latestOff = rememberUpdatedState(onNoteOff)
     val latestParameter = rememberUpdatedState(onParameterChange)
     // Dedupe minute pointer jitter before triggering Compose state invalidations.
@@ -78,7 +80,16 @@ internal fun ImmersiveStage(
     fun deliver(events: List<TouchVoiceEvent>) {
         for (event in events) {
             when (event) {
-                is TouchVoiceEvent.NoteOn -> latestOn.value(event.note)
+                is TouchVoiceEvent.NoteOn -> {
+                    // Keep the legacy note-only callback as a compatible fallback.
+                    // A velocity-aware host can send the exact contact dynamic to DSP.
+                    val expressiveOn = latestExpressiveOn.value
+                    if (expressiveOn != null) {
+                        expressiveOn(event.note, event.velocity.coerceIn(0f, 1f))
+                    } else {
+                        latestOn.value(event.note)
+                    }
+                }
                 is TouchVoiceEvent.NoteOff -> latestOff.value(event.note)
                 is TouchVoiceEvent.Expression -> {
                     fun send(index: Int, id: ParameterId, value: Float) {
