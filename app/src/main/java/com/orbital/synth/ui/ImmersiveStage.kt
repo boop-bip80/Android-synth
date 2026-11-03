@@ -217,6 +217,10 @@ internal fun ImmersiveStage(
         }
     }
 
+    // Only the explicit keyboardless FOCUS sub-mode hides Android OS chrome.
+    // Back first reveals app controls, which disposes the bar-hiding effect.
+    FocusSystemBarsEffect(focusMode = cleanCanvas)
+
     val parameter = { id: ParameterId ->
         (state.parameters[id] ?: .5f).coerceIn(0f, 1f)
     }
