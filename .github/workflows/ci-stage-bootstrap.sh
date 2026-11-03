@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Fresh API35 emulator preparation for the REAL AudioTrack + FOCUS framebuffer proof.
-# The isolated stage lane prevents a costly graphics capture from running twice
-# after a long Android instrumentation suite, but NEVER skips the capture gate.
+# Fresh API35 emulator preparation for real production screenshot proof.
+# Stage and visuals run on independent clean devices so heavyweight screenshot
+# capture never follows the complete 59+ test instrumentation suite.
 set -euo pipefail
 mkdir -p artifacts
 phase=artifacts/focus-bootstrap-phase.txt
 summary=artifacts/focus-bootstrap-summary.txt
 printf 'start\n' > "$phase"
-printf 'run=%s\ncommit=%s\nsuite=stage\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" > "$summary"
+printf 'run=%s\ncommit=%s\nsuite=%s\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" "$ORBITAL_TEST_SUITE" > "$summary"
 finish() {
   local status=$?
   trap - EXIT
@@ -101,4 +101,4 @@ grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth/com[.]orbital[.]synth[.]MainActi
   exit 1
 }
 printf 'normal_baseline_sha256=%s\n'   "$(sha256sum artifacts/orbital-emulator.png | cut -d' ' -f1)" >> "$summary"
-printf 'ready-for-strict-focus-PCM-gesture-instrumentation\n' > "$phase"
+printf 'ready-for-strict-real-android-screenshot-proofs\n' > "$phase"
