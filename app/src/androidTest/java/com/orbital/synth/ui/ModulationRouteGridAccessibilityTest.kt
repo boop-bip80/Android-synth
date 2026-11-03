@@ -82,7 +82,7 @@ class ModulationRouteGridAccessibilityTest {
             val below = bounds.height > 0f && bounds.bottom > visible.bottom
             val above = bounds.height > 0f && bounds.top < visible.top
             val reachedEnd = scroll.maxValue > 0 && scroll.value >= scroll.maxValue - 1
-            val swipeDown = above || (bounds.isEmpty && reachedEnd && !below)
+            val swipeDown = above || ((bounds.width <= 0f || bounds.height <= 0f) && reachedEnd && !below)
             viewport.performTouchInput {
                 val x = 4f // Quiet panel gutter; no nested XY slider captures drag.
                 val startY = size.height * if (swipeDown) .25f else .78f
