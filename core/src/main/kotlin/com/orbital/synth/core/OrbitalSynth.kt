@@ -114,6 +114,10 @@ class OrbitalSynth(
     // alias-safety headroom until the sounding note and its tails are finished.
     // This is worker-owned state, never read or written by the UI thread.
     private var pitchMipReservationWhileSounding = false
+    // Per-layer pitch release must not change a held note's harmonic ceiling
+    // at whichever callback boundary happens to follow the last slew sample.
+    // Reserve only the lanes actually routed during this sounding interval.
+    private var oscillatorPitchMipReservationWhileSounding = 0
     private val events = ConcurrentLinkedQueue<Event>()
     // Only note/source events reserve slots; hostile MIDI floods cannot retain an
     // unbounded queue or strand releases behind millions of stale note-ons.
@@ -583,10 +587,13 @@ class OrbitalSynth(
         // full silence must never inherit an older note's mip reservation.
         if (voices.none { it.active || it.hasTail }) {
             pitchMipReservationWhileSounding = false
+            oscillatorPitchMipReservationWhileSounding = 0
         }
         drainEvents(glideSec, wave, morph)
-        if (liveModulation.pitchRouteActive && voices.any { it.active || it.hasTail }) {
-            pitchMipReservationWhileSounding = true
+        if (voices.any { it.active || it.hasTail }) {
+            if (liveModulation.pitchRouteActive) pitchMipReservationWhileSounding = true
+            oscillatorPitchMipReservationWhileSounding =
+                oscillatorPitchMipReservationWhileSounding or liveModulation.oscillatorPitchMipMask
         }
         for (slot in 0 until fxSlotCount) {
             blockFxSlots[slot] = fxSlots.get(slot)
@@ -599,7 +606,7 @@ class OrbitalSynth(
             modulationDepth * 0.5 + (if (pitchMipReservationWhileSounding) 6.0 else 0.0)) / 12.0)
         // Headroom is per routed oscillator, so an OSC1 pitch cable cannot
         // dull OSC2..OSC8's unrelated wavetable/mip selection.
-        val oscillatorPitchMipMask = liveModulation.oscillatorPitchMipMask
+        val oscillatorPitchMipMask = oscillatorPitchMipReservationWhileSounding
         for (voice in voices) voice.preparePitch(highestPitchMultiplier, oscillatorPitchMipMask)
 
         var active = 0

@@ -273,6 +273,112 @@ class OscillatorPerLayerModulationTest {
         assertBounded(block)
     }
 
+    @Test fun unpluggedPitchIsRawPcmInvariantForWhole192And512FrameCallbacks() {
+        for (depth in floatArrayOf(-0.5f, 0.5f)) {
+            for (otherCableRemains in booleanArrayOf(false, true)) {
+                val whole = pitchReleaseSynth(depth, otherCableRemains)
+                val small = pitchReleaseSynth(depth, otherCableRemains)
+                val wide = pitchReleaseSynth(depth, otherCableRemains)
+                // The edit happens at an identical PCM frame for every host.
+                val warmup = renderChunks(whole, 6_144, 192)
+                assertRawBitsEqual(warmup, renderChunks(small, 6_144, 192))
+                assertRawBitsEqual(warmup, renderChunks(wide, 6_144, 192))
+                for (synth in arrayOf(whole, small, wide)) synth.clearModulationRoute(0)
+
+                // Include the exact sample at which the OSC pitch release
+                // snaps to neutral AND several blocks afterward. Previously
+                // the host changed the held wavetable mip at a later callback
+                // boundary, making the audible PCM depend on buffer size.
+                val reference = renderChunks(whole, 12_288, 12_288)
+                assertRawBitsEqual(reference, renderChunks(small, 12_288, 192))
+                assertRawBitsEqual(reference, renderChunks(wide, 12_288, 512))
+                assertBounded(reference)
+            }
+        }
+    }
+
+    @Test fun heldPitchMipSurvivesUnplugButFreshDryNoteReleasesReservation() {
+        for (depth in floatArrayOf(-0.5f, 0.5f)) {
+            val used = pitchReleaseSynth(depth, false)
+            renderChunks(used, 6_144, 192)
+            val held = oscillatorMipSnapshot(used)
+            used.clearModulationRoute(0)
+            renderChunks(used, 12_288, 192)
+            val unplugged = oscillatorMipSnapshot(used)
+            for (slot in intArrayOf(2, 6)) {
+                assertEquals("Unplug must not retarget a sounding lane's mip",
+                    held.first[slot], unplugged.first[slot])
+                assertEquals("Unplug must not jump a sounding lane's mip fade",
+                    held.second[slot], unplugged.second[slot], 0f)
+            }
+
+            used.allNotesOff()
+            renderChunks(used, 12_288, 192)
+            assertEquals(0, used.activeVoiceCount)
+            used.noteOn(96)
+            used.renderStereo(FloatArray(192 * 2), 192)
+
+            val dry = pitchReleaseSynth(0f, false)
+            dry.renderStereo(FloatArray(192 * 2), 192)
+            val expected = oscillatorMipSnapshot(dry)
+            val fresh = oscillatorMipSnapshot(used)
+            for (slot in intArrayOf(2, 6)) {
+                assertEquals("A fresh dry note must not inherit old lane headroom",
+                    expected.first[slot], fresh.first[slot])
+                assertEquals(expected.second[slot], fresh.second[slot], 0f)
+            }
+            assertTrue("Regression setup must actually select a different routed mip or fade",
+                held.first[2] != expected.first[2] || held.second[2] != expected.second[2])
+            // OSC7 never had a pitch cable, so OSC3's reservation cannot dull it.
+            assertEquals(expected.first[6], held.first[6])
+            assertEquals(expected.second[6], held.second[6], 0f)
+        }
+    }
+
+    private fun pitchReleaseSynth(depth: Float, otherCableRemains: Boolean) = clean(1).apply {
+        for (slot in intArrayOf(2, 6)) setOscillatorSlot(
+            slot, OscillatorSlot(enabled = true, waveform = 0.5f, morph = 1f, level = 0.7f),
+        )
+        setModulationSource(ModSource.TOUCH_X, 1f)
+        setModulationRoute(0, ModSource.TOUCH_X, ModDestination.OSC3_PITCH, depth)
+        if (otherCableRemains) {
+            // Keep the matrix awake through an unrelated inaudible lane:
+            // exercise both tick() and tickStepOnly() release paths.
+            setModulationRoute(1, ModSource.TOUCH_X, ModDestination.OSC8_GAIN, 0.2f)
+        }
+        noteOn(96)
+    }
+
+    private fun renderChunks(synth: OrbitalSynth, frames: Int, chunk: Int): FloatArray {
+        require(frames % chunk == 0)
+        val output = FloatArray(frames * 2)
+        val block = FloatArray(chunk * 2)
+        var offset = 0
+        while (offset < output.size) {
+            synth.renderStereo(block, chunk)
+            System.arraycopy(block, 0, output, offset, block.size)
+            offset += block.size
+        }
+        return output
+    }
+
+    private fun oscillatorMipSnapshot(synth: OrbitalSynth): Pair<IntArray, FloatArray> {
+        // Test-only reflection keeps implementation inspection out of the
+        // shipped audio API. A one-voice synth makes the chosen lane explicit.
+        val voicesField = OrbitalSynth::class.java.getDeclaredField("voices")
+        voicesField.isAccessible = true
+        val voice = (voicesField.get(synth) as Array<*>)[0]!!
+        val rackField = voice.javaClass.getDeclaredField("oscillatorRack")
+        rackField.isAccessible = true
+        val rack = rackField.get(voice)
+        val levelsField = LayeredOscillatorRack::class.java.getDeclaredField("mipLevel")
+        val fadesField = LayeredOscillatorRack::class.java.getDeclaredField("mipFade")
+        levelsField.isAccessible = true
+        fadesField.isAccessible = true
+        return (levelsField.get(rack) as IntArray).copyOf() to
+            (fadesField.get(rack) as FloatArray).copyOf()
+    }
+
     private fun setupLfoOscillation(synth: OrbitalSynth) {
         synth.setOscillatorSlot(0, OscillatorSlot(enabled = true, waveform = 0.52f, level = 0.7f))
         synth.setOscillatorSlot(7, OscillatorSlot(enabled = true, waveform = 0.75f, level = 0.5f))

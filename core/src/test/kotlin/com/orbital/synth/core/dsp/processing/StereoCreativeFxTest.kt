@@ -87,6 +87,25 @@ class StereoCreativeFxTest {
             abs(out[0] - .13f) < .001f)
     }
 
+    @Test fun crusherFullScaleMatchesSignedFourAndSixteenBitCodeRange() {
+        for ((depth, codeScale) in listOf(1f to 8, 0f to 32768)) {
+            val crusher = StereoBitcrusher(48_000)
+            crusher.configure(rateControl = 1f, stereo = .5f)
+            val out = FloatArray(2)
+            val largestPositive = (codeScale - 1).toFloat() / codeScale.toFloat()
+
+            crusher.process(1f, -1f, depth, out)
+            assertEquals("Positive full scale must use the highest representable signed code",
+                largestPositive, out[0], 0f)
+            assertEquals("Negative full scale must stay exactly -1", -1f, out[1], 0f)
+
+            // Reset is required to capture a new pair at the sample-hold edge.
+            crusher.resetForBypass()
+            crusher.process(-1f, 1f, depth, out)
+            assertEquals(-1f, out[0], 0f)
+            assertEquals(largestPositive, out[1], 0f)
+        }
+    }
     @Test fun newEffectsAreActuallyAudibleWithinTheRealOrderedFxChain() {
         for (type in listOf(
             FxModuleType.REVERB, FxModuleType.PHASER, FxModuleType.BITCRUSH,
