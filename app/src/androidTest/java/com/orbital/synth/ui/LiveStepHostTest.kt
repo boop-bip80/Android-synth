@@ -26,6 +26,7 @@ import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import com.orbital.synth.preset.PatchOutcome
 import com.orbital.synth.preset.UserPatchRepository
 import com.orbital.synth.core.preset.PatchCodec
+import com.orbital.synth.core.preset.FactoryPresets
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -128,8 +129,16 @@ class LiveStepHostTest {
             assertEquals(synth.modulationSteps, PatchCodec.decode(text).modulationSteps)
             assertEquals(route, PatchCodec.decode(text).modulationRoutes[0])
             val expected = synth.modulationSteps
-            synth.setModulationSteps(ModulationStepConfig())
-            assertTrue(!synth.modulationSteps.enabled)
+            // Real user-bank activation must clear V5 STEP when an older factory
+            // patch has no STEP field; reactivating the saved V5 restores it.
+            val factory = FactoryPresets.ALL.first()
+            assertTrue("Factory migration fixture must predate V5 STEP",
+                factory.modulationSteps == null)
+            val legacy = runBlocking { repository.activate(factory.id) }
+            assertTrue("Legacy factory activation failed: " + legacy,
+                legacy is PatchOutcome.Success)
+            assertTrue("Older patch leaked the previous STEP modulation",
+                !synth.modulationSteps.enabled)
             val restored = runBlocking { repository.activate(id) }
             assertTrue("Disk-backed STEP recall failed: " + restored, restored is PatchOutcome.Success)
             assertEquals(expected, synth.modulationSteps)
