@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -22,8 +23,10 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ParameterId
@@ -72,6 +75,55 @@ class Compact350SoundInstrumentedTest {
             swipeSelectorRowLeft(rowTag)
         }
         node.assertIsDisplayed()
+    }
+
+    /**
+     * Reach a real offscreen control in the 104dp-high weighted compact editor
+     * using bounded, geometry-directed physical finger swipes only.
+     * Returns exact physical renderer bounds, never a test-only fake gesture.
+     */
+    private fun physicallyRevealWithinCompactEditor(
+        tag: String,
+        minHeightDp: Float,
+    ): Rect {
+        val node = compose.onNodeWithTag(tag)
+        val editor = compose.onNodeWithTag("soundEditorScroll").assertIsDisplayed()
+        val density = compose.activity.resources.displayMetrics.density
+        for (attempt in 0 until 12) {
+            val editorRect = editor.fetchSemanticsNode().boundsInRoot
+            val targetRect = node.fetchSemanticsNode().boundsInRoot
+            val fullyInView = visible(node) &&
+                targetRect.height >= minHeightDp * density - 1f &&
+                targetRect.top >= editorRect.top - 1f &&
+                targetRect.bottom <= editorRect.bottom + 1f
+            if (fullyInView) break
+            val travel = when {
+                targetRect.bottom > editorRect.bottom ->
+                    -(targetRect.bottom - editorRect.bottom + 6f)
+                targetRect.top < editorRect.top ->
+                    editorRect.top - targetRect.top + 6f
+                else -> -editorRect.height * .30f
+            }.coerceIn(-editorRect.height * .45f, editorRect.height * .45f)
+            Log.i(TAG, "phase=physical-reveal-$tag-$attempt target=$targetRect " +
+                "editor=$editorRect drag=$travel")
+            editor.performTouchInput {
+                // The 3px panel gutter is outside nested XY gesture owners.
+                val start = Offset(3f, center.y - travel * .5f)
+                val end = Offset(3f, center.y + travel * .5f)
+                swipe(start = start, end = end, durationMillis = 340)
+            }
+            compose.waitForIdle()
+        }
+        val targetRect = node.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val editorRect = editor.fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            "$tag physical bounds must be completely within actual 350dp editor: " +
+                "target=$targetRect editor=$editorRect",
+            targetRect.top >= editorRect.top - 1f &&
+                targetRect.bottom <= editorRect.bottom + 1f &&
+                targetRect.height >= minHeightDp * density - 1f,
+        )
+        return targetRect
     }
 
     /** Save actual device screen pixels for strict CI extraction, not a Compose mock. */
@@ -185,47 +237,12 @@ class Compact350SoundInstrumentedTest {
         // wave field may be below the short editor fold. Scroll ONLY with
         // real finger gestures, never Compose performScrollTo(), which hangs
         // some API35 hardware rendering paths in this weighted viewport.
-        val wave = compose.onNodeWithTag("oscillatorWaveCanvas")
-        val editor = compose.onNodeWithTag("soundEditorScroll").assertIsDisplayed()
-        val density = compose.activity.resources.displayMetrics.density
-        var fullyInView = false
-        for (attempt in 0 until 12) {
-            val editorRect = editor.fetchSemanticsNode().boundsInRoot
-            val waveRect = wave.fetchSemanticsNode().boundsInRoot
-            fullyInView = visible(wave) &&
-                waveRect.height >= 95f * density &&
-                waveRect.top >= editorRect.top - 1f &&
-                waveRect.bottom <= editorRect.bottom + 1f
-            if (fullyInView) break
-            // Geometry-directed, bounded, physically timed finger swipe.
-            // If an earlier fling overshot above the editor, reverse travel;
-            // never invoke the flaky Compose performScrollTo automation.
-            val travel = when {
-                waveRect.bottom > editorRect.bottom ->
-                    -(waveRect.bottom - editorRect.bottom + 6f)
-                waveRect.top < editorRect.top ->
-                    editorRect.top - waveRect.top + 6f
-                else -> -editorRect.height * .30f
-            }.coerceIn(-editorRect.height * .45f, editorRect.height * .45f)
-            Log.i(TAG, "phase=luminous-physical-reveal-$attempt wave=$waveRect " +
-                "editor=$editorRect drag=$travel")
-            editor.performTouchInput {
-                val start = Offset(3f, center.y - travel * .5f)
-                val end = Offset(3f, center.y + travel * .5f)
-                swipe(start = start, end = end, durationMillis = 340)
-            }
-            compose.waitForIdle()
-        }
-        val waveBounds = wave.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-        val editorBounds = editor.fetchSemanticsNode().boundsInRoot
-        assertTrue(
-            "96dp physical waveform must fit within compact editor after real swipes: " +
-                "wave=$waveBounds editor=$editorBounds",
-            waveBounds.top >= editorBounds.top - 1f &&
-                waveBounds.bottom <= editorBounds.bottom + 1f,
+        val waveBounds = physicallyRevealWithinCompactEditor(
+            "oscillatorWaveCanvas", minHeightDp = 95f,
         )
+        val density = compose.activity.resources.displayMetrics.density
         assertTrue(
-            "Compact OSC8 waveform must expose physical 96dp touch height",
+            "Compact OSC8 waveform must expose a physical 96dp touch field",
             waveBounds.height in (95f * density)..(99f * density),
         )
         Log.i(TAG, "phase=compact-luminous-wave-visible bounds=$waveBounds")
@@ -251,6 +268,39 @@ class Compact350SoundInstrumentedTest {
 
         // Real framebuffer after OSC8 finger gestures, with the wave visible.
         captureNativeFrame("orbital-compact350-luminous.png")
+
+        // The 96dp waveform intentionally cannot share this 104dp viewport
+        // with two 52dp rails; prove the actual touch rails remain physically
+        // reachable after another bounded finger swipe, without collapsing
+        // the OSC8 editor or dislodging the permanent piano.
+        val railBounds = physicallyRevealWithinCompactEditor(
+            "luminousMorphControl", minHeightDp = 48f,
+        )
+        val levelRail = compose.onNodeWithTag("luminousLevelControl")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("Compact level rail still needs a real 48dp TalkBack target",
+            levelRail.height >= 48f * density - 1f)
+        assertTrue("Both compact controls must occupy the same reachable row",
+            kotlin.math.abs(railBounds.top - levelRail.top) <= density)
+        compose.onNodeWithTag("luminousMorphControl")
+            .assertIsDisplayed().performTouchInput {
+                click(Offset((center.x * 2f) * .23f, center.y))
+            }
+        compose.waitForIdle()
+        compose.onNodeWithTag("luminousLevelControl")
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(.61f) }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            val next = slots.value[7]
+            assertEquals("Compact morph rail must transmit real finger X",
+                .23f, next.morph, .07f)
+            assertEquals("Compact level must honor TalkBack SetProgress",
+                .61f, next.level, .005f)
+            assertEquals(.76f, next.noiseLevel, 0f)
+            assertEquals(.65f, next.noiseColor, 0f)
+            assertTrue(next.enabled)
+        }
+        Log.i(TAG, "phase=compact-luminous-osc8-physical-rails-and-talkback-pass")
 
         // Neither physical editor swipes nor touch synthesis can dislodge the
         // live keybed. The permanent OSC toggle remains immediately available.
