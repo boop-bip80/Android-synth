@@ -56,8 +56,14 @@ class OscillatorWorkbenchCaptureTest {
             compose.onNodeWithTag("oscillatorAdd").performScrollTo()
                 .assertIsDisplayed().performClick()
         }
-        compose.onNodeWithTag("oscillatorLayer1").performScrollTo()
-            .assertIsDisplayed().performClick()
+        // The selector lives in a HORIZONTAL strip above the ADD footer.
+        // performScrollTo() alone resolves its nearest horizontal ancestor
+        // while the outer SOUND vertical editor may still clip the whole row.
+        // Physically scroll UP inside the actual editor until the 49×51dp
+        // layer is fully visible, then tap it like a user.
+        compose.fullyRevealOscillatorCanvas(
+            "oscillatorLayer1", "soundEditorScroll", searchDirection = -1,
+        ).assertIsDisplayed().performClick()
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Oscillator 2, active").assertExists()
 
