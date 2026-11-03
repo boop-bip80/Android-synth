@@ -58,6 +58,7 @@ import kotlin.math.sin
  * work. The bright trace is configured LFO voltage versus phase, NOT its live phase.
  * Depth is routed per *cable*, never represented as a nonexistent LFO parameter.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun LfoConfigurationGarden(
     lfos: List<ModulationLfoConfig>,

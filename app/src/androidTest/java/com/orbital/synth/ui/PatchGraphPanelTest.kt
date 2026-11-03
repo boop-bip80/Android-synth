@@ -1,5 +1,6 @@
 package com.orbital.synth.ui
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,9 +51,9 @@ class PatchGraphPanelTest {
     @get:Rule val compose = createComposeRule()
 
     /**
-     * A node may report 48dp measured size while its last pixels sit BEHIND the
-     * real weighted editor viewport. Inspect the physical root+viewport
-     * intersection, never the un-clipped semantics bounds alone.
+     * A full-size Compose node can nevertheless be clipped by its scroll
+     * viewport. Require the physically exposed 48dp rectangle AND an onscreen
+     * finger-click center before acknowledging any graph port.
      */
     private fun assertVisible48Dp(tag: String) {
         val measured = compose.onNodeWithTag(tag).assertIsDisplayed()
@@ -60,63 +61,116 @@ class PatchGraphPanelTest {
         val viewport = compose.onNodeWithTag("patchGraphPhysicalViewport")
             .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val screen = compose.onRoot().fetchSemanticsNode().boundsInRoot
-        val exposedWidth = (
-            minOf(measured.right, viewport.right, screen.right) -
-                maxOf(measured.left, viewport.left, screen.left)
-            ).coerceAtLeast(0f)
-        val exposedHeight = (
-            minOf(measured.bottom, viewport.bottom, screen.bottom) -
-                maxOf(measured.top, viewport.top, screen.top)
-            ).coerceAtLeast(0f)
+        val left = maxOf(viewport.left, screen.left)
+        val right = minOf(viewport.right, screen.right)
+        val top = maxOf(viewport.top, screen.top)
+        val bottom = minOf(viewport.bottom, screen.bottom)
+        val exposedWidth = (minOf(measured.right, right) -
+            maxOf(measured.left, left)).coerceAtLeast(0f)
+        val exposedHeight = (minOf(measured.bottom, bottom) -
+            maxOf(measured.top, top)).coerceAtLeast(0f)
         val density = InstrumentationRegistry.getInstrumentation()
             .targetContext.resources.displayMetrics.density
         val minimum = 48f * density - 1f
+        val centerInside = measured.center.x in left..right &&
+            measured.center.y in top..bottom
         assertTrue(
-            "$tag must have a complete physical 48dp × 48dp corridor " +
-                "INSIDE visible graph viewport and screen, not merely a " +
-                "48dp unclipped layout: node=$measured viewport=$viewport " +
-                "screen=$screen exposed=${exposedWidth}x$exposedHeight px " +
-                "at density=$density",
-            exposedWidth >= minimum && exposedHeight >= minimum,
+            "$tag must expose a 48dp × 48dp physical corridor AND its actual " +
+                "finger-click center inside visible graph viewport and screen: " +
+                "node=$measured viewport=$viewport screen=$screen " +
+                "exposed=${exposedWidth}x${exposedHeight} px " +
+                "centerInside=$centerInside density=$density",
+            exposedWidth >= minimum && exposedHeight >= minimum && centerInside,
         )
     }
 
     /**
-     * The production graph's 790dp Canvas precedes its REAL semantic controls.
-     * Use bounded genuine finger swipes on a 350dp scroll viewport instead of
-     * performScrollTo() semantics automation (which has hung API35 GPU lanes).
-     * The final gate is the measured CLIPPED 48dp corridor above.
+     * Exactly the real 350dp scroll viewport, never performScrollTo().
+     * The outer graph has 11dp padding: x=4px is a noninteractive gutter
+     * outside its Canvas/node drag detectors, leaving the parent's scroll
+     * recognizer sole owner of this synthetic finger's real DOWN/MOVE/UP.
+     *
+     * Deep targets require coarse progress; partly clipped 48dp buttons get
+     * short edge-aware nudges. If an offscreen Compose child reports Rect.Zero,
+     * scroll position plus the last observed edge chooses the direction.
+     * Hard-fail after bounded attempts; do not bypass physical test assertions.
      */
-    private fun physicallyReveal48Dp(tag: String) {
+    private fun physicallyReveal48Dp(tag: String, scroll: ScrollState) {
         val density = InstrumentationRegistry.getInstrumentation()
             .targetContext.resources.displayMetrics.density
-        repeat(16) {
-            val bounds = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
-            val viewport = compose.onNodeWithTag("patchGraphPhysicalViewport")
+        val required = 48f * density - 1f
+        val margin = 3f * density
+        val viewport = compose.onNodeWithTag("patchGraphPhysicalViewport")
+        var lastObservedBelow = true
+
+        repeat(26) { attempt ->
+            compose.waitForIdle()
+            val bounds = compose.onNodeWithTag(tag)
                 .fetchSemanticsNode().boundsInRoot
-            val exposedHeight = (
-                minOf(bounds.bottom, viewport.bottom) -
-                    maxOf(bounds.top, viewport.top)
-                ).coerceAtLeast(0f)
-            if (exposedHeight >= 48f * density - 1f) {
+            val visible = viewport.fetchSemanticsNode().boundsInRoot
+            val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
+            val left = maxOf(visible.left, root.left)
+            val right = minOf(visible.right, root.right)
+            val top = maxOf(visible.top, root.top)
+            val bottom = minOf(visible.bottom, root.bottom)
+            val exposedWidth = (minOf(bounds.right, right) -
+                maxOf(bounds.left, left)).coerceAtLeast(0f)
+            val exposedHeight = (minOf(bounds.bottom, bottom) -
+                maxOf(bounds.top, top)).coerceAtLeast(0f)
+            val centerVisible = bounds.center.x in left..right &&
+                bounds.center.y in top..bottom
+            if (exposedWidth >= required && exposedHeight >= required &&
+                centerVisible
+            ) {
                 assertVisible48Dp(tag)
                 return
             }
-            val moveUp = bounds.top >= viewport.bottom - 48f * density ||
-                (bounds.top >= viewport.top && bounds.bottom > viewport.bottom)
-            // 50%-height swipe with a 420ms duration avoids fling overshoot on
-            // both large ScrollColumn and near-boundary 48dp fallback chips.
-            compose.onNodeWithTag("patchGraphPhysicalViewport").performTouchInput {
-                val start = if (moveUp) Offset(center.x * 1.65f, center.y * 1.50f)
-                    else Offset(center.x * 1.65f, center.y * .50f)
-                val end = if (moveUp) Offset(center.x * 1.65f, center.y * .50f)
-                    else Offset(center.x * 1.65f, center.y * 1.50f)
-                swipe(start = start, end = end, durationMillis = 420L)
+
+            val hasBounds = bounds.width > 1f && bounds.height > 1f
+            val reachedEnd = scroll.maxValue > 0 &&
+                scroll.value >= scroll.maxValue - 1
+            val swipeUp = when {
+                hasBounds && bounds.top >= bottom - required -> true
+                hasBounds && bounds.bottom <= top + required -> false
+                hasBounds && bounds.bottom > bottom - margin -> true
+                hasBounds && bounds.top < top + margin -> false
+                !hasBounds && scroll.value <= 0 -> true
+                !hasBounds && reachedEnd -> false
+                else -> lastObservedBelow
+            }
+            if (hasBounds) lastObservedBelow = swipeUp
+            if (attempt == 25) throw AssertionError(
+                "$tag never exposed a 48dp physical finger corridor after 25 " +
+                    "real swipes: node=$bounds viewport=$visible " +
+                    "scroll=${scroll.value}/${scroll.maxValue} " +
+                    "lastBelow=$lastObservedBelow",
+            )
+
+            val edgeDeficit = if (!hasBounds) Float.POSITIVE_INFINITY
+                else if (swipeUp) bounds.bottom - (bottom - margin)
+                else (top + margin) - bounds.top
+            // Tall graph Canvas can place a button >one viewport away.
+            val farAway = !hasBounds ||
+                bounds.top > bottom + required ||
+                bounds.bottom < top - required
+            viewport.performTouchInput {
+                val maxTravel = size.height * .42f
+                val minTravel = minOf(24f * density, maxTravel)
+                val travel = if (farAway) maxTravel else
+                    (edgeDeficit + margin + 12f)
+                        .coerceIn(minTravel, maxTravel)
+                val fingerY = if (swipeUp) size.height * .76f
+                    else size.height * .24f
+                val fingerEnd = if (swipeUp) fingerY - travel
+                    else fingerY + travel
+                swipe(
+                    start = Offset(4f, fingerY),
+                    end = Offset(4f, fingerEnd),
+                    durationMillis = if (farAway) 520L else 380L,
+                )
             }
         }
-        // Never skip: even with 16 physical attempts the control MUST actually
-        // fit the viewport or the test fails with its measured clipping.
-        assertVisible48Dp(tag)
+        error("Unreachable: physical reveal must return or throw")
     }
 
     @Test fun talkBackAccessibleLfoButtonsPatchActualTypedLiveRouteCallbacks() {
@@ -425,6 +479,7 @@ class PatchGraphPanelTest {
 
     @Test fun compact350BankedTwentyTwoDspPortsRemainPhysicalAndActuallyPatchOsc8Pitch() {
         val routes = mutableStateOf(List(64) { ModulationRouteConfig() })
+        val physicalScroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
                 Box(
@@ -433,7 +488,7 @@ class PatchGraphPanelTest {
                         .height(580.dp)
                         .testTag("patchGraphPhysicalViewport"),
                 ) {
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    Column(Modifier.fillMaxSize().verticalScroll(physicalScroll)) {
                         PatchGraphPanel(
                             oscillators = List(8) { OscillatorSlot(enabled = true, level = .5f) },
                             lfos = List(8) { ModulationLfoConfig(enabled = true) },
@@ -457,20 +512,20 @@ class PatchGraphPanelTest {
         }
         // These controls have physical >=48dp semantic touch corridors in
         // a real 350dp-wide screen, no 22-node overlapping atlas fiction.
-        physicallyReveal48Dp("patchLfo7")
+        physicallyReveal48Dp("patchLfo7", physicalScroll)
         compose.onNodeWithTag("patchLfo7")
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
-        physicallyReveal48Dp("patchGraphBankOSC8")
+        physicallyReveal48Dp("patchGraphBankOSC8", physicalScroll)
         compose.onNodeWithTag("patchGraphBankOSC8")
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
         compose.onNodeWithTag("patchGraphTargetBankStatus")
             .assertTextContains("OSC 8", substring = true)
         compose.onNodeWithTag("patchBusOSC7_GAIN").assertDoesNotExist()
-        physicallyReveal48Dp("patchBusOSC8_GAIN")
+        physicallyReveal48Dp("patchBusOSC8_GAIN", physicalScroll)
         compose.onNodeWithTag("patchBusOSC8_GAIN").assertHeightIsAtLeast(48.dp)
-        physicallyReveal48Dp("patchBusOSC8_PITCH")
+        physicallyReveal48Dp("patchBusOSC8_PITCH", physicalScroll)
         compose.onNodeWithTag("patchBusOSC8_PITCH")
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
@@ -486,12 +541,12 @@ class PatchGraphPanelTest {
 
         // Switching banks never changes/erases the saved OSC8 cable. A global
         // tap creates a second real, different route through the SAME host API.
-        physicallyReveal48Dp("patchGraphBankGLOBAL")
+        physicallyReveal48Dp("patchGraphBankGLOBAL", physicalScroll)
         compose.onNodeWithTag("patchGraphBankGLOBAL")
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
         compose.onNodeWithTag("patchBusOSC8_PITCH").assertDoesNotExist()
-        physicallyReveal48Dp("patchBusCUTOFF")
+        physicallyReveal48Dp("patchBusCUTOFF", physicalScroll)
         compose.onNodeWithTag("patchBusCUTOFF")
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }

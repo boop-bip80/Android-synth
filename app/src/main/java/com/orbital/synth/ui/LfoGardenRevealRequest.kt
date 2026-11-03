@@ -8,6 +8,7 @@ import androidx.compose.runtime.compositionLocalOf
  * LFO editor. Only an explicit mini-card tap supplies this value. No routing
  * event or scroll can leak to another user's FX tab or synth instance.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 internal data class LfoGardenRevealRequest(
     val requester: BringIntoViewRequester,
     val laneIndex: Int,

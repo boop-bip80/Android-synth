@@ -224,32 +224,38 @@ class LiveModulationResidualTailTest {
         assertFalse(sounding.panRouteActive)
     }
 
-    @Test fun sixGlobalReleasePcmIsConsistentAcross192And512FrameCallbacks() {
-        for (d in globals) {
-            val small = soundingSynth(d)
-            val large = soundingSynth(d)
-            // Stress removal of a bus while another effective cable keeps
-            // matrix/voices live; PITCH, filter, AMP and PAN flags must not
-            // bypass their residual output just because one cable departed.
-            val other = if (d == ModDestination.MORPH || d == ModDestination.AMP ||
-                d == ModDestination.PAN) ModDestination.OSC1_GAIN else ModDestination.MORPH
-            for (machine in arrayOf(small, large)) {
-                machine.setModulationRoute(1, ModSource.TOUCH_X, other, .12f)
-            }
-            small.noteOn(61)
-            large.noteOn(61)
-            val beforeSmall = renderInChunks(small, 1_536, 192)
-            val beforeLarge = renderInChunks(large, 1_536, 512)
-            assertClosePcm("Before " + d + " depth edit", beforeSmall, beforeLarge, .002f)
+    @Test fun morphReleasePcmIsChunkInvariant() = assertGlobalReleaseChunkPcm(ModDestination.MORPH)
+    @Test fun pitchReleasePcmIsChunkInvariant() = assertGlobalReleaseChunkPcm(ModDestination.PITCH)
+    @Test fun cutoffReleasePcmIsChunkInvariant() = assertGlobalReleaseChunkPcm(ModDestination.CUTOFF)
+    @Test fun resonanceReleasePcmIsChunkInvariant() = assertGlobalReleaseChunkPcm(ModDestination.RESONANCE)
+    @Test fun ampReleasePcmIsChunkInvariant() = assertGlobalReleaseChunkPcm(ModDestination.AMP)
+    @Test fun panReleasePcmIsChunkInvariant() = assertGlobalReleaseChunkPcm(ModDestination.PAN)
 
-            small.setModulationRoute(0, ModSource.TOUCH_X, d, 0f)
-            large.setModulationRoute(0, ModSource.TOUCH_X, d, 0f)
-            val afterSmall = renderInChunks(small, 3_072, 192)
-            val afterLarge = renderInChunks(large, 3_072, 512)
-            assertClosePcm("During/after " + d + " declick", afterSmall, afterLarge, .003f)
-            assertTrue("PCM must stay finite after " + d,
-                afterSmall.all { it.isFinite() } && afterLarge.all { it.isFinite() })
+    /** Identical thresholds as the six-bus test, split for precise CI failure attribution. */
+    private fun assertGlobalReleaseChunkPcm(d: ModDestination) {
+        val small = soundingSynth(d)
+        val large = soundingSynth(d)
+        // Stress removal of a bus while another effective cable keeps
+        // matrix/voices live; PITCH, filter, AMP and PAN flags must not
+        // bypass their residual output just because one cable departed.
+        val other = if (d == ModDestination.MORPH || d == ModDestination.AMP ||
+            d == ModDestination.PAN) ModDestination.OSC1_GAIN else ModDestination.MORPH
+        for (machine in arrayOf(small, large)) {
+            machine.setModulationRoute(1, ModSource.TOUCH_X, other, .12f)
         }
+        small.noteOn(61)
+        large.noteOn(61)
+        val beforeSmall = renderInChunks(small, 1_536, 192)
+        val beforeLarge = renderInChunks(large, 1_536, 512)
+        assertClosePcm("Before " + d + " depth edit", beforeSmall, beforeLarge, .002f)
+
+        small.setModulationRoute(0, ModSource.TOUCH_X, d, 0f)
+        large.setModulationRoute(0, ModSource.TOUCH_X, d, 0f)
+        val afterSmall = renderInChunks(small, 3_072, 192)
+        val afterLarge = renderInChunks(large, 3_072, 512)
+        assertClosePcm("During/after " + d + " declick", afterSmall, afterLarge, .003f)
+        assertTrue("PCM must stay finite after " + d,
+            afterSmall.all { it.isFinite() } && afterLarge.all { it.isFinite() })
     }
 
     @Test fun realAmpPcmDepartsProgressivelyFromStillConnectedReference() {
