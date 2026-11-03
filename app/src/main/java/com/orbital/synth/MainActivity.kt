@@ -15,6 +15,7 @@ import com.orbital.synth.audio.AndroidMidiManager
 import com.orbital.synth.audio.SourceAwareMidiMessageListener
 import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.core.performance.ArpeggiatorDirection
 import com.orbital.synth.core.VoiceMode
 import com.orbital.synth.core.music.SequenceDirectoryStore
 import com.orbital.synth.core.music.SequencerNote
@@ -77,6 +78,7 @@ class MainActivity : ComponentActivity() {
         selectFactoryPatch(0)
 
         audioOutput = AndroidAudioOutput(applicationContext, synth)
+        audioOutput.setArpeggiatorTempo(audioOutput.sequencerTempo)
         userPatches = UserPatchRepository(applicationContext, synth)
         userSequences = SequenceDirectoryStore(filesDir.resolve("sequences").toPath())
         refreshPatchChoices()
@@ -94,20 +96,20 @@ class MainActivity : ComponentActivity() {
         refreshSequenceChoices()
         midiManager = AndroidMidiManager(applicationContext, object : SourceAwareMidiMessageListener {
             override fun onSourceNoteOn(sourceId: Long, channel: Int, note: Int, velocity: Int) {
-                synth.noteOn(sourceId, channel, note, velocity.coerceIn(0, 127) / 127f)
+                audioOutput.noteOn(sourceId, channel, note, velocity.coerceIn(0, 127))
             }
 
             override fun onSourceNoteOff(sourceId: Long, channel: Int, note: Int, velocity: Int) {
-                synth.noteOff(sourceId, channel, note)
+                audioOutput.noteOff(sourceId, channel, note)
             }
 
             // Preserve direct/legacy listener behavior without sharing touch or port keys.
             override fun onNoteOn(channel: Int, note: Int, velocity: Int) {
-                synth.noteOn(LEGACY_MIDI_SOURCE_ID, channel, note, velocity.coerceIn(0, 127) / 127f)
+                audioOutput.noteOn(LEGACY_MIDI_SOURCE_ID, channel, note, velocity.coerceIn(0, 127))
             }
 
             override fun onNoteOff(channel: Int, note: Int, velocity: Int) {
-                synth.noteOff(LEGACY_MIDI_SOURCE_ID, channel, note)
+                audioOutput.noteOff(LEGACY_MIDI_SOURCE_ID, channel, note)
             }
 
             override fun onControlChange(channel: Int, controller: Int, value: Int) {
@@ -142,6 +144,9 @@ class MainActivity : ComponentActivity() {
                     // so the active ID and enabled grid cannot belong to different patterns.
                     val sequence = audioOutput.sequencerPatternSelection
                     val tempo = audioOutput.sequencerTempo
+                    if (audioOutput.arpeggiatorTempo != tempo) {
+                        audioOutput.setArpeggiatorTempo(tempo)
+                    }
                     val actualNotes = sequence.sourcePattern.steps.map { it.notes }
                     if (pendingStepRevision != sequence.revision) {
                         pendingStepNotes.clear()
@@ -186,14 +191,15 @@ class MainActivity : ComponentActivity() {
                 OrbitalScreen(
                     state = screenState,
                     onNoteOn = { note ->
-                        if (note in 0..127) synth.noteOn(TOUCH_SOURCE_ID, 0, note)
+                        if (note in 0..127) audioOutput.noteOn(TOUCH_SOURCE_ID, 0, note, 127)
                     },
                     onNoteOff = { note ->
-                        if (note in 0..127) synth.noteOff(TOUCH_SOURCE_ID, 0, note)
+                        if (note in 0..127) audioOutput.noteOff(TOUCH_SOURCE_ID, 0, note)
                     },
                     onParameterChange = ::updateParameter,
                     onModeChange = ::updatePlayMode,
                     onOctaveChange = { octave ->
+                        audioOutput.allNotesOff(TOUCH_SOURCE_ID)
                         synth.allNotesOff(TOUCH_SOURCE_ID)
                         screenState = screenState.copy(octave = octave.coerceIn(0, 8))
                     },
@@ -224,6 +230,8 @@ class MainActivity : ComponentActivity() {
                     onSequencerTempoChange = { bpm ->
                         val next = bpm.coerceIn(20, 300)
                         audioOutput.setSequencerTempo(next)
+                        // Keep live arpeggiation musically locked to the pattern tempo.
+                        audioOutput.setArpeggiatorTempo(next)
                         screenState = screenState.copy(sequencerTempo = next)
                     },
                     onSequencerLengthChange = { requested ->
@@ -238,6 +246,30 @@ class MainActivity : ComponentActivity() {
                     onSavePatch = ::saveCurrentPatch,
                     onSelectPatch = ::activatePatch,
                     onSelectSequence = ::activateSequence,
+                    onArpEnabledChange = { enabled ->
+                        audioOutput.setArpeggiatorEnabled(enabled)
+                        screenState = screenState.copy(arpEnabled = enabled)
+                    },
+                    onArpDirectionChange = { direction ->
+                        audioOutput.setArpeggiatorDirection(
+                            ArpeggiatorDirection.valueOf(direction.name))
+                        screenState = screenState.copy(arpDirection = direction)
+                    },
+                    onArpRateChange = { rate ->
+                        if (audioOutput.setArpeggiatorRate(rate)) {
+                            screenState = screenState.copy(arpRate = rate)
+                        }
+                    },
+                    onArpLatchChange = { latched ->
+                        audioOutput.setArpeggiatorLatch(latched)
+                        screenState = screenState.copy(arpLatch = latched)
+                    },
+                    onArpSwingChange = { swing ->
+                        val amount = swing.coerceIn(0f, 1f)
+                        if (audioOutput.setArpeggiatorSwing(amount.toDouble())) {
+                            screenState = screenState.copy(arpSwing = amount)
+                        }
+                    },
                 )
             }
         }
@@ -247,6 +279,7 @@ class MainActivity : ComponentActivity() {
         val patches = FactoryPresets.ALL
         if (patches.isEmpty()) return
         patchIndex = ((index % patches.size) + patches.size) % patches.size
+        if (::audioOutput.isInitialized) audioOutput.arpeggiatorPanic()
         val patch = patches[patchIndex]
         synth.allNotesOff()
         synth.loadPatch(patch)
@@ -445,6 +478,7 @@ class MainActivity : ComponentActivity() {
             when (val result = userPatches.activate(id)) {
                 is PatchOutcome.Success -> {
                     val patch = result.value
+                    audioOutput.arpeggiatorPanic()
                     synth.allNotesOff()
                     val factoryIndex = FactoryPresets.ALL.indexOfFirst { it.id == patch.id }
                     if (factoryIndex >= 0) patchIndex = factoryIndex
@@ -496,6 +530,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        audioOutput.arpeggiatorPanic()
         synth.allNotesOff()
         audioOutput.setSequencerPlaying(false)
         screenState = screenState.copy(sequencerRunning = false, sequencerStep = -1)

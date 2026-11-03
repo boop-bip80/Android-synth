@@ -30,7 +30,7 @@ import kotlin.math.sqrt
 enum class ParameterId {
     WAVE, MORPH, CUTOFF, RESONANCE, MOVEMENT, FX_AMOUNT,
     ATTACK, DECAY, SUSTAIN, RELEASE, LFO_RATE, LFO_DEPTH, GLIDE,
-    UNISON, DETUNE
+    UNISON, DETUNE, ENGINE, CHARACTER
 }
 
 enum class VoiceMode { POLY, MONO, LEGATO }
@@ -189,6 +189,11 @@ class OrbitalSynth(
         val glide = parameter(ParameterId.GLIDE)
         val unison = parameter(ParameterId.UNISON)
         val detune = parameter(ParameterId.DETUNE)
+        // Five architecture families share the same normalized live-control contract.
+        // Quantize at block boundaries to keep a stable voice graph within a block.
+        val engineModel = (parameter(ParameterId.ENGINE) * 4f + 0.5f)
+            .toInt().coerceIn(0, 4)
+        val character = parameter(ParameterId.CHARACTER)
         val pitchBend = java.lang.Float.intBitsToFloat(bendBits.get()).toDouble()
 
         // Logarithmic time/frequency controls provide fine motion near useful short values.
@@ -204,6 +209,8 @@ class OrbitalSynth(
         for (voice in voices) {
             voice.configure(attackSec, decaySec, sustain, releaseSec, cutoffHz, resonance)
             voice.configureUnison(unison, detune)
+            voice.configureEngine(engineModel, character, cutoffHz.toFloat(),
+                resonance, wave, morph)
         }
         drainEvents(glideSec, wave, morph)
 
@@ -707,6 +714,8 @@ class OrbitalSynth(
             ParameterId.GLIDE -> 0.0f
             ParameterId.UNISON -> 0.0f
             ParameterId.DETUNE -> 0.0f
+            ParameterId.ENGINE -> 0.0f // original wavetable mode, backwards compatible
+            ParameterId.CHARACTER -> 0.0f
         }
     }
 }
