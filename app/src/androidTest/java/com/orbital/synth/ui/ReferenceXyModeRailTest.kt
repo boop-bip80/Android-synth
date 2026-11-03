@@ -153,9 +153,17 @@ class ReferenceXyModeRailTest {
         // Learn exact rendered chip position. This test never guesses a
         // percentage or assumes font scale, so it tests the physical hit box.
         compose.onNodeWithTag("referenceXyModeButton").performClick()
+        compose.runOnIdle {
+            assertEquals("Initial setup semantic open must NOT select a mode",
+                emptyList<ReferenceXyMode>(), changes)
+        }
         val chipCenter = compose.onNodeWithTag("referenceXyModeFILTER")
             .fetchSemanticsNode().boundsInRoot.center
         compose.onNodeWithTag("referenceXyModeBackdrop").performClick()
+        compose.runOnIdle {
+            assertEquals("Initial setup backdrop dismissal must NOT select a mode",
+                emptyList<ReferenceXyMode>(), changes)
+        }
 
         val root = compose.onNodeWithTag("referenceXyModeRail")
         val rootOrigin = root.fetchSemanticsNode().boundsInRoot.topLeft
@@ -164,8 +172,16 @@ class ReferenceXyModeRailTest {
         // Finger A touches the FUTURE chip position BEFORE the palette
         // exists, then remains physically held while B opens it.
         root.performTouchInput { down(0, chipCenter - rootOrigin) }
+        compose.runOnIdle {
+            assertEquals("Preexisting A-down must NOT select a mode",
+                emptyList<ReferenceXyMode>(), changes)
+        }
+        root.performTouchInput { down(1, buttonCenter - rootOrigin) }
+        compose.runOnIdle {
+            assertEquals("Opening B-down must NOT select a mode",
+                emptyList<ReferenceXyMode>(), changes)
+        }
         root.performTouchInput {
-            down(1, buttonCenter - rootOrigin)
             advanceEventTime(120L)
             up(1)
         }
