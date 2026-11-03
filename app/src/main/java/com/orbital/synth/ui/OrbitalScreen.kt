@@ -40,8 +40,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -342,13 +342,19 @@ fun OrbitalScreen(
             }
         }
         val compactOrbitLayout = compactHeight || maxWidth < 380.dp || LocalDensity.current.fontScale >= 1.2f
+        // Exactly one dense portrait SOUND hero must show all 4 authentic
+        // configuration mini plots ABOVE the anchored chromatic keyboard.
+        // Reclaim shell whitespace, not plasma pixels or 48dp touch targets.
+        val referencePortrait = selectedTab == Tab.SOUND &&
+            !compactHeight && compactOrbitLayout
         Column(
             Modifier.fillMaxSize().padding(
                 horizontal = if (compactHeight) 8.dp else 12.dp,
-                vertical = if (compactHeight) 3.dp else 9.dp,
+                vertical = if (compactHeight) 3.dp else if (referencePortrait) 6.dp else 9.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(
-                if (compactHeight) 2.dp else if (compactOrbitLayout) 8.dp else 12.dp,
+                if (compactHeight) 2.dp else if (referencePortrait) 4.dp
+                else if (compactOrbitLayout) 8.dp else 12.dp,
             ),
         ) {
         Header(
@@ -442,7 +448,10 @@ fun OrbitalScreen(
                     RoundedCornerShape(19.dp),
                 )
                 .verticalScroll(editorScroll)
-                .padding(horizontal = 7.dp, vertical = 6.dp),
+                .padding(
+                    horizontal = if (referencePortrait) 5.dp else 7.dp,
+                    vertical = if (referencePortrait) 3.dp else 6.dp,
+                ),
             verticalArrangement = Arrangement.spacedBy(if (compactOrbitLayout) 8.dp else 12.dp),
         ) {
         when (selectedTab) {
@@ -822,7 +831,11 @@ fun OrbitalScreen(
                 }
             }
         }
-        Spacer(Modifier.height(if (compactHeight) 0.dp else 6.dp))
+        // The old trailing spacer used to hide the last line of four mini
+        // oscilloscope tiles behind the keyboard at phone-scale font.
+        if (!referencePortrait) {
+            Spacer(Modifier.height(if (compactHeight) 0.dp else 6.dp))
+        }
         }
         SnackbarHost(hostState = snackbarHost, modifier = Modifier.align(Alignment.BottomCenter))
     }

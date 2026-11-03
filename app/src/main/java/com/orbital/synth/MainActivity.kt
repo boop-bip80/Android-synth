@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.MaterialTheme
 import com.orbital.synth.audio.AndroidAudioOutput
+import com.orbital.synth.audio.PerformanceTouchEpochPolicy
 import com.orbital.synth.audio.AndroidMidiManager
 import com.orbital.synth.audio.SourceAwareMidiMessageListener
 import com.orbital.synth.core.OrbitalSynth
@@ -835,7 +836,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        if (!audioOutput.start()) {
+        val sessionBeforeStart = audioOutput.performanceSessionEpoch
+        val started = audioOutput.start()
+        // onStop already panicked/invalidated all prior physical finger leases.
+        // A synchronous, successful foreground worker start is expected and
+        // must be ACKed before a fresh finger gets canceled at the 32ms poll.
+        // Unknown extra revisions (focus interruption/worker exit) remain
+        // unacknowledged so the poll can revoke truly stale input.
+        lastObservedAudioSession = PerformanceTouchEpochPolicy.acknowledgeExpectedStart(
+            previouslyObserved = lastObservedAudioSession,
+            beforeStart = sessionBeforeStart,
+            afterStart = audioOutput.performanceSessionEpoch,
+            accepted = started,
+            running = audioOutput.isRunning,
+        )
+        if (!started) {
             Toast.makeText(
                 this,
                 "Audio output unavailable. Check your device audio settings.",

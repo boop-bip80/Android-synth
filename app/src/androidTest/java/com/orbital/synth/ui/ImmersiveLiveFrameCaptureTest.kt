@@ -164,9 +164,13 @@ class ImmersiveLiveFrameCaptureTest {
         compose.onNodeWithTag("immersiveCanvas").assertExists()
         compose.onNodeWithTag("immersiveExit").assertDoesNotExist()
         compose.onNodeWithTag("stageConfigOpen").assertDoesNotExist()
+        // FOCUS must hide BOTH the new SOUND liquid-glass chromatic strips
+        // and the legacy PLAY/FX piano, never merely one keyboard family.
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(0)
-        compose.onNodeWithTag("referencePerformanceKeybed").assertDoesNotExist()
+        compose.onAllNodesWithContentDescription(
+            "Twelve live chromatic liquid-glass keys", substring = true,
+        ).assertCountEquals(0)
         mark("focus-stage-controls-hidden")
 
         // Compose semantics update before SurfaceFlinger presents the next frame.
@@ -281,7 +285,13 @@ class ImmersiveLiveFrameCaptureTest {
         compose.onNodeWithTag("immersiveStage").assertIsDisplayed()
         compose.onNodeWithTag("immersiveExit").assertIsDisplayed().performClick()
         compose.onNodeWithTag("immersiveStage").assertDoesNotExist()
-        compose.onNodeWithTag("referencePerformanceKeybed").assertIsDisplayed()
+        // Entry was the real SOUND tab, so EXIT must restore exactly ONE
+        // usable 12-strip live keybed, not an obsolete dummy piano placeholder.
+        compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
+            .assertCountEquals(0)
+        compose.onAllNodesWithContentDescription(
+            "Twelve live chromatic liquid-glass keys", substring = true,
+        ).assertCountEquals(1)
         assertTrue("Exiting stage must leave the real audio worker alive", audio.isRunning)
         mark("exit-keyboard-audio-worker-confirmed")
     }

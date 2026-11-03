@@ -45,18 +45,28 @@ class ImmersiveStageTest {
 
     @Test fun immersiveStageHidesKeyboardAndExitRestoresIt() {
         render()
-        compose.onNodeWithTag("referencePerformanceKeybed").assertIsDisplayed()
+        compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
+            .assertCountEquals(0)
+        compose.onAllNodesWithContentDescription(
+            "Twelve live chromatic liquid-glass keys", substring = true,
+        ).assertCountEquals(1)
         compose.onNodeWithTag("immersiveModeToggle").assertIsDisplayed().performClick()
         compose.onNodeWithTag("immersiveStage").assertIsDisplayed()
         compose.onNodeWithTag("immersiveCanvas").assertExists()
         compose.onNodeWithTag("immersiveExit").assertIsDisplayed()
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(0)
-        compose.onNodeWithTag("referencePerformanceKeybed").assertDoesNotExist()
+        compose.onAllNodesWithContentDescription(
+            "Twelve live chromatic liquid-glass keys", substring = true,
+        ).assertCountEquals(0)
 
         compose.onNodeWithTag("immersiveExit").performClick()
         compose.onNodeWithTag("immersiveStage").assertDoesNotExist()
-        compose.onNodeWithTag("referencePerformanceKeybed").assertIsDisplayed()
+        compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
+            .assertCountEquals(0)
+        compose.onAllNodesWithContentDescription(
+            "Twelve live chromatic liquid-glass keys", substring = true,
+        ).assertCountEquals(1)
     }
 
     @Test fun realStageDragEmitsBalancedNotesAndBoundedModulation() {

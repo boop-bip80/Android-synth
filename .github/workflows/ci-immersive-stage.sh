@@ -59,31 +59,27 @@ import sys
 import xml.etree.ElementTree as ET
 path, mode = sys.argv[1:]
 names = [n.attrib.get("content-desc", "") for n in ET.parse(path).iter("node")]
-legacy_piano = sum("multitouch piano keyboard" in n.lower() for n in names)
-liquid_keybed = sum(
-    n.lower().startswith("twelve live chromatic liquid-glass keys, octave ")
-    for n in names
-)
-keyboard = legacy_piano + liquid_keybed
+piano = sum("multitouch piano keyboard" in n.lower() for n in names)
+chromatic = sum(n.lower().startswith(
+    "twelve live chromatic liquid-glass keys, octave ") for n in names)
 enter = names.count("Enter immersive performance")
 exit = names.count("Exit immersive performance")
 if mode == "normal":
-    # Exactly ONE actually drawn, actionable keyboard is valid on SOUND:
-    # legacy for old/compact, chromatic strips for reference portrait.
-    if (legacy_piano, liquid_keybed) not in ((1, 0), (0, 1)) or enter != 1 or exit:
+    # Portrait SOUND now has exactly one real chromatic performance keybed.
+    # Keep the strict on-device keyboard AND enter checks; never accept 0
+    # buttons, stale PLAY piano, or two overlapping keyboard families.
+    if piano != 0 or chromatic != 1 or enter != 1 or exit:
         raise SystemExit(
-            f"Normal screen requires exactly one genuine keybed+entry: "
-            f"legacy={legacy_piano} liquid={liquid_keybed} enter={enter} exit={exit}"
-        )
+            f"Normal SOUND must have one chromatic keybed+enter/no legacy piano/exit: "
+            f"piano={piano} glass={chromatic} enter={enter} exit={exit}")
 elif mode == "stage":
-    if legacy_piano or liquid_keybed or enter or exit != 1:
+    if piano or chromatic or enter or exit != 1:
         raise SystemExit(
-            f"Stage must hide BOTH keyboards+entry and expose one exit: "
-            f"legacy={legacy_piano} liquid={liquid_keybed} enter={enter} exit={exit}"
-        )
+            f"STAGE must hide BOTH keyboards+enter and expose exit: "
+            f"piano={piano} glass={chromatic} enter={enter} exit={exit}")
 else:
     raise SystemExit(f"Unknown screen {mode}")
-print(f"PASS {mode}: keyboard={keyboard} enter={enter} exit={exit}")
+print(f"PASS {mode}: piano={piano} glass={chromatic} enter={enter} exit={exit}")
 PY
 }
 tap_action() {
