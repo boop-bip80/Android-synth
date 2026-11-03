@@ -170,6 +170,10 @@ class ReferenceXyModeRailTest {
             up(1)
         }
         compose.onNodeWithTag("referenceXyModeFILTER").assertExists()
+        compose.runOnIdle {
+            assertEquals("Opening finger B must not activate a newly mounted chip",
+                emptyList<ReferenceXyMode>(), changes)
+        }
         root.performTouchInput {
             moveTo(0, chipCenter - rootOrigin)
             up(0)
