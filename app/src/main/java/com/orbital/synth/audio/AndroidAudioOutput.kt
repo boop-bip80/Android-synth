@@ -240,13 +240,34 @@ class AndroidAudioOutput(
         failureRecovery.clearFatalNotice()
         playback = config.track
         visualTelemetry.begin()
+        // The previous worker has completed onWorkerStop() before start() may
+        // reach this branch. Arm the atomic input epoch before publishing
+        // running=true: a very first touch can queue into the first render block.
+        // Worker-only DSP cleanup still happens inside renderLoop.onWorkerStart().
+        performanceArp.armInputForPendingWorker()
         running = true
         val workerGeneration = lifecycleGeneration
         val thread = Thread({ renderLoop(config, workerGeneration) }, "OrbitalAudioRender")
         thread.isDaemon = true
         workerThread = thread
-        thread.start()
-        true
+        try {
+            thread.start()
+            true
+        } catch (failure: RuntimeException) {
+            // No render worker started, so only this owner may release the
+            // unopened-for-playback AudioTrack. Deactivate the prearmed epoch
+            // without calling any worker-only DSP lifecycle hook on the UI.
+            Log.e("OrbitalAudio", "Audio render worker could not start", failure)
+            running = false
+            workerThread = null
+            playback = null
+            visualTelemetry.stop()
+            performanceArp.cancelPendingWorkerInput()
+            runCatching { config.track.release() }
+            focusState.cancelPlayback()
+            abandonFocusLocked()
+            false
+        }
     }
 
     /**
