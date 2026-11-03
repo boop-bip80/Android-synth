@@ -51,6 +51,13 @@ fun OrbitalSynth.loadPatch(patch: SynthPatch) {
     patch.modulationRoutes.forEachIndexed { index, config ->
         setModulationRouteConfig(index, config)
     }
+
+    // A factory/V1/V2/V3 patch must not carry any of the last sound's FX
+    // modules forward. The six default positions are always reset first.
+    clearFxRack()
+    patch.fxSlots.forEachIndexed { index, config ->
+        setFxSlot(index, config)
+    }
 }
 
 /** Friendly factory-name alias for application integrations. */
