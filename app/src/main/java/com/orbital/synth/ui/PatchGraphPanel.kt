@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -54,6 +56,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orbital.synth.core.ModulationLfoConfig
@@ -61,6 +64,7 @@ import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.dsp.processing.FxModuleType
+import com.orbital.synth.core.dsp.processing.ModCurve
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
 import kotlin.math.PI
@@ -464,6 +468,7 @@ fun PatchGraphPanel(
         Text(
             graph.patchCables.size.toString() + " LFO CABLES DRAWN • " +
                 graph.externalSourceRouteCount + " OTHER LIVE SOURCES • " +
+                graph.dormantLfoRouteCount + " DORMANT LFO CABLES • " +
                 graph.reservedRouteCount + " RESERVED ROUTES (NOT AUDIBLE)",
             color = OrbitalPalette.Muted,
             fontSize = 9.sp,
@@ -587,6 +592,48 @@ fun PatchGraphPanel(
                 ) OrbitalPalette.Teal else OrbitalPalette.Muted,
                 fontSize = 10.sp,
             )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                PatchRoutePicker(
+                    title = "SOURCE",
+                    selected = editedRoute.source,
+                    choices = ModSource.entries,
+                    display = { it.name },
+                    tag = "patchGraphRouteSource",
+                    modifier = Modifier.weight(1f),
+                ) { chosenSource ->
+                    onRouteChange(routeIndex, editedRoute.copy(source = chosenSource, enabled = true))
+                }
+                PatchRoutePicker(
+                    title = "LIVE DESTINATION",
+                    selected = editedRoute.destination,
+                    choices = PatchGraphUiModel.liveTargets,
+                    display = {
+                        it.name + if (it !in PatchGraphUiModel.liveTargets) " RESERVED" else ""
+                    },
+                    tag = "patchGraphRouteDestination",
+                    modifier = Modifier.weight(1f),
+                ) { target ->
+                    onRouteChange(routeIndex, editedRoute.copy(destination = target, enabled = true))
+                }
+            }
+            PatchRoutePicker(
+                title = "MODULATION CURVE",
+                selected = editedRoute.curve,
+                choices = ModCurve.entries,
+                display = { it.name },
+                tag = "patchGraphRouteCurve",
+            ) { curve ->
+                onRouteChange(routeIndex, editedRoute.copy(curve = curve, enabled = true))
+            }
+            Text(
+                "Sources are saved connections; actual signal depends on enabled source and input. " +
+                    "Only the six selectable destinations are processed in PCM.",
+                color = OrbitalPalette.Muted,
+                fontSize = 9.sp,
+            )
             Text(
                 "DEPTH  " + "%.2f".format(PatchGraphUiModel.safeDepth(editedRoute.depth)) + "×",
                 color = OrbitalPalette.Cyan, fontSize = 11.sp,
@@ -682,6 +729,60 @@ fun PatchGraphPanel(
             "Graph glow represents configured routing only. It does not sample audio or imply unsupported free patch cables.",
             color = OrbitalPalette.Muted, fontSize = 10.sp,
         )
+    }
+}
+
+/**
+ * Explicitly exposes the *real* typed source, six audible destinations, and
+ * modulation shape. Large semantic targets keep route editing usable on phone.
+ */
+@Composable
+private fun <T> PatchRoutePicker(
+    title: String,
+    selected: T,
+    choices: List<T>,
+    display: (T) -> String,
+    tag: String,
+    modifier: Modifier = Modifier,
+    onSelect: (T) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Column(modifier) {
+        Text(title, color = OrbitalPalette.Muted, fontSize = 9.sp)
+        Box {
+            TextButton(
+                onClick = { open = true },
+                modifier = Modifier.fillMaxWidth()
+                    .border(1.dp, OrbitalPalette.Blue.copy(alpha = .65f),
+                        RoundedCornerShape(8.dp))
+                    .background(Color(0xFF08172B), RoundedCornerShape(8.dp))
+                    .semantics {
+                        contentDescription = title + ": " + display(selected) + ". Change patch route"
+                    }
+                    .testTag(tag),
+            ) {
+                Text(
+                    display(selected),
+                    color = OrbitalPalette.Cyan,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                choices.forEach { item ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(display(item), color = if (item == selected)
+                                OrbitalPalette.Cyan else OrbitalPalette.Text)
+                        },
+                        onClick = { open = false; onSelect(item) },
+                        modifier = Modifier.testTag(tag + "Option" + item.toString()),
+                    )
+                }
+            }
+        }
     }
 }
 
