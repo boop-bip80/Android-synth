@@ -151,6 +151,45 @@ class LiveModulationNoopFastPathTest {
             .3f, m.morph, .002f)
     }
 
+    @Test fun sampleHoldRngMatchesExactSequentialLfoAfterDormantClockWraps() {
+        val m = host()
+        val expectedLfo = com.orbital.synth.core.dsp.processing.TempoLfo(
+            8_000, 0x18a2f5c + 0x9e37,
+        )
+        expectedLfo.setShape(LfoShape.SAMPLE_HOLD)
+        expectedLfo.setRateHz(3.5f)
+        m.setRoute(0, ModSource.LFO1, ModDestination.MORPH, 0f, ModCurve.LINEAR)
+        m.setLfo(0, true, LfoShape.SAMPLE_HOLD, 3.5f, 0f, false)
+        assertFalse(m.syncBlock(.5f, .5f, .5f))
+        repeat(11_933) {
+            m.tickStepOnly()
+            expectedLfo.next()
+        }
+        val expectedSample = expectedLfo.next()
+        m.setRoute(0, ModSource.LFO1, ModDestination.MORPH, .3f, ModCurve.LINEAR)
+        assertTrue(m.syncBlock(.5f, .5f, .5f))
+        m.tick()
+        assertEquals("Dormant S&H must advance and preserve every deterministic wrap/RNG draw",
+            (.5f + expectedSample * .3f).coerceIn(0f, 1f), m.morph, .00001f)
+    }
+
+    @Test fun enablingPreviouslyDisabledLfoWhileCableIsDormantIsHonored() {
+        val m = host()
+        m.setRoute(0, ModSource.LFO2, ModDestination.MORPH, 0f, ModCurve.LINEAR)
+        m.setLfo(1, false, LfoShape.SAW_UP, 2f, 0f, false)
+        assertFalse(m.syncBlock(.5f, .5f, .5f))
+        repeat(1_000) { m.tickStepOnly() }
+        m.setLfo(1, true, LfoShape.SAW_UP, 2f, 0f, false)
+        assertFalse("Enabling LFO alone must not awaken a zero-depth DSP cable",
+            m.syncBlock(.5f, .5f, .5f))
+        repeat(1_000) { m.tickStepOnly() }
+        m.setRoute(0, ModSource.LFO2, ModDestination.MORPH, .2f, ModCurve.LINEAR)
+        assertTrue(m.syncBlock(.5f, .5f, .5f))
+        m.tick()
+        assertEquals("LFO2 advances only after enabled, even while its cable is dormant",
+            .4f, m.morph, .002f)
+    }
+
     @Test fun stepPlayheadContinuesOnBothDormantAndTrulyUnroutedClocks() {
         for (withInertCable in arrayOf(false, true)) {
             val m = host()
