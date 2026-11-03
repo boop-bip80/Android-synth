@@ -89,6 +89,13 @@ class ModulationConstellationPanelTest {
         compose.onNodeWithTag("modulationLiveDestinationsLegend").assertExists()
 
         compose.runOnIdle { selected = selected.copy(destination = ModDestination.OSC1_GAIN) }
+        compose.onNodeWithText("GESTURE-DRIVEN / TOUCH TO MODULATE").assertExists()
+        compose.onNodeWithText(
+            "DSP-CAPABLE TARGET • When driven, changes the addressed oscillator layer gain (0–2×, neutral 1×)."
+        ).assertExists()
+        compose.onNodeWithText(ModulationConstellationModel.liveTargetsLegend).assertExists()
+
+        compose.runOnIdle { selected = selected.copy(destination = ModDestination.FILTER_DRIVE) }
         compose.onNodeWithText("RESERVED DSP TARGET / SAVED CONFIG ONLY").assertExists()
         compose.onNodeWithText(
             "SAVED ROUTE • Reserved for a future audio engine connection."
