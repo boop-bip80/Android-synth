@@ -82,6 +82,26 @@ class Compact350SoundInstrumentedTest {
         try {
             assertTrue("Real Android screen must have physical pixels",
                 screenshot.width >= 360 && screenshot.height >= 350)
+            // A black/blank framebuffer can still be a valid 19KB PNG.
+            // Require genuine chromatic neon pixels sampled from the device's
+            // actual framebuffer, not merely a file with a PNG signature.
+            var chromaticPixels = 0
+            for (y in 0 until screenshot.height step 6) {
+                for (x in 0 until screenshot.width step 6) {
+                    val argb = screenshot.getPixel(x, y)
+                    val red = android.graphics.Color.red(argb)
+                    val green = android.graphics.Color.green(argb)
+                    val blue = android.graphics.Color.blue(argb)
+                    val strongest = maxOf(red, green, blue)
+                    val weakest = minOf(red, green, blue)
+                    if (strongest >= 110 && strongest - weakest >= 35) chromaticPixels++
+                }
+            }
+            assertTrue(
+                "Real OSC8 foreground must contain visible colorful synth controls, " +
+                    "not a blank/emulator transitional framebuffer: pixels=$chromaticPixels",
+                chromaticPixels >= 70,
+            )
             val image = File(compose.activity.filesDir, filename)
             FileOutputStream(image).use { out ->
                 assertTrue("Real framebuffer PNG encoder failed",
