@@ -545,6 +545,29 @@ fun OrbitalScreen(
                             }
                         }
                     }
+                    if (!compactOscillatorExpanded && compactSoundPage == CompactSoundPage.ENGINE) {
+                        // Keep all five synthesis architectures directly under the
+                        // 48dp OSC/LIVE/TONE/VOICE/ENGINE rail. In a physical
+                        // 360×350dp viewport the older label+row inside the
+                        // paged sound panel was vertically offscreen.
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .testTag("compactEngineOptionsRow"),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            EngineArchitectures.forEachIndexed { index, choice ->
+                                Pill(
+                                    label = choice.name,
+                                    active = engineArchitectureIndex(engineValue) == index,
+                                    onClick = { engineId?.let { onParameterChange(it, choice.value) } },
+                                    description = "Select synthesis architecture " + choice.name,
+                                    role = Role.RadioButton,
+                                    enabled = engineId != null,
+                                )
+                            }
+                        }
+                    }
                     if (canEditOscillators && compactOscillatorExpanded) {
                         // A bounded single-purpose page replaces the formerly
                         // simultaneous giant rack+patch+macro scroll tree.
@@ -556,7 +579,6 @@ fun OrbitalScreen(
                     } else {
                         CompactSoundPanel(
                             parameter = parameter,
-                            engineId = engineId,
                             engineValue = engineValue,
                             onParameterChange = onParameterChange,
                             page = compactSoundPage,
@@ -2459,7 +2481,6 @@ private enum class CompactSoundPage(val caption: String) {
 @Composable
 private fun CompactSoundPanel(
     parameter: (ParameterId) -> Float,
-    engineId: ParameterId?,
     engineValue: Float,
     onParameterChange: (ParameterId, Float) -> Unit,
     page: CompactSoundPage,
@@ -2505,24 +2526,8 @@ private fun CompactSoundPanel(
                 }
             }
             CompactSoundPage.ENGINE -> {
-                Label("SYNTHESIS ARCHITECTURE  /  MODELED + INSPIRED")
-                Row(
-                    Modifier.fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .testTag("compactEngineOptionsRow"),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    EngineArchitectures.forEachIndexed { index, choice ->
-                        Pill(
-                            label = choice.name,
-                            active = engineArchitectureIndex(engineValue) == index,
-                            onClick = { engineId?.let { onParameterChange(it, choice.value) } },
-                            description = "Select synthesis architecture " + choice.name,
-                            role = Role.RadioButton,
-                            enabled = engineId != null,
-                        )
-                    }
-                }
+                // Five architecture choices are in the first compact SOUND viewport,
+                // directly beneath the accessible page rail, even at 350dp height.
                 ParameterId.entries.firstOrNull { it.name == "CHARACTER" }?.let { id ->
                     CompactFxControl("CHARACTER", parameter(id), id, onParameterChange,
                         "Engine timbre and model character")
