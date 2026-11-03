@@ -31,14 +31,18 @@ class OrbitalPlasmaFieldTest {
         val bounds = compose.onNodeWithTag("orbitalPlasmaField")
             .assertIsDisplayed().fetchSemanticsNode().boundsInWindow
         val origin = IntArray(2)
+        val focused = BooleanArray(1)
         compose.runOnIdle {
-            compose.activity.window.decorView.getLocationOnScreen(origin)
+            val window = compose.activity.window.decorView
+            window.getLocationOnScreen(origin)
+            focused[0] = window.hasWindowFocus()
         }
         return NativeCanvasPixelCapture.capture(
             nodeBoundsInWindow = bounds,
             decorScreenX = origin[0],
             decorScreenY = origin[1],
             expectedForegroundPackage = compose.activity.packageName,
+            windowIsFocused = focused[0],
             columns = columns,
             rows = rows,
         )
@@ -59,19 +63,23 @@ class OrbitalPlasmaFieldTest {
         val luminous = quiet.luminousPixels(minChannel = 36)
         assertTrue(
             "Idle plasma must have genuinely luminous visible Android pixels; " +
-                "count=" + luminous + " ROI=" + quiet.regionLabel(),
+                "count=" + luminous + " ROI=" + quietAgain.regionLabel(),
             luminous > 15,
         )
-        // Negative control: no PCM or finger, so production AGSL must stop
-        // scheduling animation; a drifting static framebuffer cannot fake
-        // the PCM-response threshold.
-        Thread.sleep(150L)
-        val quietAgain = realOrb()
-        val quietDrift = quiet.countRgbSumChanged(quietAgain, threshold = 16)
+        // A cold Android compositor can show an in-flight initial GPU
+        // present. Require two sequential, truly static *real display*
+        // frames before sound arrives; a scene that never stabilizes fails.
+        val (quietAgain, quietDrift) =
+            NativeCanvasPixelCapture.awaitStableSilentFrame(
+                initial = quiet,
+                takeNext = { realOrb() },
+                meaningfulChanges = { a, b -> a.countRgbSumChanged(b, threshold = 16) },
+            )
         assertTrue(
-            "Plasma changed " + quietDrift +
-                " meaningful RGB pixels without PCM/touch",
-            quietDrift < 24,
+            "Stable PCM-silent AGSL frame is unexpectedly blank: " +
+                quietAgain.luminousPixels(minChannel = 36) +
+                " luminous pixels ROI=" + quietAgain.regionLabel(),
+            quietAgain.luminousPixels(minChannel = 36) > 15,
         )
 
         compose.runOnIdle {
@@ -133,16 +141,15 @@ class OrbitalPlasmaFieldTest {
             )
         }
         compose.waitForIdle()
-        val before = realOrb(columns = 44, rows = 44)
-        // Same static no-PCM, no-touch negative control as the real PCM test.
-        Thread.sleep(150L)
-        val control = realOrb(columns = 44, rows = 44)
-        val drift = before.countRgbSumChanged(control, threshold = 15)
-        assertTrue(
-            "The silent 300dp liquid shader drifted without controls; " +
-                "changed=" + drift,
-            drift < 24,
-        )
+        // Exact 300dp Canvas coordinates must remain motionless when
+        // there is no PCM and the finger is up. A cold-frame transition
+        // cannot be misattributed to morph/movement controls.
+        val (control, drift) =
+            NativeCanvasPixelCapture.awaitStableSilentFrame(
+                initial = realOrb(columns = 44, rows = 44),
+                takeNext = { realOrb(columns = 44, rows = 44) },
+                meaningfulChanges = { a, b -> a.countRgbSumChanged(b, threshold = 15) },
+            )
 
         compose.runOnIdle {
             morph = .87f
@@ -165,7 +172,7 @@ class OrbitalPlasmaFieldTest {
         )
         println(
             "PLASMA_NATIVE_CONTROL_PIXEL_PROOF changed=" + changed +
-                " controlDrift=" + drift + " ROI=" + before.regionLabel(),
+                " controlDrift=" + drift + " ROI=" + control.regionLabel(),
         )
     }
 }
