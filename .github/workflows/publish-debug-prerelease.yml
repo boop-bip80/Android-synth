@@ -198,8 +198,44 @@ jobs:
           set -euo pipefail
           remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
           if [[ "$remote_sha" != "$VALIDATED_MAIN_SHA" ]]; then
-            echo "Main advanced after source/provenance verification; refuse stale APK release." >&2
-            exit 1
+            # Screenshot persistence and this publisher start from the same
+            # successful main run. The screenshot bot can fast-forward main
+            # after our earlier SHA check. Accept only that one exact child,
+            # never a new application/doc commit or a second bot child.
+            [[ "$VALIDATED_MAIN_SHA" == "$SOURCE_SHA" ]] || {
+              echo "Main advanced beyond an already verified screenshot child." >&2
+              exit 1
+            }
+            git fetch --no-tags --depth=2 origin refs/heads/main
+            [[ "$(git rev-parse FETCH_HEAD)" == "$remote_sha" &&
+               "$(git rev-parse FETCH_HEAD^)" == "$SOURCE_SHA" ]] || {
+              echo "Main advanced to something other than the verified source's immediate child." >&2
+              exit 1
+            }
+            [[ "$(git show -s --format=%an FETCH_HEAD)" == "github-actions[bot]" &&
+               "$(git show -s --format=%ae FETCH_HEAD)" == "41898282+github-actions[bot]@users.noreply.github.com" ]] || {
+              echo "New main child is not the screenshot publishing bot." >&2
+              exit 1
+            }
+            mapfile -t changed_paths < <(git diff --name-only FETCH_HEAD^ FETCH_HEAD)
+            (( ${#changed_paths[@]} > 0 )) || exit 1
+            for path in "${changed_paths[@]}"; do
+              [[ "$path" == docs/screenshots/* ]] || {
+                echo "Unverified non-screenshot child path $path." >&2
+                exit 1
+              }
+            done
+            git show FETCH_HEAD:docs/screenshots/PROVENANCE.md |
+              grep -Fq "$SOURCE_SHA" || {
+                echo "New screenshot child lacks exact source provenance." >&2
+                exit 1
+              }
+            git show FETCH_HEAD:docs/screenshots/PROVENANCE.md |
+              grep -Fq "actions/runs/$VERIFIED_RUN_ID" || {
+                echo "New screenshot child lacks exact CI run provenance." >&2
+                exit 1
+              }
+            echo "Accepted one newly published screenshot-only bot child of $SOURCE_SHA."
           fi
           tag="orbital-debug-$SOURCE_SHORT"
           asset="ORBITAL-$SOURCE_SHORT-debug.apk"
