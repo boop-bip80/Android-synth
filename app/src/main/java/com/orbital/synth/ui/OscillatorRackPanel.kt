@@ -31,6 +31,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -476,6 +477,7 @@ private fun RackParameterSlider(
 }
 
 /** Parameter-dependent waveform image, rendered directly by Compose (never a bitmap mockup). */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun OscillatorWavePreview(
     slot: OscillatorSlot,
@@ -552,6 +554,7 @@ private fun OscillatorWavePreview(
  * spectrum whose tilt and density reflect the selected noise color and blend;
  * they are not mislabeled as a live microphone/FFT analysis.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun NoiseSpectrumPad(
     slot: OscillatorSlot,
