@@ -1,7 +1,7 @@
 name: Publish verified Android emulator screenshots
 
 # A CI artifact ZIP expires after 14 days. This workflow snapshots selected
-# *actual* Android API35 framebuffers into the repository only after all five
+# *actual* Android API35 framebuffers into the repository only after all six
 # Android CI jobs pass for the exact, still-current main commit.
 on:
   workflow_run:
@@ -50,6 +50,50 @@ jobs:
           fi
           echo "fresh=true" >> "$GITHUB_OUTPUT"
 
+      - name: Verify all six required source CI jobs
+        if: steps.freshness.outputs.fresh == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID")"
+          jq -e --arg repo "$GITHUB_REPOSITORY" --arg sha "$SOURCE_SHA" '
+            .status == "completed" and
+            .conclusion == "success" and
+            .event == "push" and
+            .head_branch == "main" and
+            .head_repository.full_name == $repo and
+            .head_sha == $sha and
+            .path == ".github/workflows/android.yml"
+          ' <<< "$run_json" >/dev/null || {
+            echo "Screenshot provenance is not an exact successful first-party main source run." >&2
+            exit 1
+          }
+          jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs?per_page=100&filter=latest")"
+          jq -e '
+            .total_count == 6 and
+            (.jobs | length) == 6 and
+            all(.jobs[]; .status == "completed" and .conclusion == "success")
+          ' <<< "$jobs_json" >/dev/null || {
+            echo "Exactly six successful Android host/API35 jobs are required for screenshots." >&2
+            exit 1
+          }
+          for expected in \
+            "Kotlin tests, lint and debug APK" \
+            "API 35 general tests and emulator screenshots" \
+            "API 35 compact tests and emulator screenshots" \
+            "API 35 stage tests and emulator screenshots" \
+            "API 35 visuals tests and emulator screenshots" \
+            "API 35 compact350 tests and emulator screenshots"; do
+            jq -e --arg name "$expected" '
+              any(.jobs[]; .name == $name and .conclusion == "success")
+            ' <<< "$jobs_json" >/dev/null || {
+              echo "Missing required green CI job: $expected" >&2
+              exit 1
+            }
+          done
+          echo "Verified all six required green Android jobs on source $SOURCE_SHA"
       - name: Download successful compact screenshots
         if: steps.freshness.outputs.fresh == 'true'
         uses: actions/download-artifact@v4
@@ -159,7 +203,7 @@ jobs:
               "# Real ORBITAL emulator framebuffers",
               "",
               "These images are genuine screenshots captured by Android API 35 x86_64",
-              "from the debug APK in the same five-job fully successful GitHub Actions run.",
+              "from the debug APK in the same six-job fully successful GitHub Actions run.",
               "They are not the generated concept reference or a claim of physical-device testing.",
               "",
               f"- Verified source commit: [`{sha}`](https://github.com/boop-bip80/Android-synth/commit/{sha})",
