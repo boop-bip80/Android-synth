@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -24,6 +26,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,6 +35,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
@@ -110,11 +114,48 @@ fun ReferenceSoundHero(
     onPreviousPatch: (() -> Unit)? = null,
     onNextPatch: (() -> Unit)? = null,
     onOpenEngine: (() -> Unit)? = null,
+    /** Optional hosted XY selection. Null keeps standalone previews interactive. */
+    xyMode: ReferenceXyMode? = null,
+    onXyModeSelected: ((ReferenceXyMode) -> Unit)? = null,
 ) {
-    val safeMorph = ReferenceSoundUiModel.normalized(parameters[ParameterId.MORPH] ?: .5f)
-    val safeMovement = ReferenceSoundUiModel.normalized(parameters[ParameterId.MOVEMENT] ?: .5f)
+    var localModeName by rememberSaveable {
+        mutableStateOf(ReferenceXyMode.PERFORMANCE.name)
+    }
+    val engineValue = ReferenceXyRouting.normalizeValue(
+        parameters[ParameterId.ENGINE] ?: 0f,
+    )
+    val requestedMode = if (onXyModeSelected != null) {
+        xyMode ?: ReferenceXyMode.PERFORMANCE
+    } else {
+        ReferenceXyMode.entries.firstOrNull { it.name == localModeName }
+            ?: ReferenceXyMode.PERFORMANCE
+    }
+    val activeMode = requestedMode.resolveFallback(engineValue)
+    LaunchedEffect(requestedMode, activeMode) {
+        if (requestedMode != activeMode) {
+            // Engine 3's quantized FM wave and engine 4's stepped PD
+            // cannot silently inherit an unsupported continuous XY mode.
+            if (onXyModeSelected == null) localModeName = activeMode.name
+            else onXyModeSelected(activeMode)
+        }
+    }
+    val safeX = ReferenceXyRouting.normalizeValue(
+        parameters[activeMode.xParameterId] ?: .5f,
+    )
+    val safeY = ReferenceXyRouting.normalizeValue(
+        parameters[activeMode.yParameterId] ?: .5f,
+    )
+    val xActionName = if (activeMode == ReferenceXyMode.PERFORMANCE) "morph"
+        else activeMode.xLabel
+    val yActionName = if (activeMode == ReferenceXyMode.PERFORMANCE) "movement"
+        else activeMode.yLabel
+    // The shader is *parameter-driven abstract art* plus genuine PCM energy,
+    // not a frequency analyzer or a second audio-processing engine.
     val latestChange by rememberUpdatedState(onParameterChange)
     val gate = remember { ReferenceHeroGestureGate() }
+    DisposableEffect(activeMode, patchId, patchEpoch, engineName) {
+        onDispose { gate.invalidate() } // Old queued gestures never edit newly routed sound.
+    }
     var navigationEpoch by remember { mutableIntStateOf(0) }
     var fingerPressed by remember { mutableStateOf(false) }
     var fingerSession by remember { mutableLongStateOf(0L) }
@@ -122,6 +163,9 @@ fun ReferenceSoundHero(
     var touchY by remember { mutableFloatStateOf(.5f) }
     val height: Dp = if (compact) 230.dp else 278.dp
     val ribbonHeight: Dp = if (compact) 88.dp else 110.dp
+    val density = LocalDensity.current
+    val heightPx = with(density) { height.toPx() }
+    val ribbonPx = with(density) { ribbonHeight.toPx() }
 
     fun haltGestureAndNavigate(action: () -> Unit) {
         gate.invalidate() // Suppress held-finger moves before patch mutation.
@@ -132,10 +176,13 @@ fun ReferenceSoundHero(
     }
 
     fun update(x: Float, y: Float) {
-        touchX = ReferenceSoundUiModel.normalized(x)
-        touchY = ReferenceSoundUiModel.normalized(y)
-        latestChange(ParameterId.MORPH, touchX)
-        latestChange(ParameterId.MOVEMENT, touchY)
+        val point = ReferenceXyRouting.normalizePoint(x, y)
+        touchX = point.x
+        touchY = point.y
+        // BOTH axes edit real, currently selected host DSP ParameterIds.
+        // FOCUS keeps independent configured touch-performance routing.
+        latestChange(activeMode.xParameterId, point.x)
+        latestChange(activeMode.yParameterId, point.y)
     }
 
     Column(
@@ -152,8 +199,8 @@ fun ReferenceSoundHero(
                 .testTag("referenceSoundHeroOrb"),
         ) {
             OrbitalPlasmaField(
-                morph = safeMorph,
-                movement = safeMovement,
+                morph = safeX,
+                movement = safeY,
                 audioRms = audioRms,
                 audioPeak = audioPeak,
                 touchX = touchX,
@@ -170,30 +217,31 @@ fun ReferenceSoundHero(
                     .testTag("referenceHeroOrbInput")
                     .semantics {
                         stateDescription = if (fingerPressed) "Touch engaged" else "Touch ready"
-                        contentDescription = "Touch glowing synth orb, morph " +
-                            (safeMorph * 100f).roundToInt() +
-                            " percent, movement " + (safeMovement * 100f).roundToInt() +
-                            " percent. Swipe or use the four edit actions"
+                        contentDescription = "Touch glowing synth orb, $xActionName " +
+                            (safeX * 100f).roundToInt() +
+                            " percent, $yActionName " + (safeY * 100f).roundToInt() +
+                            " percent. Swipe or use four edits. " + activeMode.guidance +
+                            " Visual geometry follows real selected parameters and PCM brightness."
                         customActions = listOf(
-                            CustomAccessibilityAction("Increase morph") {
-                                latestChange(ParameterId.MORPH, (safeMorph + .05f).coerceAtMost(1f))
+                            CustomAccessibilityAction("Increase $xActionName") {
+                                latestChange(activeMode.xParameterId, (safeX + .05f).coerceAtMost(1f))
                                 true
                             },
-                            CustomAccessibilityAction("Decrease morph") {
-                                latestChange(ParameterId.MORPH, (safeMorph - .05f).coerceAtLeast(0f))
+                            CustomAccessibilityAction("Decrease $xActionName") {
+                                latestChange(activeMode.xParameterId, (safeX - .05f).coerceAtLeast(0f))
                                 true
                             },
-                            CustomAccessibilityAction("Increase movement") {
-                                latestChange(ParameterId.MOVEMENT, (safeMovement + .05f).coerceAtMost(1f))
+                            CustomAccessibilityAction("Increase $yActionName") {
+                                latestChange(activeMode.yParameterId, (safeY + .05f).coerceAtMost(1f))
                                 true
                             },
-                            CustomAccessibilityAction("Decrease movement") {
-                                latestChange(ParameterId.MOVEMENT, (safeMovement - .05f).coerceAtLeast(0f))
+                            CustomAccessibilityAction("Decrease $yActionName") {
+                                latestChange(activeMode.yParameterId, (safeY - .05f).coerceAtLeast(0f))
                                 true
                             },
                         )
                     }
-                    .pointerInput(compact, patchId ?: patchName, patchEpoch, engineName, navigationEpoch) {
+                    .pointerInput(compact, patchId ?: patchName, patchEpoch, engineName, navigationEpoch, activeMode) {
                         // A patch recall cancels the prior recognizer while a
                         // physical finger can still be DOWN. awaitEachGesture
                         // waits for *all* stale fingers to lift before allowing
@@ -367,7 +415,7 @@ fun ReferenceSoundHero(
             // switches too. Ticket check blocks delayed callbacks even before
             // Compose processes the new key in the next frame.
             val ribbonTicket = gate.ticket()
-            key(navigationEpoch, patchId ?: patchName, patchEpoch, engineName) {
+            key(navigationEpoch, patchId ?: patchName, patchEpoch, engineName, activeMode) {
                 // Two separate tagged semantics nodes: outer positioning Box
                 // and inner Canvas real interactive "referenceExpressionRibbon".
                 // Never attach two testTags to the *same* Canvas modifier chain.
@@ -378,11 +426,25 @@ fun ReferenceSoundHero(
                         .testTag("referenceHeroXYUnderOrb"),
                 ) {
                     ReferenceExpressionRibbon(
-                        morph = safeMorph,
-                        movement = safeMovement,
+                        morph = safeX,
+                        movement = safeY,
                         onChange = { x, y ->
                             if (gate.allows(ribbonTicket)) update(x, y)
                         },
+                        onRawTouch = { rawX, rawY ->
+                            // Ribbon-originated fingers cross into the upper
+                            // orb continuously; the original folded Y seam
+                            // has no false jump or half-screen clamp.
+                            if (gate.allows(ribbonTicket)) update(
+                                rawX,
+                                ReferenceHeroTouch.movementAt(
+                                    heightPx - ribbonPx + rawY * ribbonPx,
+                                    heightPx, ribbonPx,
+                                ),
+                            )
+                        },
+                        xyMode = activeMode,
+                        gestureResetEpoch = navigationEpoch.toLong(),
                         audioRms = audioRms,
                         transparentBackground = true,
                         height = ribbonHeight,
@@ -390,6 +452,22 @@ fun ReferenceSoundHero(
                     )
                 }
             }
+            // Original-inspired slim translucent rail stays INSIDE the existing
+            // orb/ribbon bounds. The six audibly real modes appear only when
+            // expanded; neither the five knobs, four minis nor anchored
+            // keyboard moves down by even one dp.
+            ReferenceXyModeRail(
+                selectedMode = activeMode,
+                normalizedEngine = engineValue,
+                onModeSelected = { selected ->
+                    if (onXyModeSelected == null) localModeName = selected.name
+                    else onXyModeSelected(selected)
+                },
+                ribbonHeight = ribbonHeight,
+                onBeforeOpen = { haltGestureAndNavigate {} },
+                onBeforeSelect = { haltGestureAndNavigate {} },
+                modifier = Modifier.fillMaxSize(),
+            )
         }
         // Do not render a second XY card under the orb. All five macros and
         // four tiny previews remain accessible and connected to the host.
