@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -238,11 +239,20 @@ fun ReferenceExpressionRibbon(
     audioRms: Float = 0f,
     height: Dp = 112.dp,
     transparentBackground: Boolean = false,
+    /** Existing names morph/movement retain binary compatibility but hold selected X/Y values. */
+    xyMode: ReferenceXyMode = ReferenceXyMode.PERFORMANCE,
+    /** Invalidates a held recognizer when the host switches routing mode or patch. */
+    gestureResetEpoch: Long = 0L,
+    /** Optional unbounded normalized local XY for continuous folded seam crossing. */
+    onRawTouch: ((Float, Float) -> Unit)? = null,
 ) {
-    val x = ReferenceSoundUiModel.normalized(morph)
-    val y = ReferenceSoundUiModel.normalized(movement)
+    val x = ReferenceXyRouting.normalizeValue(morph)
+    val y = ReferenceXyRouting.normalizeValue(movement)
     val liveEnergy = ReferenceSoundUiModel.normalized(audioRms * 5f)
     val currentChange by rememberUpdatedState(onChange)
+    val currentRawTouch by rememberUpdatedState(onRawTouch)
+    val xLabel = if (xyMode == ReferenceXyMode.PERFORMANCE) "morph" else xyMode.xLabel
+    val yLabel = if (xyMode == ReferenceXyMode.PERFORMANCE) "movement" else xyMode.yLabel
     val currentX by rememberUpdatedState(x)
     val currentY by rememberUpdatedState(y)
     val shape = RoundedCornerShape(13.dp)
@@ -262,53 +272,80 @@ fun ReferenceExpressionRibbon(
             .border(1.dp, OrbitalPalette.Blue.copy(alpha = .64f), shape)
             .testTag("referenceExpressionRibbon")
             .semantics {
-                contentDescription = "Touch expression ribbon, morph " +
-                    (x * 100f).roundToInt() + " percent, movement " +
+                contentDescription = "Touch expression ribbon, $xLabel " +
+                    (x * 100f).roundToInt() + " percent, $yLabel " +
                     (y * 100f).roundToInt() +
-                    " percent. This is a parameter-driven shape preview, not FFT audio"
+                    " percent. Parameter-driven shape preview, not FFT audio. " +
+                    xyMode.guidance
                 customActions = listOf(
-                    CustomAccessibilityAction("Increase morph") {
+                    CustomAccessibilityAction("Increase $xLabel") {
                         currentChange((currentX + .05f).coerceIn(0f, 1f), currentY)
                         true
                     },
-                    CustomAccessibilityAction("Decrease morph") {
+                    CustomAccessibilityAction("Decrease $xLabel") {
                         currentChange((currentX - .05f).coerceIn(0f, 1f), currentY)
                         true
                     },
-                    CustomAccessibilityAction("Increase movement") {
+                    CustomAccessibilityAction("Increase $yLabel") {
                         currentChange(currentX, (currentY + .05f).coerceIn(0f, 1f))
                         true
                     },
-                    CustomAccessibilityAction("Decrease movement") {
+                    CustomAccessibilityAction("Decrease $yLabel") {
                         currentChange(currentX, (currentY - .05f).coerceIn(0f, 1f))
                         true
                     },
                 )
             }
-            .pointerInput(Unit) {
-                detectTapGestures { position ->
-                    currentChange(
-                        (position.x / size.width).coerceIn(0f, 1f),
-                        (1f - position.y / size.height).coerceIn(0f, 1f),
-                    )
+            .pointerInput(gestureResetEpoch, xyMode) {
+                // Unlike two competing tap/drag detectors, this ONE owner
+                // admits only a genuinely new Android pointer DOWN.
+                // Old A stays excluded after patch/engine/mode remount while
+                // independent newly-down B may begin expressive editing.
+                awaitPointerEventScope {
+                    var ownerId: PointerId? = null
+                    var lastOwnerPosition: Offset? = null
+                    fun deliver(position: Offset) {
+                        val rawX = position.x / size.width.coerceAtLeast(1)
+                        val rawY = position.y / size.height.coerceAtLeast(1)
+                        val raw = currentRawTouch
+                        if (raw != null) raw(rawX, rawY)
+                        else currentChange(
+                            ReferenceXyRouting.normalizeValue(rawX),
+                            ReferenceXyRouting.normalizeValue(1f - rawY),
+                        )
+                    }
+                    while (true) {
+                        val frame = awaitPointerEvent()
+                        val previous = ownerId
+                        if (previous != null) {
+                            val held = frame.changes.firstOrNull { it.id == previous }
+                            if (held == null || !held.pressed) {
+                                ownerId = null
+                                lastOwnerPosition = null
+                            } else {
+                                // Other fingers lifting may produce another
+                                // frame with this finger unchanged. Never
+                                // duplicate a real control edit on that UP.
+                                if (lastOwnerPosition != held.position) {
+                                    lastOwnerPosition = held.position
+                                    deliver(held.position)
+                                }
+                                held.consume()
+                            }
+                        }
+                        if (ownerId == null) {
+                            val fresh = frame.changes.firstOrNull {
+                                it.pressed && !it.previousPressed && !it.isConsumed
+                            }
+                            if (fresh != null) {
+                                ownerId = fresh.id
+                                lastOwnerPosition = fresh.position
+                                deliver(fresh.position)
+                                fresh.consume()
+                            }
+                        }
+                    }
                 }
-            }
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { position ->
-                        currentChange(
-                            (position.x / size.width).coerceIn(0f, 1f),
-                            (1f - position.y / size.height).coerceIn(0f, 1f),
-                        )
-                    },
-                    onDrag = { change, _ ->
-                        currentChange(
-                            (change.position.x / size.width).coerceIn(0f, 1f),
-                            (1f - change.position.y / size.height).coerceIn(0f, 1f),
-                        )
-                        change.consume()
-                    },
-                )
             },
     ) {
         val width = size.width
