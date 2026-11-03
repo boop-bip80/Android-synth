@@ -167,7 +167,7 @@ internal class Voice(private val sampleRate: Int) {
     /** Called once per render block on the audio worker, never on the UI thread. */
     fun configureEngine(
         model: Int, character: Float, cutoffHz: Float, resonance: Float,
-        wave: Float, morph: Float
+        wave: Float, morph: Float, updateFilter: Boolean = true
     ) {
         val requestedModel = model.coerceIn(0, 4)
         if (requestedModel != engineModel) {
@@ -187,8 +187,10 @@ internal class Voice(private val sampleRate: Int) {
         }
         val tone = character.coerceIn(0f, 1f)
         filterCharacter = tone
-        ladder.configure(cutoffHz, resonance, tone * 0.9f)
-        sem.configure(cutoffHz, resonance, tone * 0.5f, tone)
+        if (updateFilter) {
+            ladder.configure(cutoffHz, resonance, tone * 0.9f)
+            sem.configure(cutoffHz, resonance, tone * 0.5f, tone)
+        }
         val fmChoice = (wave.coerceIn(0f, 1f) * (FmAlgorithm.entries.size - 1) + 0.5f)
             .toInt().coerceIn(0, FmAlgorithm.entries.lastIndex)
         fm.configure(FmAlgorithm.entries[fmChoice],
@@ -210,13 +212,14 @@ internal class Voice(private val sampleRate: Int) {
         sustainLevel: Float,
         releaseSeconds: Double,
         cutoffHz: Double,
-        resonance: Float
+        resonance: Float,
+        updateFilter: Boolean = true,
     ) {
         attackStep = (1.0 / max(1.0, attackSeconds * sampleRate)).toFloat()
         sustain = sustainLevel.coerceIn(0f, 1f)
         decayStep = ((1.0 - sustain) / max(1.0, decaySeconds * sampleRate)).toFloat()
         releaseFrames = max(1, (releaseSeconds * sampleRate).toInt())
-        retargetSvf(cutoffHz, resonance)
+        if (updateFilter) retargetSvf(cutoffHz, resonance)
     }
 
     /**
