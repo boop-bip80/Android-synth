@@ -1,5 +1,7 @@
 package com.orbital.synth.ui
 
+import android.graphics.Color
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
@@ -10,11 +12,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.graphics.toPixelMap
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -32,7 +32,7 @@ import kotlin.math.abs
 
 @RunWith(AndroidJUnit4::class)
 class ReferenceXyLiveHostTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
     private fun initialParameters(engine: Float = 0f): Map<ParameterId, Float> =
         mapOf(
@@ -219,6 +219,7 @@ class ReferenceXyLiveHostTest {
                 }
             }
         }
+        val realCapture = RealAndroidFrameCapture(compose, compose.activity)
         listOf(411, 360).forEach { width ->
             compose.runOnIdle { screenWidth = width }
             compose.waitForIdle()
@@ -248,23 +249,30 @@ class ReferenceXyLiveHostTest {
             )) {
                 compose.onNodeWithTag(tag).assertIsDisplayed()
             }
-            // This is the genuine Compose-rendered artwork bitmap, not
-            // prerecorded fixture pixels and not fake spectrum telemetry.
-            val image = compose.onNodeWithTag(
-                "orbitalPlasmaField", useUnmergedTree = true,
-            ).captureToImage().toPixelMap()
-            var visiblyColorful = 0
-            val stride = (image.width / 22).coerceAtLeast(1)
-            for (y in 20 until image.height - 20 step stride) {
-                for (x in 30 until image.width - 30 step stride) {
-                    val pixel = image[x, y]
-                    val high = maxOf(pixel.red, pixel.green, pixel.blue)
-                    val low = minOf(pixel.red, pixel.green, pixel.blue)
-                    if (high > .16f && high - low > .04f) visiblyColorful++
+            // Genuine SurfaceFlinger framebuffer from this exact foreground
+            // test Activity, cropped to real measured plasma bounds. Unlike
+            // PixelCopy, capture cannot silently substitute a Compose bitmap.
+            val image = realCapture.capture(
+                compose.onNodeWithTag("orbitalPlasmaField", useUnmergedTree = true),
+                "sound-plasma-portrait-$width",
+            )
+            image.use { region ->
+                var visiblyColorful = 0
+                val stride = (region.width / 22).coerceAtLeast(1)
+                for (y in 20 until region.height - 20 step stride) {
+                    for (x in 30 until region.width - 30 step stride) {
+                        val pixel = region.argbAt(x, y)
+                        val red = Color.red(pixel) / 255f
+                        val green = Color.green(pixel) / 255f
+                        val blue = Color.blue(pixel) / 255f
+                        val high = maxOf(red, green, blue)
+                        val low = minOf(red, green, blue)
+                        if (high > .16f && high - low > .04f) visiblyColorful++
+                    }
                 }
+                assertTrue("SOUND plasma became dark/unrendered at width $width",
+                    visiblyColorful > 12)
             }
-            assertTrue("SOUND plasma became dark/unrendered at width $width",
-                visiblyColorful > 12)
         }
     }
 
@@ -285,20 +293,35 @@ class ReferenceXyLiveHostTest {
             }
         }
         val plasma = compose.onNodeWithTag("orbitalPlasmaField", useUnmergedTree = true)
-        val before = plasma.captureToImage().toPixelMap()
+        val realCapture = RealAndroidFrameCapture(compose, compose.activity)
+        // Retain only sampled real screen pixels so both Bitmap owners are
+        // promptly recycled. Probe coordinates and numerical delta remain
+        // equivalent to the earlier Compose PixelMap assertion.
+        val before = realCapture.capture(plasma, "filter-plasma-before").use { region ->
+            val step = (region.width / 24).coerceAtLeast(1)
+            val samples = ArrayList<Triple<Int, Int, Int>>()
+            for (py in 30 until region.height - 30 step step) {
+                for (px in 50 until region.width - 50 step step) {
+                    samples += Triple(px, py, region.argbAt(px, py))
+                }
+            }
+            samples
+        }
         compose.onNodeWithTag("referenceHeroOrbInput").performTouchInput {
             click(Offset(center.x * 1.66f, center.y * 1.22f))
         }
-        val after = plasma.captureToImage().toPixelMap()
-        val step = (before.width / 24).coerceAtLeast(1)
-        var changed = 0
-        for (py in 30 until minOf(before.height, after.height) - 30 step step) {
-            for (px in 50 until minOf(before.width, after.width) - 50 step step) {
-                val a = before[px, py]
-                val b = after[px, py]
-                val delta = abs(a.red - b.red) + abs(a.green - b.green) +
-                    abs(a.blue - b.blue)
-                if (delta > .065f) changed++
+        val changed = realCapture.capture(plasma, "filter-plasma-after").use { region ->
+            before.count { (px, py, earlier) ->
+                if (px >= region.width - 50 || py >= region.height - 30) false
+                else {
+                    val later = region.argbAt(px, py)
+                    val delta = (
+                        abs(Color.red(earlier) - Color.red(later)) +
+                        abs(Color.green(earlier) - Color.green(later)) +
+                        abs(Color.blue(earlier) - Color.blue(later))
+                    ) / 255f
+                    delta > .065f
+                }
             }
         }
         compose.runOnIdle {

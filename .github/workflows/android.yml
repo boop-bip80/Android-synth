@@ -136,7 +136,7 @@ jobs:
           cores: 2
           ram-size: 3072M
           heap-size: 512M
-          disk-size: ${{ matrix.suite == 'compact' && '4000M' || '6000M' }}
+          disk-size: ${{ (matrix.suite == 'compact' || matrix.suite == 'general-0' || matrix.suite == 'general-1') && '4000M' || '6000M' }}
           disable-animations: true
           emulator-options: -no-window -gpu swangle -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           # The runner executes each nonempty script line in a separate `sh -c`.
