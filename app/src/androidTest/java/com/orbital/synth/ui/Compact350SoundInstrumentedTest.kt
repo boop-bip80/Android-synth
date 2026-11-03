@@ -90,12 +90,18 @@ class Compact350SoundInstrumentedTest {
     @Test fun shortLandscapeCanSelectAllFiveArchitecturesWithAnchoredPiano() {
         val engineId = ParameterId.entries.first { it.name == "ENGINE" }
         val parameters = mutableStateOf(mapOf(engineId to 0f))
+        // Match the actual host layout: OSC toggle is mounted only with eight
+        // slots and an editable callback, and consumes the first 48dp row.
+        val slots = mutableStateOf(List(8) { OscillatorSlot() })
         val engineCalls = mutableListOf<Float>()
         val noteOns = mutableListOf<Int>()
         compose.setContent {
             Box(Modifier.width(360.dp).height(350.dp)) {
                 OrbitalScreen(
-                    state = OrbitalUiState(parameters = parameters.value),
+                    state = OrbitalUiState(
+                        parameters = parameters.value,
+                        oscillatorSlots = slots.value,
+                    ),
                     onNoteOn = { noteOns += it }, onNoteOff = {},
                     onParameterChange = { id, next ->
                         if (id == engineId) {
@@ -104,9 +110,13 @@ class Compact350SoundInstrumentedTest {
                         }
                     },
                     onModeChange = {}, onOctaveChange = {},
+                    onOscillatorSlotChange = { index, next ->
+                        slots.value = slots.value.toMutableList().apply { set(index, next) }
+                    },
                 )
             }
         }
+        compose.onNodeWithTag("compactOscillatorToggle").assertIsDisplayed()
         compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
         ).assertIsDisplayed()
