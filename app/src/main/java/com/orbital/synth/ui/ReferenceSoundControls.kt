@@ -289,6 +289,7 @@ fun ReferenceExpressionRibbon(
                 // independent newly-down B may begin expressive editing.
                 awaitPointerEventScope {
                     var ownerId: PointerId? = null
+                    var lastOwnerPosition: Offset? = null
                     fun deliver(position: Offset) {
                         val rawX = position.x / size.width.coerceAtLeast(1)
                         val rawY = position.y / size.height.coerceAtLeast(1)
@@ -306,8 +307,15 @@ fun ReferenceExpressionRibbon(
                             val held = frame.changes.firstOrNull { it.id == previous }
                             if (held == null || !held.pressed) {
                                 ownerId = null
+                                lastOwnerPosition = null
                             } else {
-                                deliver(held.position)
+                                // Other fingers lifting may produce another
+                                // frame with this finger unchanged. Never
+                                // duplicate a real control edit on that UP.
+                                if (lastOwnerPosition != held.position) {
+                                    lastOwnerPosition = held.position
+                                    deliver(held.position)
+                                }
                                 held.consume()
                             }
                         }
@@ -317,6 +325,7 @@ fun ReferenceExpressionRibbon(
                             }
                             if (fresh != null) {
                                 ownerId = fresh.id
+                                lastOwnerPosition = fresh.position
                                 deliver(fresh.position)
                                 fresh.consume()
                             }
