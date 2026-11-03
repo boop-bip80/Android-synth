@@ -203,16 +203,41 @@ private const val ORBITAL_PLASMA_AGSL = """
         float caustic = pow(max(0.0, sin(a * 6.0 - r * 31.0 + wave * 11.0)),
                             8.0) * 0.17;
 
+        // Volumetric refraction: broad translucent caustics support crisp
+        // filaments, while the glass rim and angled key-light keep an actual
+        // globe visible behind the translucent touch ribbon.
+        float depth = sqrt(max(0.0, 1.0 - min(1.0, r * r / 0.231)));
+        float keyLight = clamp(0.65 + depth * 0.42 - p.x * 0.25 -
+                               p.y * 0.23, 0.38, 1.33);
+        float cyanMist = exp(-abs(flow + 0.060 * spiral) * 10.4);
+        float violetMist = exp(-abs(flow - 0.086 - wave * 0.06) * 11.3);
+        float goldMist = exp(-abs(flow + 0.120 - spiral * 0.07) * 13.2);
+        float filament = exp(-abs(sin(a * 7.4 - r * 35.0 +
+                               wave * 8.2 + t * 1.2)) * 15.0) * body;
+        float glassRim = exp(-pow((r - 0.432 + wave * 0.009) * 50.0, 2.0));
+        float2 orbitP = float2(p.x * 0.76 + p.y * 0.36,
+                               p.y * 1.12 - p.x * 0.20);
+        float orbitRing = exp(-pow((length(orbitP) - 0.468) * 160.0, 2.0));
+
         float3 deep = float3(0.006, 0.016, 0.055);
-        float3 electric = float3(0.025, 0.59, 1.0);
-        float3 violet = float3(0.41, 0.17, 1.0);
-        float3 amber = float3(1.0, 0.57, 0.19);
-        float3 pearl = float3(0.66, 0.93, 1.0);
-        float3 rgb = deep * body * 2.8 + electric * halo;
-        rgb += electric * (blueArc * 0.75 + edge * 0.55 + caustic) * body;
-        rgb += violet * (violetArc * 0.83 + swirling * 0.21) * body;
-        rgb += amber * (goldArc * 0.69 + caustic * 0.42) * body;
-        rgb += pearl * pow(max(0.0, blueArc * goldArc), 2.0) * 0.42 * body;
+        float3 electric = float3(0.025, 0.66, 1.0);
+        float3 violet = float3(0.48, 0.18, 1.0);
+        float3 amber = float3(1.0, 0.65, 0.27);
+        float3 pearl = float3(0.72, 0.96, 1.0);
+        float3 rgb = deep * body * 3.4 + electric * halo * 1.65;
+        rgb += electric * (blueArc * 1.09 + cyanMist * 0.31 +
+                           edge * 0.62 + caustic * 1.16) * body;
+        rgb += violet * (violetArc * 1.19 + violetMist * 0.29 +
+                         swirling * 0.30) * body;
+        rgb += amber * (goldArc * 0.92 + goldMist * 0.20 +
+                        caustic * 0.56) * body;
+        rgb += pearl * pow(max(0.0, blueArc * goldArc), 2.0) * 0.68 * body;
+        rgb += (amber * 0.62 + electric * 0.32) * filament * 0.55;
+        rgb *= keyLight;
+        rgb += (electric * 0.68 + violet * 0.23 + pearl * 0.09) *
+               glassRim * (0.44 + 0.20 * depth);
+        rgb += (electric * 0.46 + amber * 0.26) * orbitRing *
+               (0.13 + expression * 0.19);
 
         // Sparse warm firefly motes are confined to the sphere. Their position
         // is deterministic, so a still instrument never spins an idle timer.
@@ -220,14 +245,18 @@ private const val ORBITAL_PLASMA_AGSL = """
         float2 starCell = floor(starGrid);
         float2 starPos = fract(starGrid) - 0.5;
         float starSeed = hash21(starCell);
-        float glitter = step(0.983, starSeed) *
+        float glitter = step(0.979, starSeed) *
             pow(max(0.0, 1.0 - length(starPos) * 3.7), 2.0) * body;
-        rgb += amber * glitter * (1.4 + expression * 1.2);
-        rgb += float3(0.07, 0.13, 0.24) * exp(-pow((r - 0.47) * 20.0, 2.0))
-               * (0.3 + expression * 0.3);
+        float diamond = step(0.996, starSeed) *
+            pow(max(0.0, 1.0 - length(starPos) * 4.6), 2.0) * body;
+        rgb += amber * glitter * (1.65 + expression * 1.20);
+        rgb += pearl * diamond * (1.75 + expression * 1.50);
+        rgb += float3(0.13, 0.24, 0.48) *
+               exp(-pow((r - 0.47) * 20.0, 2.0)) *
+               (0.45 + expression * 0.42);
 
-        rgb *= 0.86 + expression * 0.68;
-        rgb = rgb / (1.0 + rgb * 0.20);
+        rgb *= 0.95 + expression * 0.72;
+        rgb = rgb / (1.0 + rgb * 0.23);
         return half4(half3(clamp(rgb, 0.0, 1.0)), 1.0);
     }
 """
