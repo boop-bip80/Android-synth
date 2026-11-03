@@ -112,7 +112,7 @@ jobs:
           heap-size: 512M
           disk-size: 6000M
           disable-animations: true
-          emulator-options: -no-window -gpu software -no-snapshot -noaudio -no-boot-anim
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           # The runner executes each nonempty script line in a separate `sh -c`.
           # Use one Bash command so traps, pipefail and exit codes work together.
           script: bash .github/workflows/ci-emulator.sh && bash .github/workflows/ci-landscape.sh
