@@ -1,0 +1,98 @@
+name: Diagnostic - celestial luminous plasma hero physical pixel proof
+
+on:
+  push:
+    branches:
+      - diagnostic/celestial-plasma-proof-20261103
+
+permissions:
+  contents: read
+
+concurrency:
+  group: celestial-plasma-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  genuine-hero-frame:
+    name: Real API35 AGSL plasma/XY/knob hero pixel proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Install pinned Android SDK platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build real app/instrumentation APKs before starting QEMU
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+          mkdir -p artifacts/hero-debug-apk artifacts/hero-debug-test-apk
+          cp app/build/outputs/apk/debug/*.apk artifacts/hero-debug-apk/
+          cp app/build/outputs/apk/androidTest/debug/*.apk artifacts/hero-debug-test-apk/
+          test -n "$(find artifacts/hero-debug-apk -name '*.apk' -print -quit)"
+          test -n "$(find artifacts/hero-debug-test-apk -name '*.apk' -print -quit)"
+      - name: Enable hardware acceleration
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Instrument real Android UI and extract genuine hero framebuffer
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 2
+          ram-size: 3072M
+          heap-size: 512M
+          disk-size: 4000M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
+          script: bash .github/workflows/ci-reference-hero-preview.sh
+      - name: Emit bounded genuine hero JPEG preview for code review
+        if: success()
+        run: |
+          set -euo pipefail
+          # Only the test-produced renderer pixels enter these logs. No
+          # tokens, environment variables, personal data or private inputs.
+          python3 -m pip install --quiet --user Pillow
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          from io import BytesIO
+          import base64
+          p = Path('artifacts/reference-sound-hero-standalone.png')
+          assert p.is_file() and p.stat().st_size > 4096
+          with Image.open(p) as image:
+              assert image.width >= 600 and image.height >= 1000
+              image.thumbnail((700, 1440), Image.Resampling.LANCZOS)
+              out = BytesIO()
+              image.convert('RGB').save(out, format='JPEG', quality=61, optimize=True)
+          encoded = base64.b64encode(out.getvalue()).decode('ascii')
+          assert len(encoded) < 360_000, 'Bound the diagnostic log size'
+          print(f'PLASMA_PROOF_JPEG_BYTES:{len(out.getvalue())}')
+          print(f'PLASMA_PROOF_IMAGE_SIZE:{image.width}x{image.height}')
+          for index in range(0, len(encoded), 512):
+              print(f'PLASMA_B64_{index // 512:04d}:{encoded[index:index + 512]}')
+          PY
+      - name: Upload real 1080x2400 standalone reference hero pixels
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-celestial-plasma-hero-standalone-api35
+          path: |
+            artifacts/reference-sound-hero-standalone.png
+            artifacts/reference-hero-provenance.txt
+            artifacts/reference-hero-instrumentation.txt
+            artifacts/reference-hero-install.txt
+            artifacts/reference-hero-test-install.txt
+          if-no-files-found: warn
+          retention-days: 14
