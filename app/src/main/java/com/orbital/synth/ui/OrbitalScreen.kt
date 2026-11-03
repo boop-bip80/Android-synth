@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -306,11 +307,12 @@ fun OrbitalScreen(
                             ) else Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent)),
                             RoundedCornerShape(12.dp),
                         )
-                        .semantics {
-                            selected = active
-                            contentDescription = "Tab " + tab.title
-                        }
-                        .clickable(role = Role.Tab) { selectedTab = tab }
+                        .selectable(
+                            selected = active,
+                            role = Role.Tab,
+                            onClick = { selectedTab = tab },
+                        )
+                        .semantics { contentDescription = "Tab " + tab.title }
                         .heightIn(min = if (compactHeight) 40.dp else 48.dp)
                         .padding(vertical = if (compactHeight) 3.dp else 5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
