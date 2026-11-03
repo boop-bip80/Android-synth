@@ -132,6 +132,8 @@ internal class Voice(private val sampleRate: Int) {
     // filter charges and digital operator phases; nothing allocates per sample.
     // 0 wavetable | 1 nonlinear ladder | 2 SEM multimode | 3 six-op FM | 4 phase distortion.
     private var engineModel = 0
+    // Held by the audio worker for live filter retargets between block setups.
+    private var filterCharacter = 0f
     private var ghostEngineModel = 0
     private var engineSwitchSamples = 0
     private var engineSwitchSeed = 0f
@@ -184,6 +186,7 @@ internal class Voice(private val sampleRate: Int) {
             engineModel = requestedModel
         }
         val tone = character.coerceIn(0f, 1f)
+        filterCharacter = tone
         ladder.configure(cutoffHz, resonance, tone * 0.9f)
         sem.configure(cutoffHz, resonance, tone * 0.5f, tone)
         val fmChoice = (wave.coerceIn(0f, 1f) * (FmAlgorithm.entries.size - 1) + 0.5f)
@@ -213,7 +216,24 @@ internal class Voice(private val sampleRate: Int) {
         sustain = sustainLevel.coerceIn(0f, 1f)
         decayStep = ((1.0 - sustain) / max(1.0, decaySeconds * sampleRate)).toFloat()
         releaseFrames = max(1, (releaseSeconds * sampleRate).toInt())
+        retargetSvf(cutoffHz, resonance)
+    }
 
+    /**
+     * Audio-worker-only live filter cutoff and Q automation. Called at a bounded
+     * control cadence; each physical model slews its poles per audio sample.
+     * This never restarts an envelope, phase, analog filter charge or note.
+     */
+    fun retargetFilter(cutoffHz: Double, resonance: Float) {
+        val safeCutoff = cutoffHz.coerceIn(20.0, sampleRate * 0.45)
+        val safeResonance = resonance.coerceIn(0f, 1f)
+        retargetSvf(safeCutoff, safeResonance)
+        ladder.configure(safeCutoff.toFloat(), safeResonance, filterCharacter * 0.9f)
+        sem.configure(safeCutoff.toFloat(), safeResonance, filterCharacter * 0.5f,
+            filterCharacter)
+    }
+
+    private fun retargetSvf(cutoffHz: Double, resonance: Float) {
         val safeCutoff = cutoffHz.coerceIn(20.0, sampleRate * 0.45)
         val g = tan(PI * safeCutoff / sampleRate)
         val k = 2.0 - 1.80 * resonance.coerceIn(0f, 1f)
