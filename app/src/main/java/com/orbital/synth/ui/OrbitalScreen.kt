@@ -2467,7 +2467,9 @@ private fun CompactSoundPanel(
             CompactSoundPage.ENGINE -> {
                 Label("SYNTHESIS ARCHITECTURE  /  MODELED + INSPIRED")
                 Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    Modifier.fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .testTag("compactEngineOptionsRow"),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     EngineArchitectures.forEachIndexed { index, choice ->

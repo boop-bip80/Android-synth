@@ -12,15 +12,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeUp
-import androidx.compose.ui.test.click
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ParameterId
@@ -39,6 +37,59 @@ import org.junit.runner.RunWith
 class Compact350SoundInstrumentedTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     companion object { private const val TAG = "OrbitalCompact350" }
+
+    /** Exercise the same physical vertical editor gesture a performer can use. */
+    private fun swipeEditorUp() {
+        compose.onNodeWithTag("soundEditorScroll").performTouchInput {
+            val x = center.x
+            down(Offset(x, center.y * 1.7f))
+            moveTo(Offset(x, center.y * 1.1f))
+            moveTo(Offset(x, center.y * .55f))
+            moveTo(Offset(x, center.y * .3f))
+            up()
+        }
+    }
+
+    private fun visible(node: SemanticsNodeInteraction): Boolean =
+        try {
+            node.assertIsDisplayed()
+            true
+        } catch (_: AssertionError) {
+            false
+        }
+
+    private fun revealByRealVerticalSwipes(node: SemanticsNodeInteraction, label: String) {
+        repeat(8) { attempt ->
+            if (visible(node)) return
+            Log.i(TAG, "phase=vertical-reveal-$label-$attempt")
+            swipeEditorUp()
+        }
+        // Never claim eight layers / ENGINE reachability from assertExists alone.
+        node.assertIsDisplayed()
+    }
+
+    private fun swipeSelectorRowLeft(rowTag: String) {
+        compose.onNodeWithTag(rowTag).assertIsDisplayed().performTouchInput {
+            val y = center.y
+            down(Offset(center.x * 1.7f, y))
+            moveTo(Offset(center.x * .9f, y))
+            moveTo(Offset(center.x * .22f, y))
+            up()
+        }
+    }
+
+    private fun revealByRealHorizontalSwipes(
+        node: SemanticsNodeInteraction,
+        rowTag: String,
+        label: String,
+    ) {
+        repeat(7) { attempt ->
+            if (visible(node)) return
+            Log.i(TAG, "phase=horizontal-reveal-$label-$attempt")
+            swipeSelectorRowLeft(rowTag)
+        }
+        node.assertIsDisplayed()
+    }
 
     @Test fun shortLandscapeSoundHasReachableEightLayerEditorAndAnchoredPiano() {
         Log.i(TAG, "phase=start")
@@ -73,21 +124,20 @@ class Compact350SoundInstrumentedTest {
             .assertIsDisplayed().performClick()
         Log.i(TAG, "phase=after-visible-toggle-click")
         compose.onNodeWithTag("oscillatorRack").assertExists()
-        // Physically scroll the narrow editor, then reach and select the
-        // far-right (eighth) oscillator inside a horizontally scrolling row.
-        // The original piano assertions stay unchanged below this addition.
+        // Actually reveal the selector rail in the tiny weighted editor,
+        // then swipe its real horizontal scroll region to reach OSC8.
+        // Compose performScrollTo() hung the Android 35 emulator; user touch
+        // gestures both preserve the real interaction and prove reachability.
         Log.i(TAG, "phase=before-editor-physical-swipe")
-        compose.onNodeWithTag("soundEditorScroll").performTouchInput {
-            val x = center.x
-            down(Offset(x, center.y * 1.7f))
-            moveTo(Offset(x, center.y * 1.1f))
-            moveTo(Offset(x, center.y * .55f))
-            moveTo(Offset(x, center.y * .3f))
-            up()
-        }
+        revealByRealVerticalSwipes(
+            compose.onNodeWithTag("oscillatorLayerSelectorRow"), "osc-selector",
+        )
         Log.i(TAG, "phase=after-editor-physical-swipe")
-        compose.onNodeWithTag("oscillatorLayer7")
-            .performScrollTo().assertIsDisplayed().performClick()
+        val eighth = compose.onNodeWithTag("oscillatorLayer7")
+        revealByRealHorizontalSwipes(
+            eighth, "oscillatorLayerSelectorRow", "oscillator-layer-8",
+        )
+        eighth.assertIsDisplayed().performClick()
         compose.onNodeWithTag("oscillatorLayer7").assertIsSelected()
         Log.i(TAG, "phase=after-eighth-layer-selected")
         compose.onNodeWithContentDescription(
@@ -145,9 +195,13 @@ class Compact350SoundInstrumentedTest {
             up()
         }
         Log.i(TAG, "phase=engine-after-physical-swipe")
-        compose.onNodeWithContentDescription("Sound rack ENGINE")
-            .performScrollTo().assertIsDisplayed().performClick()
+        val enginePage = compose.onNodeWithContentDescription("Sound rack ENGINE")
+        revealByRealVerticalSwipes(enginePage, "engine-page")
+        enginePage.assertIsDisplayed().performClick()
         Log.i(TAG, "phase=engine-page-open")
+        revealByRealVerticalSwipes(
+            compose.onNodeWithTag("compactEngineOptionsRow"), "engine-choices",
+        )
         compose.onAllNodesWithContentDescription(
             "Select synthesis architecture", substring = true,
         ).assertCountEquals(5)
@@ -161,9 +215,11 @@ class Compact350SoundInstrumentedTest {
         )
         architectures.forEach { (label, expectedValue) ->
             Log.i(TAG, "phase=engine-select-${label.replace(' ', '-')}")
-            compose.onNodeWithContentDescription(
+            val choice = compose.onNodeWithContentDescription(
                 "Select synthesis architecture $label",
-            ).performScrollTo().assertIsDisplayed().performClick()
+            )
+            revealByRealHorizontalSwipes(choice, "compactEngineOptionsRow", label)
+            choice.assertIsDisplayed().performClick()
             compose.waitForIdle()
             compose.runOnIdle {
                 assertEquals("Engine $label callback", expectedValue,

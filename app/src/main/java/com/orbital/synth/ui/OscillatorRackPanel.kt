@@ -122,7 +122,9 @@ fun OscillatorRackPanel(
         }
 
         Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            Modifier.fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .testTag("oscillatorLayerSelectorRow"),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             slots.forEachIndexed { index, slot ->
