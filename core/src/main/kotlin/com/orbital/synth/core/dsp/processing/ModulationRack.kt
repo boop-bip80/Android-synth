@@ -67,9 +67,8 @@ class ModulationRack(
     /** Beats are quarter-notes, e.g. 4 beats/cycle = one 4/4 bar. */
     fun syncLfoToTempo(slot: Int, bpm: Float, beats: Float) {
         checkSlot(slot)
-        tempoBpm = safeTempo(bpm)
         beatsPerCycle[slot] = safeBeats(beats)
-        lfos[slot].syncToTempo(tempoBpm, beatsPerCycle[slot])
+        setTempoBpm(bpm)
     }
 
     /** Recalculate all tempo-synced lanes while preserving oscillator phases. */
