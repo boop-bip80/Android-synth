@@ -10,14 +10,25 @@ printf '%s\n' 'initializing' > artifacts/emulator-phase.txt
 display_overridden=0
 original_font_scale=null
 compact_logcat_pid=
+general_host_sampler_pid=
+general_full_logcat_pid=
 
 collect_diagnostics() {
   local status=$?
   trap - EXIT
   set +e
-  if [[ -n "$compact_logcat_pid" ]]; then
-    kill "$compact_logcat_pid" >/dev/null 2>&1 || true
-    wait "$compact_logcat_pid" >/dev/null 2>&1 || true
+  for diagnostic_pid in "$compact_logcat_pid" "$general_full_logcat_pid" "$general_host_sampler_pid"; do
+    if [[ -n "$diagnostic_pid" ]]; then
+      kill "$diagnostic_pid" >/dev/null 2>&1 || true
+      wait "$diagnostic_pid" >/dev/null 2>&1 || true
+    fi
+  done
+  # Keep the last 20 MB of continuous pre-crash logcat, bounded for GitHub
+  # artifact retention while preserving the events immediately before death.
+  full_logcat=artifacts/emulator-full-logcat.txt
+  if [[ -s "$full_logcat" ]] && (( $(stat -c%s "$full_logcat") > 20000000 )); then
+    tail -c 20000000 "$full_logcat" > "${full_logcat}.tail"
+    mv "${full_logcat}.tail" "$full_logcat"
   fi
   if [[ "$display_overridden" == 1 ]]; then
     timeout 10s adb shell wm size reset >/dev/null 2>&1
@@ -159,21 +170,73 @@ fi
 
 # Fail immediately if any JUnit instrumentation test fails.
 printf '%s\n' 'instrumentation' > artifacts/emulator-phase.txt
+# The job precompiled these exact APK files before QEMU boot. Assert that
+# source binaries remain present, then record hashes for crash diagnostics;
+# Gradle's connectedDebugAndroidTest still installs/runs the entire suite.
+app_apk=app/build/outputs/apk/debug/app-debug.apk
+instrumentation_apk=app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+[[ -s "$app_apk" && -s "$instrumentation_apk" ]] || {
+  echo 'GENERAL pre-QEMU test APK inputs missing; refuse fake connected-test success.' >&2
+  exit 1
+}
+printf 'run=%s\nsource=%s\napp_sha256=%s\ntest_apk_sha256=%s\n' \
+  "$GITHUB_RUN_ID" "$GITHUB_SHA" \
+  "$(sha256sum "$app_apk" | cut -d' ' -f1)" \
+  "$(sha256sum "$instrumentation_apk" | cut -d' ' -f1)" \
+  > artifacts/emulator-apk-preflight.txt
+# Sample host memory, cgroup OOM counters, free disk and QEMU/Gradle RSS
+# throughout connected tests. This is best-effort instrumentation only; an
+# emulator or test failure still fails the unchanged Gradle connected task.
+(
+  set +e
+  while :; do
+    printf '\n=== host-sample %s phase=%s ===\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(cat artifacts/emulator-phase.txt 2>/dev/null)"
+    free -m
+    for cgroup_file in \
+      /sys/fs/cgroup/memory.current \
+      /sys/fs/cgroup/memory.max \
+      /sys/fs/cgroup/memory.events \
+      /sys/fs/cgroup/memory.swap.current \
+      /sys/fs/cgroup/memory.swap.max; do
+      if [[ -r "$cgroup_file" ]]; then
+        printf '%s: ' "$cgroup_file"
+        tr '\n' ' ' < "$cgroup_file"
+        printf '\n'
+      fi
+    done
+    ps -eo pid,ppid,comm,rss,vsz,etime --sort=-rss | head -n 24
+    df -h . /tmp | tail -n 3
+    sleep 5
+  done
+) > artifacts/emulator-host-memory.txt 2>&1 &
+general_host_sampler_pid=$!
+# Stream a second, full Android logcat BEFORE instrumentation starts: a
+# postmortem adb logcat cannot recover when QEMU/TCP 5554 disappears.
+timeout 35m adb logcat -v threadtime > artifacts/emulator-full-logcat.txt 2>&1 &
+general_full_logcat_pid=$!
 # Start BEFORE the failing test; background logcat retains the last device
 # messages even if emulator-5554 vanishes before EXIT diagnostics can query it.
 adb logcat -v threadtime -s OrbitalCompactTest:I AndroidRuntime:E ActivityManager:W SurfaceFlinger:E HWUI:E libc:F DEBUG:E '*:S' > artifacts/compact-test-live-logcat.txt 2>&1 &
 compact_logcat_pid=$!
-# Every remaining Compose/UI test runs normally on API35. The previous
-# artificial 350dp Box fixtures have been replaced with two stronger real
-# device keyboard/navigation checks in ci-compact-geometry.sh.
-printf 'suite=general\nexpected_at_least=38\n' > artifacts/instrumentation-suite.txt
-timeout 30m gradle :app:connectedDebugAndroidTest --stacktrace --no-daemon --console=plain
+# The expensive real-PCM live FOCUS framebuffer test now runs STRICTLY in its
+# own fresh API35 `stage` emulator lane (including its real screenshot proof).
+# Exclude only that class from this full-suite pass to avoid executing it a
+# second time after dozens of Compose tests; no other tests are excluded.
+printf 'suite=general\nexpected_at_least=38\nexclusive_stage_class=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest\n' > artifacts/instrumentation-suite.txt
+timeout 30m gradle :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.notClass=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest \
+  --stacktrace --no-daemon --console=plain
 python3 - <<'PY'
 import glob
 from xml.etree import ElementTree as ET
 files = glob.glob("app/build/outputs/androidTest-results/connected/debug/*.xml")
 cases = sum(len(ET.parse(path).findall(".//testcase")) for path in files)
 print(f"ORBITAL general instrumentation: {cases} testcases in {len(files)} XML reports")
+excluded = "com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest"
+if any(excluded in case.attrib.get("classname", "") or excluded in case.attrib.get("name", "")
+       for path in files for case in ET.parse(path).findall(".//testcase")):
+    raise SystemExit("General runner ignored notClass; fresh stage lane must own this class")
 if cases < 38:
     raise SystemExit(f"Expected at least 38 instrumented tests, got {cases}")
 PY
@@ -188,6 +251,47 @@ if [[ ! -s "$debug_apk" ]]; then
   exit 1
 fi
 timeout 120s adb install -r "$debug_apk"
+
+# Process-death contract: this test intentionally spans TWO AndroidJUnitRunner
+# invocations with an OS force-stop between them. Each invocation is opt-in;
+# the ordinary full-suite run skips this class's two phase methods explicitly.
+# No mock Activity recreation can satisfy the fresh Process.myPid assertion.
+step_restart_test_apk='app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'
+[[ -s "$step_restart_test_apk" ]] || {
+  echo "STEP process-restart instrumentation APK is missing." >&2
+  exit 1
+}
+timeout 120s adb install -r "$step_restart_test_apk"
+printf '%s\n' 'step-v5-prepare-before-process-death' > artifacts/emulator-phase.txt
+timeout 180s adb shell am instrument -w -r \
+  -e class 'com.orbital.synth.ui.StepProcessRestartInstrumentedTest#prepareStepPatchAndProveFocusPlayStateBeforeProcessDeath' \
+  -e orbitalStepRestartPhase prepare \
+  com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
+  | tee artifacts/step-restart-prepare.txt
+grep -Eq 'OK \(1 test\)' artifacts/step-restart-prepare.txt || {
+  echo "STEP process-restart prepare instrumentation did not pass." >&2
+  exit 1
+}
+printf '%s\n' 'step-v5-actual-os-force-stop' > artifacts/emulator-phase.txt
+timeout 20s adb shell am force-stop com.orbital.synth
+if timeout 8s adb shell pidof com.orbital.synth >/dev/null 2>&1; then
+  echo "Android kept ORBITAL alive despite the required force-stop." >&2
+  exit 1
+fi
+launch_orbital artifacts/step-restart-cold-launch.txt
+printf '%s\n' 'step-v5-verify-new-os-process' > artifacts/emulator-phase.txt
+timeout 180s adb shell am instrument -w -r \
+  -e class 'com.orbital.synth.ui.StepProcessRestartInstrumentedTest#verifyAfterForcedDeathColdRestartAndDeleteOnlyOurPatch' \
+  -e orbitalStepRestartPhase verify \
+  com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
+  | tee artifacts/step-restart-verify.txt
+grep -Eq 'OK \(1 test\)' artifacts/step-restart-verify.txt || {
+  echo "STEP V5 cold-process recall/instrumentation did not pass." >&2
+  exit 1
+}
+printf 'step_v5_persistence=PASS\nprocess_death=REAL_FORCE_STOP\nfresh_android_pid=ASSERTED\nstep_audio_clock=PASS\nfocus_play_transition=PASS\n' \
+  > artifacts/step-restart-summary.txt
+
 installed_package="$(timeout 15s adb shell pm path com.orbital.synth | tr -d '\r')"
 if [[ "$installed_package" != *'package:'* ]]; then
   echo "com.orbital.synth is not installed after adb install: $installed_package" >&2

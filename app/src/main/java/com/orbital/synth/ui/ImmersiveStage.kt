@@ -1,5 +1,8 @@
 package com.orbital.synth.ui
 
+import android.content.Context
+import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -40,6 +43,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
@@ -88,6 +93,14 @@ internal fun ImmersiveStage(
     }
     var observedHostOctave by remember { mutableIntStateOf(state.octave) }
     val haptics = LocalHapticFeedback.current
+    val hapticContext = LocalContext.current
+    val hapticView = LocalView.current
+    val accessibilityService = remember(hapticContext) {
+        hapticContext.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+    }
+    // pointerInput is keyed to the mapper, not the settings dialog. A mutable
+    // state reader ensures a freshly opted-in toggle takes effect on next note.
+    val latestHapticsOptIn = rememberUpdatedState(stageSettings.hapticsEnabled)
     val latestOn = rememberUpdatedState(onNoteOn)
     val latestExpressiveOn = rememberUpdatedState(onExpressiveNoteOn)
     val latestOff = rememberUpdatedState(onNoteOff)
@@ -217,6 +230,10 @@ internal fun ImmersiveStage(
         }
     }
 
+    // Only the explicit keyboardless FOCUS sub-mode hides Android OS chrome.
+    // Back first reveals app controls, which disposes the bar-hiding effect.
+    FocusSystemBarsEffect(focusMode = cleanCanvas)
+
     val parameter = { id: ParameterId ->
         (state.parameters[id] ?: .5f).coerceIn(0f, 1f)
     }
@@ -295,13 +312,38 @@ internal fun ImmersiveStage(
                             touchIntensity = pressure.coerceIn(.15f, 1f)
                             pulse += 1L
                             reportTouchModulation(touchX, touchY, pressure)
-                            // A restrained one-shot tactile accent, never a
-                            // continuous vibration or a high-frequency haptic loop.
-                            if (time - lastHapticAt >= 80L) {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                lastHapticAt = time
+                            val noteEvents = mapper.touchDown(id, touchX, touchY, pressure, time)
+                            deliver(noteEvents)
+                            // Haptic accent ONLY for an actual newly sounded note:
+                            // never during sustained drags, expression or release.
+                            // Every policy gate is read only at contact onset,
+                            // never on the audio thread or animation frame.
+                            if (noteEvents.any { it is TouchVoiceEvent.NoteOn }) {
+                                val systemAllowsHaptics = runCatching {
+                                    Settings.System.getInt(
+                                        hapticContext.contentResolver,
+                                        Settings.System.HAPTIC_FEEDBACK_ENABLED,
+                                        1,
+                                    ) != 0
+                                }.getOrDefault(false)
+                                if (StageHapticPolicy.shouldTrigger(
+                                        optedIn = latestHapticsOptIn.value,
+                                        systemEnabled = systemAllowsHaptics,
+                                        viewEnabled = hapticView.isHapticFeedbackEnabled,
+                                        touchExplorationEnabled =
+                                            accessibilityService?.isTouchExplorationEnabled == true,
+                                        event = StageHapticPolicy.Event.NOTE_DOWN,
+                                        atMs = time,
+                                        previousAtMs = lastHapticAt,
+                                    )
+                                ) {
+                                    // Platform intensity varies. This short OS
+                                    // UI feedback honours Android user settings;
+                                    // it is not waveform-rate motor synthesis.
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    lastHapticAt = time
+                                }
                             }
-                            deliver(mapper.touchDown(id, touchX, touchY, pressure, time))
                         }
                         start(
                             down.id.value,

@@ -13,6 +13,15 @@ finish() {
   local result=$?
   trap - EXIT
   set +e
+  # Preserve pre-crash evidence: Android may vanish before a postmortem adb call.
+  if [[ -n "${stage_logcat_pid:-}" ]]; then
+    kill "$stage_logcat_pid" 2>/dev/null || true
+    wait "$stage_logcat_pid" 2>/dev/null || true
+  fi
+  if [[ -n "${stage_monitor_pid:-}" ]]; then
+    kill "$stage_monitor_pid" 2>/dev/null || true
+    wait "$stage_monitor_pid" 2>/dev/null || true
+  fi
   printf 'exit=%s\nphase=%s\n' "$result" "$(cat "$phase" 2>/dev/null)" >> "$summary"
   timeout 15s adb logcat -d -t 1200 -v threadtime > artifacts/held-stage-capture-logcat.txt 2>&1
   exit "$result"
@@ -58,6 +67,32 @@ read -r screen_w screen_h <<< "$dimensions"
 printf 'focus=MainActivity\ndisplay=%sx%s\n' "$screen_w" "$screen_h" >> "$summary"
 
 printf 'instrument-real-held-touch-and-pcm\n' > "$phase"
+# Stream real logcat *before* instrumentation. Postmortem adb logcat is empty if
+# the emulator dies or exits, so the existing trap alone cannot explain a 255.
+timeout 240s adb logcat -v threadtime > artifacts/held-stage-live-logcat.txt 2>&1 &
+stage_logcat_pid=$!
+# Sample only the host's memory/QEMU state. This does not touch Android's UI,
+# audio worker, screenshot pixels or instrumentation assertions.
+(
+  for sample in {1..48}; do
+    printf 'sample=%s utc=%s\n' "$sample" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [[ -r /sys/fs/cgroup/memory.current ]]; then
+      printf 'memory.current='
+      cat /sys/fs/cgroup/memory.current
+    fi
+    if [[ -r /sys/fs/cgroup/memory.events ]]; then
+      printf 'memory.events:\n'
+      cat /sys/fs/cgroup/memory.events
+    fi
+    printf 'host-memory:\n'
+    free -m 2>&1
+    printf 'qemu-process-pid-ppid-rss-kib:\n'
+    ps -eo pid,ppid,rss,comm | awk 'NR==1 || $4 ~ /emulator|qemu-system/'
+    sleep 5
+  done
+) > artifacts/held-stage-host-memory.txt 2>&1 &
+stage_monitor_pid=$!
+printf 'live_logcat_pid=%s\nhost_sampler_pid=%s\n' "$stage_logcat_pid" "$stage_monitor_pid" >> "$summary"
 timeout 210s adb shell am instrument -w -r \
   -e class 'com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest#photographsVividStageDuringRealAudioTrackHeldNoteAndReleasesSafely' \
   com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
@@ -74,7 +109,7 @@ fi
 printf 'extract-actual-device-frames\n' > "$phase"
 # Android UiAutomation sampled both actual display frames. Read private bytes
 # written by the real debug app; no host-side rendering or mock alternative.
-for frame in orbital-stage-idle-proof.png orbital-stage-held-performance.png; do
+for frame in orbital-focus-idle-black.png orbital-focus-held-note.png; do
   extracted=0
   for attempt in 1 2; do
     if timeout 30s adb exec-out run-as com.orbital.synth cat "files/$frame" > "artifacts/$frame" &&
@@ -88,11 +123,11 @@ for frame in orbital-stage-idle-proof.png orbital-stage-held-performance.png; do
   done
   [[ "$extracted" == 1 ]] || { echo "No genuine Android screenshot bytes: $frame" >&2; exit 1; }
 done
-timeout 15s adb exec-out run-as com.orbital.synth cat files/orbital-stage-live-evidence.txt \
+timeout 15s adb exec-out run-as com.orbital.synth cat files/orbital-focus-live-evidence.txt \
   > artifacts/held-stage-capture-evidence.txt
 test -s artifacts/held-stage-capture-evidence.txt
 
-python3 - artifacts/orbital-stage-idle-proof.png artifacts/orbital-stage-held-performance.png \
+python3 - artifacts/orbital-focus-idle-black.png artifacts/orbital-focus-held-note.png \
   artifacts/orbital-emulator.png artifacts/held-stage-capture-evidence.txt "$screen_w" "$screen_h" <<'PY'
 import hashlib
 import struct
@@ -140,8 +175,11 @@ live_visible = int(values["live_visible"])
 idle_colorful = int(values["idle_colorful"])
 live_colorful = int(values["live_colorful"])
 sample_count = int(values["live_samples"])
-# This first proof captures the normal STAGE, which intentionally has idle
-# orbital artwork; true blank-black FOCUS is a separately gated mode.
+idle_samples = int(values["idle_samples"])
+if idle_visible > idle_samples//100 or idle_colorful > idle_samples//500:
+    raise SystemExit("Untouched FOCUS was not genuinely black")
+# The clean-canvas FOCUS mode is deliberately dark until input; it must
+# show actual PCM-driven light rather than a fake idle screenshot.
 if live_visible < idle_visible + max(100,sample_count//400):
     raise SystemExit("Held-note frame has no credible extra illuminated pixels")
 if live_colorful < idle_colorful + max(50,sample_count//800):
@@ -152,6 +190,6 @@ print(f"PASS real AndroidAudioTrack PCM and held-note colored field; PNG {width}
       f"idle={idle_bytes} live={live_bytes} bytes SHA256={sha(live)} "
       f"colorful={idle_colorful}->{live_colorful} visible={idle_visible}->{live_visible}")
 PY
-printf 'held_note=PCM_ACCEPTED\nvisual_field=LIVE_VISIBLE\nnote_up_and_exit=PASS\nscreenshot_sha256=%s\n' \
-  "$(sha256sum artifacts/orbital-stage-held-performance.png | cut -d' ' -f1)" >> "$summary"
+printf 'mode=FOCUS\nheld_note=PCM_ACCEPTED\nvisual_field=LIVE_VISIBLE\nback_revealed_exit=PASS\nnote_up_and_exit=PASS\nscreenshot_sha256=%s\n' \
+  "$(sha256sum artifacts/orbital-focus-held-note.png | cut -d' ' -f1)" >> "$summary"
 printf 'complete\n' > "$phase"

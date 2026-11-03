@@ -2,6 +2,9 @@ package com.orbital.synth.ui
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.util.Log
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -28,6 +31,12 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ImmersiveLiveFrameCaptureTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    /** Streamed logcat survives an emulator death; never changes pass criteria. */
+    private fun mark(phase: String) {
+        Log.i("ORBITAL_STAGE_CAPTURE", phase)
+        println("ORBITAL_STAGE_CAPTURE " + phase)
+    }
 
     private data class PixelEvidence(val samples: Int, val visible: Int, val colorful: Int)
 
@@ -80,36 +89,107 @@ class ImmersiveLiveFrameCaptureTest {
         return field.get(compose.activity) as AndroidAudioOutput
     }
 
+    /** True window focus is an OS/surface state; Compose semantics alone can be
+     *  inspected while a launcher/system overlay owns the physical screen.
+     *  A bounded first-run wait covers Android's genuine immersive tutorial;
+     *  all other captures keep the original 8-second gate. Real foreground
+     *  focus is still required and no foreign dialog is dismissed.
+     */
+    private fun requireFocusedActivity(phase: String) {
+        val decor = compose.activity.window.decorView
+        val waitMs = if (phase == "before idle stage framebuffer") 15_000L else 8_000L
+        val deadline = SystemClock.uptimeMillis() + waitMs
+        var focused = false
+        var confirmedFirstRunTutorial = false
+        var lastTutorialProbeMs = 0L
+        do {
+            if (compose.activity.hasWindowFocus() && decor.isShown &&
+                decor.width >= 600 && decor.height >= 1000) {
+                focused = true
+                break
+            }
+            // On a fresh device SystemUI's genuine immersive tutorial can
+            // appear AFTER Compose enters FOCUS. A one-shot early check races
+            // its animation. During *only* the first FOCUS idle-frame wait,
+            // inspect that exact OS window every 500ms and click its actual
+            // AOSP confirmation button. Never acknowledge other overlays.
+            val nowMs = SystemClock.uptimeMillis()
+            if (phase == "before idle stage framebuffer" &&
+                !confirmedFirstRunTutorial && nowMs - lastTutorialProbeMs >= 500L) {
+                lastTutorialProbeMs = nowMs
+                confirmedFirstRunTutorial =
+                    AndroidImmersiveTutorial.acknowledgeOnlyIfSystemOverlayOwnsFocus()
+                if (confirmedFirstRunTutorial) Thread.sleep(250L)
+            }
+            Thread.sleep(125L)
+        } while (SystemClock.uptimeMillis() < deadline)
+
+        if (!focused) {
+            val details = runCatching {
+                val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation
+                    .executeShellCommand("dumpsys window")
+                val matches = mutableListOf<String>()
+                ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { reader ->
+                    reader.forEachLine { line ->
+                        if (matches.size < 20 && listOf(
+                            "mCurrentFocus", "mFocusedApp", "mTopFullscreenOpaqueWindowState",
+                            "Window #", "Application Not Responding"
+                        ).any { line.contains(it) }) matches.add(line.trim())
+                    }
+                }
+                matches.joinToString(" | ").take(1250)
+            }.getOrElse { "dumpsys window unavailable: " + it.javaClass.simpleName }
+            throw AssertionError(
+                "Stage app Activity did not reacquire real foreground focus within ${waitMs}ms" +
+                    " during " + phase + "; hasWindowFocus=" + compose.activity.hasWindowFocus() +
+                    "; decorShown=" + decor.isShown + "; size=" + decor.width + "x" + decor.height +
+                    "; focusedWindows=" + details
+            )
+        }
+        println("ORBITAL_STAGE_FOCUS_VERIFIED " + phase + " app=MainActivity")
+    }
+
     @Test fun photographsVividStageDuringRealAudioTrackHeldNoteAndReleasesSafely() {
+        mark("begin")
         val audio = realAudioTrack()
         compose.waitUntil(10_000L) { audio.isRunning }
         assertTrue("The actual Android audio worker must stream", audio.isRunning)
+        mark("audio-worker-running")
 
+        requireFocusedActivity("before stage entry")
         compose.onNodeWithTag("immersiveModeToggle").performClick()
         compose.onNodeWithTag("immersiveStage").assertIsDisplayed()
         compose.onNodeWithTag("immersiveVisualField").assertExists()
+        compose.onNodeWithTag("stageFocusEnter").assertIsDisplayed().performClick()
         compose.onNodeWithTag("immersiveCanvas").assertExists()
+        compose.onNodeWithTag("immersiveExit").assertDoesNotExist()
+        compose.onNodeWithTag("stageConfigOpen").assertDoesNotExist()
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(0)
+        mark("focus-stage-controls-hidden")
 
         // Compose semantics update before SurfaceFlinger presents the next frame.
         // Force multiple actual UI frames to settle before sampling the idle
         // stage; an immediate UiAutomation frame may still show the SOUND tab.
+        mark("idle-settle-before-clock")
         compose.waitForIdle()
-        compose.mainClock.advanceTimeBy(180L)
+        // FOCUS removes all stage chrome and fades the live field to actual
+        // black over 950ms before a note begins. Never compare against the
+        // deliberately illuminated idle orbit of ordinary STAGE mode.
+        compose.mainClock.advanceTimeBy(1_250L)
         compose.waitForIdle()
-        Thread.sleep(260L)
-        val decor = compose.activity.window.decorView
-        val ownsFocus = compose.activity.hasWindowFocus()
-        println("ORBITAL_STAGE_FOREGROUND app_window_focus=" + ownsFocus +
-            " decor_shown=" + decor.isShown + " decor_size=" + decor.width + "x" + decor.height)
-        assertTrue("Stage app Activity does not own window focus", ownsFocus && decor.isShown)
+        Thread.sleep(1_150L)
+        // The bounded focused-Activity gate also acknowledges Android's
+        // one-time *real* SystemUI immersive tutorial if it appears late.
+        // The physical framebuffer remains required after focus recovery.
+        requireFocusedActivity("before idle stage framebuffer")
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        mark("idle-ui-automation-capture")
         val idleBitmap = checkNotNull(automation.takeScreenshot()) {
             "Android UiAutomation could not capture the real idle stage"
         }
         val idle = try {
-            saveRealFrame(idleBitmap, "orbital-stage-idle-proof.png")
+            saveRealFrame(idleBitmap, "orbital-focus-idle-black.png")
             println("ORBITAL_STAGE_IDLE_PIXEL_CORNERS " +
                 Integer.toHexString(idleBitmap.getPixel(idleBitmap.width / 6, idleBitmap.height / 3)) + " " +
                 Integer.toHexString(idleBitmap.getPixel(idleBitmap.width * 5 / 6, idleBitmap.height * 2 / 3)))
@@ -118,10 +198,10 @@ class ImmersiveLiveFrameCaptureTest {
             idleBitmap.recycle()
         }
 
-        println("ORBITAL_STAGE_IDLE_DRAW_METRICS " + idle)
-        // This first proof exercises the normal immersive STAGE, which retains
-        // ambient orbit artwork while idle. Blank-black FOCUS has its own gate.
-        // Therefore do not classify a colorful idle orbit as stale keyboard UI.
+        println("ORBITAL_FOCUS_IDLE_DRAW_METRICS " + idle)
+        assertTrue("Untouched FOCUS must render a genuinely blank black center: " + idle,
+            idle.visible <= idle.samples / 100 && idle.colorful <= idle.samples / 500)
+        mark("idle-black-canvas-verified")
         val canvas = compose.onNodeWithTag("immersiveCanvas")
         var held = false
         try {
@@ -133,6 +213,7 @@ class ImmersiveLiveFrameCaptureTest {
             canvas.performTouchInput { moveTo(Offset(center.x * 1.24f, center.y * .59f)) }
             Thread.sleep(170L)
             canvas.performTouchInput { moveTo(Offset(center.x * .92f, center.y * .86f)) }
+            mark("held-pointer-gestures")
 
             // Real meter samples only PCM successfully submitted to AudioTrack.
             val deadline = System.nanoTime() + 6_000_000_000L
@@ -143,23 +224,27 @@ class ImmersiveLiveFrameCaptureTest {
             }
             assertTrue("No non-silent PCM accepted by AudioTrack during held note",
                 pcm.rms > .002f && pcm.peak > .004f)
+            mark("audio-track-pcm-confirmed")
             compose.waitForIdle()
             compose.mainClock.advanceTimeBy(100L)
             compose.waitForIdle()
             Thread.sleep(220L)
 
+            requireFocusedActivity("before held-note stage framebuffer")
+            mark("held-note-ui-automation-capture")
             val liveBitmap = checkNotNull(automation.takeScreenshot()) {
                 "Android UiAutomation failed during the live held-note gesture"
             }
             try {
-                saveRealFrame(liveBitmap, "orbital-stage-held-performance.png")
+                requireFocusedActivity("after held-note stage framebuffer")
+                saveRealFrame(liveBitmap, "orbital-focus-held-note.png")
                 val live = analyzeStage(liveBitmap)
                 println("ORBITAL_STAGE_LIVE_PIXEL_CORNERS " +
                     Integer.toHexString(liveBitmap.getPixel(liveBitmap.width / 6, liveBitmap.height / 3)) + " " +
                     Integer.toHexString(liveBitmap.getPixel(liveBitmap.width * 5 / 6, liveBitmap.height * 2 / 3)))
                 println("ORBITAL_LIVE_STAGE_METRICS PCM rms=" + pcm.rms + " peak=" + pcm.peak +
                     " idle=" + idle + " live=" + live + " dimensions=" + liveBitmap.width + "x" + liveBitmap.height)
-                File(compose.activity.filesDir, "orbital-stage-live-evidence.txt").writeText(
+                File(compose.activity.filesDir, "orbital-focus-live-evidence.txt").writeText(
                     "audio_running=true\n" +
                     "note_held_during_capture=true\n" +
                     "audio_pcm_rms=" + pcm.rms + "\n" +
@@ -177,6 +262,7 @@ class ImmersiveLiveFrameCaptureTest {
                     live.visible >= idle.visible + maxOf(100, live.samples / 400))
                 assertTrue("Held-note frame must add actual vivid chromatic filaments: idleColorful=" + idle.colorful + " liveColorful=" + live.colorful + " samples=" + live.samples,
                     live.colorful >= idle.colorful + maxOf(50, live.samples / 800))
+                mark("held-note-colorful-frame-verified")
             } finally {
                 liveBitmap.recycle()
             }
@@ -185,10 +271,18 @@ class ImmersiveLiveFrameCaptureTest {
             if (held) canvas.performTouchInput { up() }
         }
 
-        compose.onNodeWithTag("immersiveExit").performClick()
+        // A single Android Back action must restore hidden controls without
+        // escaping the synth; EXIT then returns the normal playable keyboard.
+        compose.activityRule.scenario.onActivity {
+            it.onBackPressedDispatcher.onBackPressed()
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("immersiveStage").assertIsDisplayed()
+        compose.onNodeWithTag("immersiveExit").assertIsDisplayed().performClick()
         compose.onNodeWithTag("immersiveStage").assertDoesNotExist()
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(1)
         assertTrue("Exiting stage must leave the real audio worker alive", audio.isRunning)
+        mark("exit-keyboard-audio-worker-confirmed")
     }
 }

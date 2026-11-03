@@ -34,7 +34,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Validate emulator harness syntax
-        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh && bash -n .github/workflows/ci-immersive-stage.sh && bash -n .github/workflows/ci-oscillator-workbench.sh && bash -n .github/workflows/ci-live-stage-framebuffer.sh
+        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh && bash -n .github/workflows/ci-immersive-stage.sh && bash -n .github/workflows/ci-oscillator-workbench.sh && bash -n .github/workflows/ci-live-stage-framebuffer.sh && bash -n .github/workflows/ci-stage-bootstrap.sh
       - name: Host tests, lint, app APK and instrumentation test APK
         run: gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
       - name: Upload debug APK
@@ -86,7 +86,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [general, compact]
+        suite: [general, compact, stage, visuals]
     env:
       ORBITAL_TEST_SUITE: ${{ matrix.suite }}
     steps:
@@ -103,6 +103,27 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      # GENERAL keeps Gradle's original connectedDebugAndroidTest task and its
+      # complete JUnit/UTP XML. Run its expensive Kotlin/APK prerequisites
+      # before booting QEMU, so test execution does not also compile source
+      # while the emulator occupies several GiB of runner memory.
+      - name: Precompile general test binaries before QEMU
+        if: ${{ matrix.suite == 'general' }}
+        run: gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --console=plain --stacktrace
+      # Both fresh screenshot lanes consume the EXACT APKs produced by the
+      # already-required host/lint job; they must not compile under live QEMU.
+      - name: Download validated app APK from host build
+        if: ${{ matrix.suite == 'stage' || matrix.suite == 'visuals' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: orbital-debug-apk
+          path: app/build/outputs/apk/debug
+      - name: Download validated instrumented APK from host build
+        if: ${{ matrix.suite == 'stage' || matrix.suite == 'visuals' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: orbital-debug-android-test-apk
+          path: app/build/outputs/apk/androidTest/debug
       - name: Enable KVM for the emulator
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
@@ -121,7 +142,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           # The runner executes each nonempty script line in a separate `sh -c`.
           # Use one Bash command so traps, pipefail and exit codes work together.
-          script: ${{ matrix.suite == 'compact' && 'bash .github/workflows/ci-compact-geometry.sh' || 'bash .github/workflows/ci-emulator.sh && bash .github/workflows/ci-immersive-stage.sh && bash .github/workflows/ci-oscillator-workbench.sh && bash .github/workflows/ci-live-stage-framebuffer.sh && bash .github/workflows/ci-landscape.sh' }}
+          script: ${{ matrix.suite == 'compact' && 'bash .github/workflows/ci-compact-geometry.sh' || matrix.suite == 'stage' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-live-stage-framebuffer.sh' || matrix.suite == 'visuals' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-immersive-stage.sh && bash .github/workflows/ci-oscillator-workbench.sh && bash .github/workflows/ci-landscape.sh' || 'bash .github/workflows/ci-emulator.sh' }}
       - name: Upload real emulator screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -133,8 +154,8 @@ jobs:
             artifacts/orbital-landscape-emulator.png
             artifacts/orbital-immersive-emulator.png
             artifacts/orbital-oscillator-workbench.png
-            artifacts/orbital-stage-idle-proof.png
-            artifacts/orbital-stage-held-performance.png
+            artifacts/orbital-focus-idle-black.png
+            artifacts/orbital-focus-held-note.png
             artifacts/compact-350-sound.png
             artifacts/compact-350-fx.png
             artifacts/compact-350-sound-return.png
@@ -151,6 +172,7 @@ jobs:
             artifacts/emulator-logcat.txt
             artifacts/compact-test-live-logcat.txt
             artifacts/instrumentation-suite.txt
+            artifacts/step-restart-*.txt
             artifacts/compact-e2e-phase.txt
             artifacts/compact-e2e-summary.txt
             artifacts/compact-350-logcat.txt
@@ -169,6 +191,9 @@ jobs:
             artifacts/emulator-summary.txt
             artifacts/emulator-phase.txt
             artifacts/emulator-provenance.txt
+            artifacts/emulator-host-memory.txt
+            artifacts/emulator-full-logcat.txt
+            artifacts/emulator-apk-preflight.txt
             artifacts/compact-activity-launch.txt
             artifacts/compact-window-state.txt
             artifacts/audio-policy.txt
@@ -196,6 +221,7 @@ jobs:
             artifacts/oscillator-test-apk-install.txt
             artifacts/oscillator-capture-instrumentation.txt
             artifacts/held-stage-*.txt
+            artifacts/focus-bootstrap-*.txt
             artifacts/oscillator-*.xml
             artifacts/oscillator-*-dump.txt
             artifacts/immersive-gesture.txt

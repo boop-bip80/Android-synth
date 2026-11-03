@@ -55,7 +55,7 @@ class StageTouchActivityRestartTest {
         }
     }
 
-    @Test fun allSevenSettingsRestoreAndUserEditSurvivesRealActivityRecreation() {
+    @Test fun allEightSettingsRestoreAndUserEditSurvivesRealActivityRecreation() {
         val saved = StageTouchSettings(
             tonic = 9, baseOctave = 5, octaveRange = 3,
             scale = TouchScale.BLUES, pressureSensitivity = .72f,
@@ -71,11 +71,14 @@ class StageTouchActivityRestartTest {
             compose.onNodeWithTag("stageOctaveRange-3").assertIsSelected()
             compose.onNodeWithTag("stageAxisVertical").assertIsSelected()
             compose.onNodeWithTag("stageMotionHold").assertIsSelected()
+            compose.onNodeWithTag("stageHapticsOff").assertIsSelected()
 
             val prior = store.requestedRevision()
             compose.onNodeWithTag("stageScale-MAJOR").performScrollTo().performClick()
-            waitForHostSave(prior)
-            val expected = saved.copy(scale = TouchScale.MAJOR)
+            compose.onNodeWithTag("stageHapticsOn").performClick()
+            compose.onNodeWithTag("stageHapticsOn").assertIsSelected()
+            waitForHostSave(prior, expectedEdits = 2)
+            val expected = saved.copy(scale = TouchScale.MAJOR, hapticsEnabled = true)
             val repo = StageTouchSettingsRepository(
                 ApplicationProvider.getApplicationContext<Context>()
             )
@@ -92,6 +95,7 @@ class StageTouchActivityRestartTest {
             compose.onNodeWithTag("stageOctaveRange-3").assertIsSelected()
             compose.onNodeWithTag("stageAxisVertical").assertIsSelected()
             compose.onNodeWithTag("stageMotionHold").assertIsSelected()
+            compose.onNodeWithTag("stageHapticsOn").assertIsSelected()
             assertEquals(expected, runBlocking { repo.load().settings })
         }
     }
@@ -130,9 +134,9 @@ class StageTouchActivityRestartTest {
         }
     }
 
-    private fun waitForHostSave(previousRevision: Long) {
+    private fun waitForHostSave(previousRevision: Long, expectedEdits: Int = 1) {
         compose.waitUntil(15_000L) {
-            store.requestedRevision() > previousRevision
+            store.requestedRevision() >= previousRevision + expectedEdits
         }
         runBlocking { withTimeout(15_000L) { store.awaitPendingWrites() } }
     }

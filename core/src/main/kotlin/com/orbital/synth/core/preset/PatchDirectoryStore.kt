@@ -18,9 +18,19 @@ class PatchDirectoryStore(private val directory: Path) {
         return directory.resolve(id + ".orbital")
     }
 
+    /** Never follow a substituted patch-bank symlink into unrelated app data. */
+    private fun rejectSymlinkedBank() {
+        require(!Files.isSymbolicLink(directory)) { "Patch bank cannot be a symlink" }
+    }
+
     fun save(patch: SynthPatch) {
+        rejectSymlinkedBank()
         Files.createDirectories(directory)
+        require(Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            "Patch bank must be a real directory"
+        }
         val target = pathFor(patch.id)
+        require(!Files.isSymbolicLink(target)) { "Refusing to replace a patch symlink" }
         val temporary = Files.createTempFile(directory, patch.id + "-", ".tmp")
         try {
             Files.write(temporary, PatchCodec.encode(patch).toByteArray(StandardCharsets.UTF_8))
@@ -38,16 +48,20 @@ class PatchDirectoryStore(private val directory: Path) {
     }
 
     fun load(id: String): SynthPatch? {
+        rejectSymlinkedBank()
         val path = pathFor(id)
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) return null
         require(Files.size(path) <= 65_536L) { "Patch too large" }
-        val patch = PatchCodec.decode(String(Files.readAllBytes(path), StandardCharsets.UTF_8))
+        val bytes = Files.readAllBytes(path)
+        require(bytes.size <= 65_536) { "Patch too large" }
+        val patch = PatchCodec.decode(String(bytes, StandardCharsets.UTF_8))
         require(patch.id == id) { "Patch filename and embedded ID differ" }
         return patch
     }
 
     fun list(): List<SynthPatch> {
-        if (!Files.isDirectory(directory)) return emptyList()
+        rejectSymlinkedBank()
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return emptyList()
         val ids = Files.newDirectoryStream(directory, "*.orbital").use { entries ->
             entries.map { it.fileName.toString().removeSuffix(".orbital") }
                 .filter(SynthPatch::validId)
@@ -58,5 +72,10 @@ class PatchDirectoryStore(private val directory: Path) {
         return ids.mapNotNull(::load)
     }
 
-    fun delete(id: String): Boolean = Files.deleteIfExists(pathFor(id))
+    fun delete(id: String): Boolean {
+        rejectSymlinkedBank()
+        val path = pathFor(id)
+        require(!Files.isSymbolicLink(path)) { "Refusing to delete a patch symlink" }
+        return Files.deleteIfExists(path)
+    }
 }

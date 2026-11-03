@@ -18,6 +18,7 @@ import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.performance.ArpeggiatorDirection
@@ -162,6 +163,7 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(Unit) {
                 while (true) {
                     val step = audioOutput.sequencerPlayhead
+                    val modulationStep = synth.modulationStepPlayhead
                     // Factory selection is queued on the audio thread. Read the
                     // immutable snapshot only after it has actually been applied,
                     // so the active ID and enabled grid cannot belong to different patterns.
@@ -197,7 +199,8 @@ class MainActivity : ComponentActivity() {
                         sequence.revision, sequence.appliedStepToggleId,
                         enabledWithPendingNotes, sequence.stepCount,
                     )
-                    if (screenState.sequencerStep != step ||
+                    if (screenState.modulationStepPlayhead != modulationStep ||
+                        screenState.sequencerStep != step ||
                         screenState.activeSequenceId != sequence.id ||
                         screenState.enabledSteps != displayedEnabled ||
                         screenState.sequencerStepCount != sequence.stepCount ||
@@ -206,6 +209,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         screenState = screenState.copy(
                             sequencerStep = step,
+                            modulationStepPlayhead = modulationStep,
                             activeSequenceId = sequence.id,
                             enabledSteps = displayedEnabled,
                             sequencerStepCount = sequence.stepCount,
@@ -240,6 +244,7 @@ class MainActivity : ComponentActivity() {
                     onModulationLfoChange = ::updateModulationLfo,
                     onModulationRouteChange = ::updateModulationRoute,
                     onModulationRouteClear = ::clearModulationRoute,
+                    onModulationStepsChange = ::updateModulationSteps,
                     onFxSlotChange = ::updateFxSlot,
                     onFxMoveSlot = ::reorderFxSlot,
                     onModulationTempoChange = { bpm ->
@@ -433,6 +438,8 @@ class MainActivity : ComponentActivity() {
             oscillatorSlots = oscillatorSnapshot(),
             modulationLfos = modulationLfoSnapshot(),
             modulationRoutes = modulationRouteSnapshot(),
+            modulationSteps = synth.modulationSteps,
+            modulationStepPlayhead = 0,
             fxSlots = fxSlotSnapshot(),
             presetIndex = patchIndex,
             presetCount = patches.size,
@@ -650,6 +657,8 @@ class MainActivity : ComponentActivity() {
                         oscillatorSlots = oscillatorSnapshot(),
                         modulationLfos = modulationLfoSnapshot(),
                         modulationRoutes = modulationRouteSnapshot(),
+                        modulationSteps = synth.modulationSteps,
+                        modulationStepPlayhead = 0,
                         fxSlots = fxSlotSnapshot(),
                         presetIndex = patchIndex,
                         presetCount = FactoryPresets.ALL.size,
@@ -705,6 +714,12 @@ class MainActivity : ComponentActivity() {
         // Disabled routes keep their source/curve/depth for later re-enable and V3 patch save.
         synth.setModulationRouteConfig(index, next)
         screenState = screenState.copy(modulationRoutes = modulationRouteSnapshot())
+    }
+
+    /** Each touch edit replaces one bounded immutable DSP snapshot, never an audio event queue. */
+    private fun updateModulationSteps(config: ModulationStepConfig) {
+        synth.setModulationSteps(config)
+        screenState = screenState.copy(modulationSteps = synth.modulationSteps)
     }
 
     private fun clearModulationRoute(index: Int) {

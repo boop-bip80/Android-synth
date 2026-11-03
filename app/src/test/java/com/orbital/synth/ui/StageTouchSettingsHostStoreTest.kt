@@ -41,7 +41,7 @@ class StageTouchSettingsHostStoreTest {
                 assertEquals(StageTouchSettingsLoad(
                     final, StageTouchLoadSource.SAVED,
                 ), host.loadAfterPendingWrites())
-                assertTrue(String(Files.readAllBytes(path), Charsets.UTF_8).startsWith(StageTouchSettingsCodec.V1_HEADER))
+                assertTrue(String(Files.readAllBytes(path), Charsets.UTF_8).startsWith(StageTouchSettingsCodec.V2_HEADER))
             }
         }
     }
