@@ -87,13 +87,15 @@ class StepSequencer(
 
     private var anchorSample: Long = 0L
     private var nextStepOrdinal: Long = 0L
-    private val activeOffTimes = mutableMapOf<Int, Long>()
+    // One direct-addressed due time per MIDI pitch. Long.MAX_VALUE means idle.
+    // MIDI note indices are 0..127, so no boxing/maps/filter/sort on the render worker.
+    private val activeOffTimes = LongArray(128) { Long.MAX_VALUE }
 
     /** Start fresh at an absolute sample cursor. Stop first if already playing. */
     fun start(atSample: Long = cursorSample) {
         require(!isPlaying) { "Call stop() before restarting transport" }
         require(atSample >= 0)
-        require(activeOffTimes.isEmpty())
+        require(activeOffTimes.all { it == Long.MAX_VALUE })
         cursorSample = atSample
         anchorSample = atSample
         nextStepOrdinal = 0L
@@ -102,10 +104,13 @@ class StepSequencer(
 
     /** Silence all active sequencer notes at the current sample position. */
     fun stop(): List<TimedNoteEvent> {
-        val offs = activeOffTimes.keys.sorted().map {
-            TimedNoteEvent(cursorSample, NoteEventKind.NOTE_OFF, it)
+        val offs = ArrayList<TimedNoteEvent>()
+        for (note in 0..127) {
+            if (activeOffTimes[note] != Long.MAX_VALUE) {
+                offs += TimedNoteEvent(cursorSample, NoteEventKind.NOTE_OFF, note)
+                activeOffTimes[note] = Long.MAX_VALUE
+            }
         }
-        activeOffTimes.clear()
         isPlaying = false
         return offs
     }
@@ -130,10 +135,13 @@ class StepSequencer(
         require(replacement.subdivisionsPerBeat == pattern.subdivisionsPerBeat) {
             "Live edits cannot change subdivisions per beat"
         }
-        val offs = activeOffTimes.keys.sorted().map {
-            TimedNoteEvent(cursorSample, NoteEventKind.NOTE_OFF, it)
+        val offs = ArrayList<TimedNoteEvent>()
+        for (note in 0..127) {
+            if (activeOffTimes[note] != Long.MAX_VALUE) {
+                offs += TimedNoteEvent(cursorSample, NoteEventKind.NOTE_OFF, note)
+                activeOffTimes[note] = Long.MAX_VALUE
+            }
         }
-        activeOffTimes.clear()
         pattern = replacement
         return offs
     }
@@ -157,76 +165,100 @@ class StepSequencer(
     fun advance(frames: Int): List<TimedNoteEvent> {
         require(frames in 0..2_000_000)
         if (!isPlaying || frames == 0) return emptyList()
-        require(cursorSample <= Long.MAX_VALUE - frames)
-        val end = cursorSample + frames
+        // API compatibility for offline clients. The real audio renderers instead
+        // call advanceInto() with a pre-created sink, avoiding this List entirely.
         val events = ArrayList<TimedNoteEvent>()
-
-        while (true) {
-            val stepTime = sampleAtStep(nextStepOrdinal)
-            val nextOff = activeOffTimes.values.minOrNull() ?: Long.MAX_VALUE
-            val nextEvent = minOf(stepTime, nextOff)
-            if (nextEvent >= end) break
-
-            // Releasing first at a shared timestamp guarantees a clear retrigger.
-            if (nextOff <= stepTime) {
-                val due = activeOffTimes.filterValues { it == nextOff }.keys.sorted()
-                for (note in due) {
-                    activeOffTimes.remove(note)
-                    events += TimedNoteEvent(nextOff, NoteEventKind.NOTE_OFF, note)
-                }
-            } else {
-                scheduleStep(nextStepOrdinal, stepTime, events)
-                nextStepOrdinal++
-            }
-        }
-
-        cursorSample = end
+        advanceInto(frames, TimedNoteSink { sampleTime, kind, note, velocity ->
+            events.add(TimedNoteEvent(sampleTime, kind, note, velocity))
+        })
         return events
     }
 
-    private fun scheduleStep(ordinal: Long, whenSample: Long, out: MutableList<TimedNoteEvent>) {
-        val step = pattern.steps[(ordinal % pattern.steps.size).toInt()]
-        for ((index, note) in step.notes.withIndex()) {
-            if (!shouldTrigger(note.probability, ordinal, index)) continue
+    /**
+     * Single-worker, allocation-free scheduling for [cursorSample, cursorSample + frames).
+     * The sink must be preallocated by its caller and must not re-enter this sequencer.
+     *
+     * The playhead advances to the block end BEFORE callbacks, matching advance()'s
+     * historical state visibility to downstream sample renderers. Far-boundary
+     * events are deferred to the next block. At a shared timestamp release all
+     * due pitches ascending, then schedule notes in their original chord order.
+     */
+    fun advanceInto(frames: Int, sink: TimedNoteSink) {
+        require(frames in 0..2_000_000)
+        if (!isPlaying || frames == 0) return
+        require(cursorSample <= Long.MAX_VALUE - frames)
+        val end = cursorSample + frames
+        cursorSample = end
 
-            if (note.tie && note.midiNote in activeOffTimes) {
-                // The prior onset's lookahead already included this tied step.
-                continue
+        while (true) {
+            val stepTime = sampleAtStep(nextStepOrdinal)
+            var nextOff = Long.MAX_VALUE
+            for (note in 0..127) {
+                if (activeOffTimes[note] < nextOff) nextOff = activeOffTimes[note]
             }
+            if (minOf(stepTime, nextOff) >= end) break
 
-            if (activeOffTimes.remove(note.midiNote) != null) {
-                out += TimedNoteEvent(whenSample, NoteEventKind.NOTE_OFF, note.midiNote)
+            if (nextOff <= stepTime) {
+                for (note in 0..127) {
+                    if (activeOffTimes[note] == nextOff) {
+                        activeOffTimes[note] = Long.MAX_VALUE
+                        sink.emit(nextOff, NoteEventKind.NOTE_OFF, note, 0)
+                    }
+                }
+            } else {
+                scheduleStep(nextStepOrdinal, stepTime, sink)
+                nextStepOrdinal++
             }
-
-            out += TimedNoteEvent(whenSample, NoteEventKind.NOTE_ON, note.midiNote, note.velocity)
-            val (lastOrdinal, lastGate) = tiedEnd(ordinal, note)
-            val lastStart = sampleAtStep(lastOrdinal)
-            val length = sampleAtStep(lastOrdinal + 1) - lastStart
-            // Swing delays the following odd-step onset but must not elongate
-            // the gate of the preceding even step. Odd-step gates instead use
-            // their shortened time until the next fixed even boundary.
-            val straightLength = (sampleRate * 60.0 / (bpm * pattern.subdivisionsPerBeat)).roundToLong()
-            val gateLength = if ((lastOrdinal and 1L) == 0L) minOf(length, straightLength) else length
-            activeOffTimes[note.midiNote] =
-                lastStart + maxOf(1L, (gateLength * lastGate).roundToLong())
         }
     }
 
-    /** Scan no more than one cycle: a loop of ties cannot hold notes indefinitely. */
-    private fun tiedEnd(origin: Long, firstNote: SequencerNote): Pair<Long, Double> {
-        var lastOrdinal = origin
-        var lastGate = firstNote.gate
-        for (offset in 1 until pattern.steps.size) {
-            val nextOrdinal = origin + offset
-            val next = pattern.steps[(nextOrdinal % pattern.steps.size).toInt()]
-            val found = next.notes.withIndex().firstOrNull {
-                it.value.midiNote == firstNote.midiNote && it.value.tie &&
-                    shouldTrigger(it.value.probability, nextOrdinal, it.index)
-            } ?: break
-            lastOrdinal = nextOrdinal
-            lastGate = found.value.gate
+    private fun scheduleStep(ordinal: Long, whenSample: Long, sink: TimedNoteSink) {
+        val step = pattern.steps[(ordinal % pattern.steps.size).toInt()]
+        for (index in step.notes.indices) {
+            val note = step.notes[index]
+            if (!shouldTrigger(note.probability, ordinal, index)) continue
+            val pitch = note.midiNote
+            if (note.tie && activeOffTimes[pitch] != Long.MAX_VALUE) {
+                // The prior onset already looked ahead through this tied step.
+                continue
+            }
+            if (activeOffTimes[pitch] != Long.MAX_VALUE) {
+                activeOffTimes[pitch] = Long.MAX_VALUE
+                sink.emit(whenSample, NoteEventKind.NOTE_OFF, pitch, 0)
+            }
+            sink.emit(whenSample, NoteEventKind.NOTE_ON, pitch, note.velocity)
+
+            // Inline tie lookahead keeps the original probability/index order,
+            // without Pair or withIndex/IndexedValue allocations per note.
+            var lastOrdinal = ordinal
+            var lastGate = note.gate
+            for (offset in 1 until pattern.steps.size) {
+                val nextOrdinal = ordinal + offset
+                val next = pattern.steps[(nextOrdinal % pattern.steps.size).toInt()]
+                var tiedIndex = -1
+                for (candidateIndex in next.notes.indices) {
+                    val candidate = next.notes[candidateIndex]
+                    if (candidate.midiNote == pitch && candidate.tie &&
+                        shouldTrigger(candidate.probability, nextOrdinal, candidateIndex)) {
+                        tiedIndex = candidateIndex
+                        break
+                    }
+                }
+                if (tiedIndex < 0) break
+                lastOrdinal = nextOrdinal
+                lastGate = next.notes[tiedIndex].gate
+            }
+            val lastStart = sampleAtStep(lastOrdinal)
+            val length = sampleAtStep(lastOrdinal + 1) - lastStart
+            // Swing delays the following odd onset but must not lengthen the
+            // preceding even step's gate; odd steps use their shortened gap.
+            val straightLength =
+                (sampleRate * 60.0 / (bpm * pattern.subdivisionsPerBeat)).roundToLong()
+            val gateLength =
+                if ((lastOrdinal and 1L) == 0L) minOf(length, straightLength) else length
+            activeOffTimes[pitch] =
+                lastStart + maxOf(1L, (gateLength * lastGate).roundToLong())
         }
-        return lastOrdinal to lastGate
     }
 
     private fun sampleAtStep(ordinal: Long): Long {
