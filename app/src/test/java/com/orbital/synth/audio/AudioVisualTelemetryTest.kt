@@ -87,6 +87,17 @@ class AudioVisualTelemetryTest {
     }
 
     @Test
+    fun nonDivisibleSampleRateStillCapsVisualRefresh() {
+        // 8,000 / 30 = 266.666...; floor division would exceed the 30 Hz cap.
+        val meter = AudioVisualTelemetry(sampleRate = 8_000)
+        meter.begin()
+        meter.observeFloat(FloatArray(266 * 2) { .75f }, 266)
+        assertEquals(0f, meter.snapshot().rms, 0f)
+        meter.observeFloat(floatArrayOf(.75f, .75f), 1)
+        assertEquals(.75f, meter.snapshot().rms, .0002f)
+    }
+
+    @Test
     fun stopSuppressesStaleWorkerUpdatesAndBeginResetsHalfWindows() {
         val meter = AudioVisualTelemetry(sampleRate)
         meter.begin()
