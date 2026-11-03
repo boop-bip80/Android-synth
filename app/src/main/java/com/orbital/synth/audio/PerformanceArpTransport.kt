@@ -229,6 +229,28 @@ internal class PerformanceArpTransport(
         return if (epoch > 0L && (epoch and 1L) != 0L) epoch else null
     }
 
+    /**
+     * Arm the next worker's physical-input epoch AFTER AudioTrack opens and
+     * AFTER the old worker completed onWorkerStop(), but BEFORE Thread.start().
+     * This is a lock-free CAS only: no DSP, queue drain or render allocation.
+     * Pre-start contacts are consumed exactly once by the first renderBlock().
+     */
+    fun armInputForPendingWorker() = activateInputEpoch()
+
+    /**
+     * Thread.start() can fail before any render worker owns this transport.
+     * Close producer admission FIRST, then drain pending commands with exactly
+     * the same reservation accounting as onWorkerStop(). Never call worker-
+     * owned DSP cleanup from this lifecycle-failure path.
+     */
+    fun cancelPendingWorkerInput() {
+        deactivateInputEpoch()
+        while (true) {
+            val command = commands.poll() ?: break
+            forgetPhysicalReservation(command)
+        }
+    }
+
     /** Called on worker lifecycle only; MIDI and UI producer paths never lock. */
     private fun activateInputEpoch() {
         while (true) {
