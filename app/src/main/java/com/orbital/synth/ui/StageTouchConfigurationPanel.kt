@@ -89,6 +89,26 @@ internal fun StageTouchConfigurationPanel(
             Text("Compose a space for your hands", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
             Text("Choose what every touch plays. The performance screen stays completely clear.", color = PanelMuted, fontSize = 12.sp)
 
+            ConfigSection(
+                "TACTILE / OPT IN",
+                "Optional short response on a fresh note only. Never on drags; Android and accessibility settings can suppress it.",
+            ) {
+                ConfigChoiceRow {
+                    ConfigChip(
+                        "OFF · DEFAULT", !settings.hapticsEnabled,
+                        "Disable tactile note accents", "stageHapticsOff",
+                    ) {
+                        onChange(settings.copy(hapticsEnabled = false))
+                    }
+                    ConfigChip(
+                        "SUBTLE · ON", settings.hapticsEnabled,
+                        "Enable one short tactile accent at note onset", "stageHapticsOn",
+                    ) {
+                        onChange(settings.copy(hapticsEnabled = true))
+                    }
+                }
+            }
+
             ConfigSection("01 / SCALE", "Only notes in this scale are played.") {
                 ConfigChoiceRow {
                     Scales.forEach { (scale, name) ->
@@ -161,25 +181,6 @@ internal fun StageTouchConfigurationPanel(
                     modifier = Modifier.fillMaxWidth().testTag("stagePressureSensitivity")
                         .semantics { contentDescription = "Optional pressure sensitivity" },
                 )
-            }
-            ConfigSection(
-                "08 / TACTILE ACCENTS",
-                "Optional short response on a fresh note only. Never on drags; Android and accessibility settings can suppress it.",
-            ) {
-                ConfigChoiceRow {
-                    ConfigChip(
-                        "OFF · DEFAULT", !settings.hapticsEnabled,
-                        "Disable tactile note accents", "stageHapticsOff",
-                    ) {
-                        onChange(settings.copy(hapticsEnabled = false))
-                    }
-                    ConfigChip(
-                        "SUBTLE · ON", settings.hapticsEnabled,
-                        "Enable one short tactile accent at note onset", "stageHapticsOn",
-                    ) {
-                        onChange(settings.copy(hapticsEnabled = true))
-                    }
-                }
             }
             Text(
                 if (settings.pitchAxis == TouchPitchAxis.HORIZONTAL)
