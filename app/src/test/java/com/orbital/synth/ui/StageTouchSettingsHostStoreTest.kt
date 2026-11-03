@@ -41,7 +41,7 @@ class StageTouchSettingsHostStoreTest {
                 assertEquals(StageTouchSettingsLoad(
                     final, StageTouchLoadSource.SAVED,
                 ), host.loadAfterPendingWrites())
-                assertTrue(Files.readString(path).startsWith(StageTouchSettingsCodec.V1_HEADER))
+                assertTrue(String(Files.readAllBytes(path), Charsets.UTF_8).startsWith(StageTouchSettingsCodec.V1_HEADER))
             }
         }
     }
@@ -69,7 +69,7 @@ class StageTouchSettingsHostStoreTest {
     @Test fun futureFileVersionSurvivesUserEditsWithoutImplicitDowngrade() = runBlocking {
         withScratch { path ->
             val future = "ORBITAL-STAGE-TOUCH-V932\nfutureMode=unreadable\n"
-            Files.writeString(path, future)
+            Files.write(path, future.toByteArray(Charsets.UTF_8))
             withStore(path) { host, _ ->
                 val request = host.requestSave(StageTouchSettings(tonic = 7))
                 withTimeout(15_000L) { host.awaitPendingWrites() }
@@ -80,7 +80,7 @@ class StageTouchSettingsHostStoreTest {
                     ),
                     host.notices.value?.result,
                 )
-                assertEquals(future, Files.readString(path))
+                assertEquals(future, String(Files.readAllBytes(path), Charsets.UTF_8))
                 assertEquals(
                     StageTouchLoadSource.DEFAULT_UNSUPPORTED,
                     host.loadAfterPendingWrites().source,
@@ -92,7 +92,7 @@ class StageTouchSettingsHostStoreTest {
     @Test fun corruptFileIsPreservedEvenAfterBurstOfChanges() = runBlocking {
         withScratch { path ->
             val invalid = "ORBITAL-STAGE-TOUCH-V1\nscale=NOT_A_SCALE\n"
-            Files.writeString(path, invalid)
+            Files.write(path, invalid.toByteArray(Charsets.UTF_8))
             withStore(path) { host, _ ->
                 repeat(80) { index ->
                     host.requestSave(StageTouchSettings(tonic = index % 12))
@@ -104,7 +104,7 @@ class StageTouchSettingsHostStoreTest {
                     ),
                     host.notices.value?.result,
                 )
-                assertEquals(invalid, Files.readString(path))
+                assertEquals(invalid, String(Files.readAllBytes(path), Charsets.UTF_8))
                 assertEquals(
                     StageTouchLoadSource.DEFAULT_CORRUPT,
                     host.loadAfterPendingWrites().source,
@@ -116,11 +116,11 @@ class StageTouchSettingsHostStoreTest {
     @Test fun readingLegacyFileDoesNotMigrateUntilUserMakesEdit() = runBlocking {
         withScratch { path ->
             val legacy = "ORBITAL-STAGE-TOUCH-V0\nscale=MAJOR\naxis=Y\n"
-            Files.writeString(path, legacy)
+            Files.write(path, legacy.toByteArray(Charsets.UTF_8))
             withStore(path) { host, _ ->
                 val restored = host.loadAfterPendingWrites()
                 assertEquals(StageTouchLoadSource.LEGACY, restored.source)
-                assertEquals(legacy, Files.readString(path))
+                assertEquals(legacy, String(Files.readAllBytes(path), Charsets.UTF_8))
                 host.requestSave(restored.settings.copy(tonic = 10))
                 withTimeout(15_000L) { host.awaitPendingWrites() }
                 assertEquals(StageTouchSettingsSave.Saved, host.notices.value?.result)
