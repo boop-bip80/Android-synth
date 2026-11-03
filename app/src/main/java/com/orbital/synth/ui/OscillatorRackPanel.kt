@@ -75,6 +75,8 @@ fun OscillatorRackPanel(
     slots: List<OscillatorSlot>,
     onSlotChange: (index: Int, next: OscillatorSlot) -> Unit,
     modifier: Modifier = Modifier,
+    /** When provided, compact SOUND pins a 51dp Back action beside OSC layers. */
+    onExitCompact: (() -> Unit)? = null,
 ) {
     if (slots.isEmpty()) return
     var selectedLayer by remember { mutableIntStateOf(0) }
@@ -94,9 +96,11 @@ fun OscillatorRackPanel(
                 ),
                 RoundedCornerShape(19.dp),
             )
-            .padding(horizontal = 11.dp, vertical = 13.dp),
-        verticalArrangement = Arrangement.spacedBy(11.dp),
+            .padding(horizontal = if (onExitCompact == null) 11.dp else 3.dp,
+                vertical = if (onExitCompact == null) 13.dp else 2.dp),
+        verticalArrangement = Arrangement.spacedBy(if (onExitCompact == null) 11.dp else 4.dp),
     ) {
+        if (onExitCompact == null) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
@@ -121,9 +125,36 @@ fun OscillatorRackPanel(
             )
         }
 
+        }
+
         Row(
-            Modifier.fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (onExitCompact != null) {
+                Box(
+                    Modifier
+                        .width(56.dp)
+                        .heightIn(min = 51.dp)
+                        .testTag("compactOscillatorToggle")
+                        .border(1.dp, OrbitalPalette.Cyan.copy(alpha = .55f),
+                            RoundedCornerShape(11.dp))
+                        .background(OrbitalPalette.Panel.copy(alpha = .65f),
+                            RoundedCornerShape(11.dp))
+                        .clickable(role = Role.Button) { onExitCompact?.invoke() }
+                        .semantics {
+                            contentDescription = "Hide eight-layer oscillator editor"
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("‹ OSC", color = OrbitalPalette.Cyan,
+                        fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            Row(
+                Modifier.weight(1f)
+                    .horizontalScroll(rememberScrollState())
                 .testTag("oscillatorLayerSelectorRow"),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -168,6 +199,7 @@ fun OscillatorRackPanel(
                     )
                 }
             }
+        }
         }
 
         if (layer.enabled) {
