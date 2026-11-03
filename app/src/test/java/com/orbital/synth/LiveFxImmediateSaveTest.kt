@@ -93,8 +93,10 @@ class LiveFxImmediateSaveTest {
         // its dedicated AudioTrack worker; note playback is not needed to drain.
         synth.renderStereo(FloatArray(256), 128)
         val outcome = withTimeout(2_000L) { save.await() }
-        val saved = (outcome as? PatchOutcome.Success)?.value?.patch
-            ?: throw AssertionError("The settled rack should save successfully")
+        val saved = when (outcome) {
+            is PatchOutcome.Success -> outcome.value.patch
+            else -> throw AssertionError("The settled rack should save successfully")
+        }
         assertEquals(otherChorus, saved.fxSlots[0])
         assertEquals(editedDelay, saved.fxSlots[1])
         assertEquals(editedDelay, synth.fxSlot(1))
