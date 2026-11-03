@@ -79,34 +79,64 @@ class PhysicalOscillatorAudioTrackInstrumentedTest {
         val target = compose.onNodeWithTag(tag)
         val editor = compose.onNodeWithTag("soundEditorScroll").assertIsDisplayed()
         val density = compose.activity.resources.displayMetrics.density
+
+        // The initial OSC enable control sits BELOW the SOUND editor fold.
+        // After tapping it, the new luminous rail is inserted ABOVE the enable
+        // button, while the noise XY pad lies BELOW the luminous rail. A fully
+        // clipped Compose node reports Rect(0,0,0,0), not its true direction.
+        // Remember the last physical edge instead of treating zero as 'above'.
+        var lastKnownAbove = tag == "luminousLevelControl"
         for (attempt in 0 until 36) {
             val targetRect = target.fetchSemanticsNode().boundsInRoot
             val editorRect = editor.fetchSemanticsNode().boundsInRoot
+            val requiredPx = minHeightDp * density
             val fullyVisible = visible(target) &&
-                targetRect.height >= minHeightDp * density - 1f &&
+                targetRect.width >= requiredPx - 1f &&
+                targetRect.height >= requiredPx - 1f &&
+                targetRect.left >= editorRect.left - 1f &&
+                targetRect.right <= editorRect.right + 1f &&
                 targetRect.top >= editorRect.top - 1f &&
                 targetRect.bottom <= editorRect.bottom + 1f
             if (fullyVisible) break
-            // Compose clips unplaced/offscreen semantics to a ZERO rect.
-            // Zero is not a position above the viewport: when approaching
-            // the OSC rack from the top, a real finger swipe UP must advance
-            // content before geometry becomes measurable.
+
+            val hasPhysicalBounds = targetRect.width > 1f && targetRect.height > 1f
+            val clippedAtTop = targetRect.top <= editorRect.top + 1f
+            val clippedAtBottom = targetRect.bottom >= editorRect.bottom - 1f
+            if (hasPhysicalBounds) {
+                if (clippedAtTop && !clippedAtBottom) lastKnownAbove = true
+                if (clippedAtBottom && !clippedAtTop) lastKnownAbove = false
+            }
+
+            // The compositor may reveal all but 3–6 physical pixels of a
+            // 48/108dp Canvas. Android touch slop consumes ~12px; fine swipes
+            // start at 30px but never jump past the opposite viewport edge.
+            val fineFingerDrag = (requiredPx - targetRect.height + 14f)
+                .coerceIn(30f, (editorRect.height * .21f).coerceAtLeast(30f))
+            // Even the coarse zero-rect probe is narrower than the control's
+            // physical height, preventing a 44dp button from being skipped.
+            val zeroRectDrag = (requiredPx * .60f)
+                .coerceIn(30f, (editorRect.height * .38f).coerceAtLeast(30f))
             val drag = when {
-                targetRect.width <= 1f || targetRect.height <= 1f ->
-                    -editorRect.height * .28f
+                !hasPhysicalBounds ->
+                    if (lastKnownAbove) zeroRectDrag else -zeroRectDrag
+                targetRect.height < requiredPx - 1f &&
+                    clippedAtTop && !clippedAtBottom -> fineFingerDrag
+                targetRect.height < requiredPx - 1f &&
+                    clippedAtBottom && !clippedAtTop -> -fineFingerDrag
                 targetRect.bottom > editorRect.bottom ->
-                    -(targetRect.bottom - editorRect.bottom + 10f)
+                    -(targetRect.bottom - editorRect.bottom + 14f).coerceAtLeast(30f)
                 targetRect.top < editorRect.top ->
-                    editorRect.top - targetRect.top + 10f
-                else -> -editorRect.height * .40f
-            }.coerceIn(-editorRect.height * .60f, editorRect.height * .60f)
+                    (editorRect.top - targetRect.top + 14f).coerceAtLeast(30f)
+                else -> if (lastKnownAbove) fineFingerDrag else -fineFingerDrag
+            }.coerceIn(-editorRect.height * .45f, editorRect.height * .45f)
             Log.i(TAG, "phase=physical-scroll-$tag-$attempt target=$targetRect " +
-                "viewport=$editorRect drag=$drag")
+                "viewport=$editorRect requiredPx=$requiredPx above=$lastKnownAbove drag=$drag")
             editor.performTouchInput {
+                // The 4px SOUND gutter is outside child XY gesture owners.
                 swipe(
                     start = Offset(4f, center.y - drag * .5f),
                     end = Offset(4f, center.y + drag * .5f),
-                    durationMillis = 320,
+                    durationMillis = 340,
                 )
             }
             compose.waitForIdle()
@@ -116,8 +146,10 @@ class PhysicalOscillatorAudioTrackInstrumentedTest {
         assertTrue(
             "$tag must be PHYSICALLY inside the real SOUND viewport " +
                 "(not a semantics-only offscreen node): rect=$rect viewport=$viewport",
-            rect.top >= viewport.top - 1f && rect.bottom <= viewport.bottom + 1f &&
-                rect.height >= minHeightDp * density - 1f,
+            rect.width >= minHeightDp * density - 1f &&
+                rect.height >= minHeightDp * density - 1f &&
+                rect.left >= viewport.left - 1f && rect.right <= viewport.right + 1f &&
+                rect.top >= viewport.top - 1f && rect.bottom <= viewport.bottom + 1f,
         )
         return rect
     }
