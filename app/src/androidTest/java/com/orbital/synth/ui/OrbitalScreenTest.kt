@@ -64,14 +64,14 @@ class OrbitalScreenTest {
             assertTrue(liveSlots.value[0].level > 0f)
         }
 
-        compose.onNodeWithTag("oscillatorWave2").performScrollTo().performClick()
+        compose.onNodeWithTag("oscillatorWave2").performScrollTo().assertIsDisplayed().performClick()
         // A new immutable slot revision must be observed before another control
         // is edited; otherwise a delayed Compose frame can overwrite the wave.
         compose.waitForIdle()
         compose.runOnIdle {
             assertEquals(.5f, liveSlots.value[0].waveform)
         }
-        compose.onNodeWithTag("oscillatorCoarseUp").performScrollTo().performClick()
+        compose.onNodeWithTag("oscillatorCoarseUp").performScrollTo().assertIsDisplayed().performClick()
         compose.waitForIdle()
         compose.runOnIdle {
             assertEquals(.5f, liveSlots.value[0].waveform)
