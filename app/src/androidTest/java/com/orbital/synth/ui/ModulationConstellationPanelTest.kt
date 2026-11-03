@@ -13,11 +13,15 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
+import androidx.compose.ui.geometry.Offset
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -86,6 +90,40 @@ class ModulationConstellationPanelTest {
         compose.onNodeWithText(
             "SAVED ROUTE • Reserved for a future audio engine connection."
         ).assertExists()
+    }
+
+    @Test fun actualStepPadTouchPublishesBipolarAudioConfigViaHostCallback() {
+        var livePattern by mutableStateOf(ModulationStepConfig(enabled = true))
+        compose.setContent {
+            MaterialTheme {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    ModulationConstellationPanel(
+                        lfos = List(8) { ModulationLfoConfig() },
+                        routes = List(64) { ModulationRouteConfig() },
+                        tempoBpm = 120f,
+                        onLfoChange = { _, _ -> },
+                        onRouteChange = { _, _ -> },
+                        onRouteClear = {},
+                        onTempoChange = {},
+                        stepConfig = livePattern,
+                        onStepChange = { livePattern = it },
+                        stepPlayhead = 3,
+                    )
+                }
+            }
+        }
+        compose.onNodeWithTag("modStepRhythmPanel").assertExists()
+        compose.onNodeWithTag("modStepRhythmPanel").performScrollTo()
+        compose.onNodeWithTag("modStepPad0").performTouchInput {
+            click(Offset(center.x, size.height * .90f))
+        }
+        compose.runOnIdle {
+            assertTrue("Touching the bottom of a pad must publish negative DSP voltage",
+                livePattern.values[0] < -.5f)
+            assertTrue(livePattern.enabled)
+        }
+        compose.onNodeWithTag("modStepGlideSlider").assertExists()
+        compose.onNodeWithTag("modStepSourceStatus").assertExists()
     }
 
     @Test fun screenExposesActualLfoParametersAndTopologicalGraph() {
