@@ -153,6 +153,17 @@ class ReferenceMiniSignalTapNavigationTest {
         )
     }
 
+    /** SOUND has a 12-strip glass keybed; FX keeps the *legacy* playable piano. */
+    private fun assertPinnedPlayableKeyboardInFx() {
+        val keyboard = compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard. Swipe across keys to play; use OCT buttons to change range.",
+        ).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val editor = compose.onNodeWithTag("soundEditorScroll")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("FX piano must stay anchored below scrolling editor, never occluded",
+            keyboard.top >= editor.bottom - 1f && keyboard.height >= 100f * density - 1f)
+    }
+
     @Test fun portraitMiniCardsRemainFourReal48dpPlusHitTargetsAndKeysRemainVisible() {
         var width by mutableIntStateOf(411)
         setHost(width = { width })
@@ -210,7 +221,7 @@ class ReferenceMiniSignalTapNavigationTest {
         compose.runOnIdle {
             assertTrue(writes.any { it.first == ParameterId.LFO_RATE && it.second > .78f })
         }
-        compose.onNodeWithTag("referencePerformanceKeybed").assertIsDisplayed()
+        assertPinnedPlayableKeyboardInFx()
     }
 
     @Test fun connectedLfoMiniTapRevealsActualFirstEnabledRackLaneAndEditsIt() {
@@ -247,7 +258,7 @@ class ReferenceMiniSignalTapNavigationTest {
                 it.first == 5 && it.second.shape == LfoShape.SINE
             })
         }
-        compose.onNodeWithTag("referencePerformanceKeybed").assertIsDisplayed()
+        assertPinnedPlayableKeyboardInFx()
     }
 
     @Test fun heldMiniTapSurvivesRealParameterRecompositionAtSoundTelemetryCadence() {
@@ -302,7 +313,7 @@ class ReferenceMiniSignalTapNavigationTest {
         compose.onNodeWithTag("modulationConstellationPanel").assertIsDisplayed()
         compose.onNodeWithTag("modRouteSlot0").assertExists()
         compose.onNodeWithTag("modRouteSlot63").assertExists()
-        compose.onNodeWithTag("referencePerformanceKeybed").assertIsDisplayed()
+        assertPinnedPlayableKeyboardInFx()
     }
 
     @Test fun disconnectedModPreviewNeverClaimsActionOrNavigatesToFakeMatrix() {
