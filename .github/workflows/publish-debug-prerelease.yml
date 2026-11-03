@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       verified_run_id:
-        description: "Fully successful five-job Android main CI run ID"
+        description: "Fully successful six-job Android main CI run ID"
         required: true
         type: string
   workflow_run:
@@ -74,15 +74,15 @@ jobs:
             exit 1
           }
 
-          # Require the actual full five-job matrix, not a stale three-job
+          # Require the actual full six-job matrix, not a stale three-job
           # historical pass or a successful but incomplete test workflow.
           jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID/jobs?per_page=100&filter=latest")"
           jq -e '
-            .total_count == 5 and
-            (.jobs | length) == 5 and
+            .total_count == 6 and
+            (.jobs | length) == 6 and
             all(.jobs[]; .status == "completed" and .conclusion == "success")
           ' <<< "$jobs_json" >/dev/null || {
-            echo "All five Android host/API35 jobs are required to pass." >&2
+            echo "All six Android host/API35 jobs are required to pass." >&2
             exit 1
           }
           for expected in \
@@ -90,7 +90,8 @@ jobs:
             "API 35 general tests and emulator screenshots" \
             "API 35 compact tests and emulator screenshots" \
             "API 35 stage tests and emulator screenshots" \
-            "API 35 visuals tests and emulator screenshots"; do
+            "API 35 visuals tests and emulator screenshots" \
+            "API 35 compact350 tests and emulator screenshots"; do
             jq -e --arg name "$expected" '
               any(.jobs[]; .name == $name and .conclusion == "success")
             ' <<< "$jobs_json" >/dev/null || {
@@ -150,7 +151,7 @@ jobs:
           echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "current_main_sha=$remote_sha" >> "$GITHUB_OUTPUT"
           echo "short=${source_sha:0:12}" >> "$GITHUB_OUTPUT"
-          echo "Validated all five jobs for sound source $source_sha and current main $remote_sha"
+          echo "Validated all six jobs for sound source $source_sha and current main $remote_sha"
 
       - name: Download only this verified host build APK
         env:
@@ -224,7 +225,7 @@ jobs:
             echo "or evidence of 1:1 emulation of commercial synthesizers."
             echo
             echo "- Source commit: [$SOURCE_SHA](https://github.com/$GITHUB_REPOSITORY/commit/$SOURCE_SHA)"
-            echo "- All five CI jobs: [run $VERIFIED_RUN_ID](https://github.com/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID)"
+            echo "- All six CI jobs: [run $VERIFIED_RUN_ID](https://github.com/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID)"
             echo "- APK SHA-256: $digest"
             echo "- Minimum Android API 26; target API 35."
           } > "$notes"
