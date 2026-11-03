@@ -114,7 +114,7 @@ scroll_sound_rack() {
   local x=$((screen_w * 12 / 100))
   local start=$((screen_h * 56 / 100))
   local end=$((screen_h * 23 / 100))
-  if [[ "$direction" == up ]]; then
+  if [[ "$direction" == down ]]; then
     timeout 12s adb shell input swipe "$x" "$start" "$x" "$end" 380
   else
     timeout 12s adb shell input swipe "$x" "$end" "$x" "$start" 380
