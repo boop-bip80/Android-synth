@@ -532,10 +532,36 @@ class OrbitalScreenTest {
         ).assertIsDisplayed()
         android.util.Log.i("OrbitalCompactTest", "PHASE-3: initial piano visible")
         compose.onNodeWithTag("referencePerformanceKeybed").assertDoesNotExist()
-        android.util.Log.i("OrbitalCompactTest", "PHASE-4: before performScrollTo")
-        compose.onNodeWithTag("compactOscillatorToggle").performScrollTo()
-        android.util.Log.i("OrbitalCompactTest", "PHASE-5: after performScrollTo")
-        compose.onNodeWithTag("compactOscillatorToggle").assertIsDisplayed()
+        // The tiny weighted 350dp editor can scroll much farther than its
+        // visible ~100dp viewport. Prove actual user swipes reach the 48dp
+        // oscillator button; do not call Compose performScrollTo() here:
+        // its semantics helper previously hung and killed the API35 QEMU.
+        android.util.Log.i("OrbitalCompactTest", "PHASE-4: before bounded physical scroll")
+        val toggle = compose.onNodeWithTag("compactOscillatorToggle")
+        var toggleVisible = false
+        repeat(9) { attempt ->
+            if (!toggleVisible) {
+                toggleVisible = try {
+                    toggle.assertIsDisplayed()
+                    true
+                } catch (_: AssertionError) {
+                    false
+                }
+                if (!toggleVisible) {
+                    android.util.Log.i("OrbitalCompactTest", "physical scroll attempt $attempt")
+                    compose.onNodeWithTag("soundEditorScroll").performTouchInput {
+                        val x = center.x
+                        down(Offset(x, center.y * 1.70f))
+                        moveTo(Offset(x, center.y * 1.23f))
+                        moveTo(Offset(x, center.y * .65f))
+                        moveTo(Offset(x, center.y * .30f))
+                        up()
+                    }
+                }
+            }
+        }
+        toggle.assertIsDisplayed()
+        android.util.Log.i("OrbitalCompactTest", "PHASE-5: toggle genuinely reached by swipes")
         android.util.Log.i("OrbitalCompactTest", "PHASE-6: before physical performClick")
         compose.onNodeWithTag("compactOscillatorToggle").performClick()
         android.util.Log.i("OrbitalCompactTest", "PHASE-7: after physical performClick")
