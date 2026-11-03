@@ -1,14 +1,17 @@
 package com.orbital.synth.audio
 
 import android.os.SystemClock
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
+import com.orbital.synth.MainActivity
 import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ParameterId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -22,6 +25,8 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class OscillatorSlotHostBridgeAudioTrackTest {
+    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
     private companion object {
         const val SOURCE_ID = 0x6A91L
         const val SAMPLE_RATE = 48_000
@@ -56,7 +61,10 @@ class OscillatorSlotHostBridgeAudioTrackTest {
     }
 
     @Test fun liveTouchNoiseAndColorChangePcmAcceptedByRealAndroidAudioTrack() {
-        val synth = OrbitalSynth(sampleRate = SAMPLE_RATE, maxVoices = 4).apply {
+        val synth = liveActivitySynth().apply {
+            clearOscillatorRack()
+            clearFxRack()
+            for (slot in 0 until modulationRouteCount) clearModulationRoute(slot)
             setParameter(ParameterId.WAVE, 0f) // steady reference sine
             setParameter(ParameterId.MORPH, 1f)
             setParameter(ParameterId.CUTOFF, 1f)
@@ -76,11 +84,18 @@ class OscillatorSlotHostBridgeAudioTrackTest {
         )
         assertTrue(OscillatorSlotHostBridge.publish(synth, 0, tonal))
 
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val output = AndroidAudioOutput(context, synth, sampleRate = SAMPLE_RATE)
+        // Android 15 denies audio focus to backgrounded/non-foreground apps.
+        // The production MainActivity is in the foreground and owns exactly
+        // one long-lived AudioTrack. Reuse THAT real output and worker rather
+        // than constructing a headless, out-of-focus second AudioTrack.
+        val output = liveAudioOutput()
+        assertSame("PCM must come from the exact synth edited by UI controls",
+            synth, liveOutputSynth(output))
+        assertEquals("App and worker must agree on realtime sample rate",
+            SAMPLE_RATE, synth.sampleRate)
+        compose.waitUntil(10_000L) { output.isRunning }
+        assertTrue("MainActivity's real foreground AudioTrack must stream", output.isRunning)
         try {
-            assertTrue("Emulator AudioTrack and focus are required", output.start())
-            assertTrue("Real AudioTrack worker failed to run", output.isRunning)
             assertTrue("Actual AudioTrack transport must accept held MIDI note",
                 output.noteOn(SOURCE_ID, channel = 0, note = 69, velocity = 127))
             val tone = collectAcceptedBrightness(output, "sine baseline")
@@ -121,8 +136,27 @@ class OscillatorSlotHostBridgeAudioTrackTest {
             output.noteOff(SOURCE_ID, channel = 0, note = 69)
         } finally {
             output.allNotesOff(SOURCE_ID)
-            output.close()
+            // The Activity owns its AudioTrack lifecycle; closing it here would
+            // corrupt subsequent Activity-driven integration tests.
         }
+    }
+
+    private fun liveActivitySynth(): OrbitalSynth {
+        val field = MainActivity::class.java.getDeclaredField("synth")
+        field.isAccessible = true
+        return field.get(compose.activity) as OrbitalSynth
+    }
+
+    private fun liveAudioOutput(): AndroidAudioOutput {
+        val field = MainActivity::class.java.getDeclaredField("audioOutput")
+        field.isAccessible = true
+        return field.get(compose.activity) as AndroidAudioOutput
+    }
+
+    private fun liveOutputSynth(output: AndroidAudioOutput): OrbitalSynth {
+        val field = AndroidAudioOutput::class.java.getDeclaredField("synth")
+        field.isAccessible = true
+        return field.get(output) as OrbitalSynth
     }
 
     /**
