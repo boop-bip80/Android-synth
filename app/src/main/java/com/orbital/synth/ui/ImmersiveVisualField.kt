@@ -50,6 +50,10 @@ fun ImmersiveVisualField(
     touchY: Float = 0.5f,
     touchIntensity: Float = 0f,
     pulse: Long = 0L,
+    audioRms: Float = 0f,
+    audioPeak: Float = 0f,
+    audioTransient: Float = 0f,
+    audioBrightness: Float = 0f,
 ) {
     fun normalized(value: Float, fallback: Float): Float =
         if (value.isFinite()) value.coerceIn(0f, 1f) else fallback
@@ -61,22 +65,44 @@ fun ImmersiveVisualField(
     val fingerX = normalized(touchX, .5f)
     val fingerY = normalized(touchY, .5f)
     val pressure = normalized(touchIntensity, 0f)
+    // Actual output-PCM meter; optional args preserve original old-host visuals.
+    val pcm = remember(audioRms, audioPeak, audioTransient, audioBrightness) {
+        AudioVisualResponse.from(audioRms, audioPeak, audioTransient, audioBrightness)
+    }
 
-    // These two animations exist only while the screen is composed. The app's
-    // animator-off accessibility setting freezes the moving artwork.
+    // The idle black surface has no active animation at all, saving battery.
+    // Android animator-off settings also disable every moving graphic.
     val animationsEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
-    val clock = rememberInfiniteTransition(label = "immersive-energy")
-    val phase by clock.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 11_000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "orbital-currents",
-    )
-    val animatedPhase = if (animationsEnabled) phase else 0f
+    val animatedPhase = if (pcm.shouldAnimate(pressure, animationsEnabled)) {
+        val clock = rememberInfiniteTransition(label = "immersive-energy")
+        val phase by clock.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 11_000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "orbital-currents",
+        )
+        phase
+    } else 0f
     val impact = remember { Animatable(1f) }
+    val audioImpact = remember { Animatable(1f) }
+    // Rising-edge threshold avoids restarting/cancelling the 620 ms animation
+    // on every 30 Hz meter update (which would leave a stuck transient ring).
+    val transientHit = pcm.transient > .30f
+    LaunchedEffect(transientHit, animationsEnabled) {
+        if (!animationsEnabled) {
+            audioImpact.snapTo(1f)
+        } else if (transientHit) {
+            audioImpact.snapTo(0f)
+            audioImpact.animateTo(1f, tween(durationMillis = 620, easing = LinearEasing))
+        } else if (audioImpact.value < 1f) {
+            // A metered spike may decay sooner than the ripple. Complete its
+            // fade rather than leaving the previous animation cancelled in place.
+            audioImpact.animateTo(1f, tween(durationMillis = 320, easing = LinearEasing))
+        }
+    }
 
     // Compose gesture coordinates are tracked for a translucent performance trail.
     // Keep only the latest 24 points, even during long drags; no event grows memory.
@@ -118,12 +144,12 @@ fun ImmersiveVisualField(
         val amber = Color(0xFFFFD58A)
         val ink = Color(0xFF010207)
         val turn = (2.0 * PI).toFloat()
-        val energy = .58f + pressure * .42f
+        val energy = (.58f + pressure * .42f + pcm.energyBoost).coerceAtMost(1.18f)
         val c = Offset(
             width * (.5f + (fingerX - .5f) * pressure * .10f),
             height * (.49f + (fingerY - .5f) * pressure * .075f),
         )
-        val radius = shortEdge * (.265f + aperture * .045f)
+        val radius = shortEdge * (.265f + aperture * .045f) * (1f + pcm.radiusBoost)
         val touch = Offset(width * fingerX, height * fingerY)
         val stroke = (shortEdge / 390f).coerceIn(.6f, 2.2f)
 
@@ -142,7 +168,7 @@ fun ImmersiveVisualField(
                 else -> ice
             }
             drawCircle(
-                color.copy(alpha = star.alpha * twinkle),
+                color.copy(alpha = (star.alpha * twinkle * (1f + pcm.rms * .12f)).coerceAtMost(1f)),
                 radius = (if (i % 11 == 0) 1.2f else .55f) * stroke,
                 center = Offset(width * star.x, height * star.y),
             )
@@ -265,7 +291,8 @@ fun ImmersiveVisualField(
                 val flutter = sin(unit.angle * (7.1f + focus * 4.7f) -
                     t * 1.42f + layer * .89f)
                 val rr = radius * (.43f + layer * .073f +
-                    wave * (.075f + timbre * .048f) + flutter * .026f * focus)
+                    wave * (.075f + timbre * .048f + pcm.filamentBoost) +
+                    flutter * (.026f * focus + pcm.brightness * .008f))
                 val x = c.x + unit.x * rr
                 val y = c.y + unit.y * rr * (.76f + timbre * .16f)
                 if (i == 0) line.moveTo(x, y) else line.lineTo(x, y)
@@ -332,7 +359,7 @@ fun ImmersiveVisualField(
             val s2 = sin(u * turn * (8.0f + focus * 4.0f) - t * 1.65f)
             val amplitude = (.2f + .54f * kotlin.math.abs(s1) +
                 .26f * kotlin.math.abs(s2)) * (.35f + aperture * .65f)
-            val hh = shortEdge * .065f * amplitude
+            val hh = shortEdge * .065f * amplitude * (1f + pcm.rms * .33f)
             val x = width * (.07f + u * .86f)
             drawLine(
                 color = if (i % 9 == 0) amber.copy(alpha = .78f) else cyan.copy(alpha = .35f),
@@ -340,6 +367,28 @@ fun ImmersiveVisualField(
                 end = Offset(x, baseline - hh),
                 strokeWidth = (if (i % 9 == 0) 1.6f else .75f) * stroke,
                 cap = StrokeCap.Round,
+            )
+        }
+
+        // True PCM waveform-rate brightness influences a separate spectral volume.
+        // Silent/missing telemetry draws nothing here, preserving design parity.
+        if (pcm.rms > .005f || pcm.peak > .02f) {
+            val pcmCenter = c + Offset(0f, radius * .08f)
+            val pcmHue = androidx.compose.ui.graphics.lerp(
+                ultraviolet, cyan, pcm.brightness,
+            )
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        pcmHue.copy(alpha = (.18f * pcm.rms + .10f * pcm.peak).coerceAtMost(.28f)),
+                        electricBlue.copy(alpha = .04f * pcm.peak),
+                        Color.Transparent,
+                    ),
+                    center = pcmCenter,
+                    radius = radius * (1.28f + pcm.peak * .32f),
+                ),
+                center = pcmCenter,
+                radius = radius * (1.28f + pcm.peak * .32f),
             )
         }
 
@@ -383,6 +432,21 @@ fun ImmersiveVisualField(
                     radius = r,
                     center = touch,
                     style = Stroke(width = (3.1f - ring * .7f) * stroke),
+                )
+            }
+        }
+
+        // Rising measured PCM transients launch independent fading concentric light.
+        if (animationsEnabled && audioImpact.value < 1f) {
+            val progress = audioImpact.value
+            val opacity = (1f - progress) * .52f
+            val tint = androidx.compose.ui.graphics.lerp(ultraviolet, cyan, pcm.brightness)
+            for (ring in 0..2) {
+                drawCircle(
+                    color = tint.copy(alpha = opacity * (1f - ring * .2f)),
+                    radius = radius * (.65f + progress * (.88f + ring * .21f)),
+                    center = c,
+                    style = Stroke(width = (2.2f - ring * .45f) * stroke),
                 )
             }
         }
