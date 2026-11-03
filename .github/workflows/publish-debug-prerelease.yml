@@ -1,0 +1,165 @@
+name: Publish verified ORBITAL debug prerelease
+
+# Explicit opt-in only. Never auto-publish an APK merely because a build ran.
+# This creates an immutable, SHA-addressed *developer* prerelease, not a
+# Play-signed release or proof of physical-device latency/performance.
+on:
+  workflow_dispatch:
+    inputs:
+      verified_run_id:
+        description: "Fully successful five-job Android main CI run ID"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish one successful main debug APK
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
+    steps:
+      - name: Checkout current main for SHA validation
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Verify source run and every required CI job
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VERIFIED_RUN_ID" =~ ^[0-9]{5,15}$ ]] || {
+            echo "A numeric source workflow run ID is required." >&2
+            exit 1
+          }
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID")"
+          jq -e --arg repo "$GITHUB_REPOSITORY" '
+            .status == "completed" and
+            .conclusion == "success" and
+            .event == "push" and
+            .head_branch == "main" and
+            .head_repository.full_name == $repo and
+            .path == ".github/workflows/android.yml"
+          ' <<< "$run_json" >/dev/null || {
+            echo "Source must be a completed successful first-party main push Android workflow." >&2
+            exit 1
+          }
+
+          # Require the actual full five-job matrix, not a stale three-job
+          # historical pass or a successful but incomplete test workflow.
+          jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID/jobs?per_page=100")"
+          jq -e '
+            .total_count == 5 and
+            (.jobs | length) == 5 and
+            all(.jobs[]; .status == "completed" and .conclusion == "success")
+          ' <<< "$jobs_json" >/dev/null || {
+            echo "All five Android host/API35 jobs are required to pass." >&2
+            exit 1
+          }
+          for expected in \
+            "Kotlin tests, lint and debug APK" \
+            "API 35 general tests and emulator screenshots" \
+            "API 35 compact tests and emulator screenshots" \
+            "API 35 stage tests and emulator screenshots" \
+            "API 35 visuals tests and emulator screenshots"; do
+            jq -e --arg name "$expected" '
+              any(.jobs[]; .name == $name and .conclusion == "success")
+            ' <<< "$jobs_json" >/dev/null || {
+              echo "Missing successful required job: $expected" >&2
+              exit 1
+            }
+          done
+
+          source_sha="$(jq -r .head_sha <<< "$run_json")"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          local_sha="$(git rev-parse HEAD)"
+          remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [[ "$source_sha" != "$local_sha" || "$source_sha" != "$remote_sha" ]]; then
+            echo "Stale successful build: source=$source_sha checkout=$local_sha remote=$remote_sha" >&2
+            exit 1
+          fi
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "short=${source_sha:0:12}" >> "$GITHUB_OUTPUT"
+          echo "Validated all five jobs for exact main source $source_sha"
+
+      - name: Download only this verified host build APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download "$VERIFIED_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name orbital-debug-apk \
+            --dir "$RUNNER_TEMP/orbital-verified-apk"
+
+      - name: Validate the installable APK ZIP and digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' -t apks < <(find "$RUNNER_TEMP/orbital-verified-apk" \
+            -maxdepth 1 -type f -name '*.apk' -print0)
+          if (( ${#apks[@]} != 1 )); then
+            echo "Expected exactly one actual debug APK from this CI artifact." >&2
+            exit 1
+          fi
+          apk="${apks[0]}"
+          [[ -s "$apk" ]] || exit 1
+          unzip -t "$apk" >/dev/null
+          unzip -Z -1 "$apk" | grep -Fx 'AndroidManifest.xml' >/dev/null || {
+            echo "APK has no Android manifest." >&2
+            exit 1
+          }
+          sha256sum "$apk" | tee "$RUNNER_TEMP/orbital-apk-sha256.txt"
+          cp "$apk" "$RUNNER_TEMP/ORBITAL-${{ steps.source.outputs.short }}-debug.apk"
+
+      - name: Create immutable SHA-tagged developer prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          SOURCE_SHORT: ${{ steps.source.outputs.short }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [[ "$remote_sha" != "$SOURCE_SHA" ]]; then
+            echo "Main advanced after verification; refuse a stale APK release." >&2
+            exit 1
+          fi
+          tag="orbital-debug-$SOURCE_SHORT"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Immutable debug prerelease $tag already exists; no overwrite."
+            exit 0
+          fi
+          digest="$(sha256sum "$RUNNER_TEMP/ORBITAL-$SOURCE_SHORT-debug.apk" | cut -d' ' -f1)"
+          notes="$RUNNER_TEMP/orbital-debug-release-notes.md"
+          {
+            echo "ORBITAL developer debug snapshot (NOT production signed)."
+            echo
+            echo "This APK is Gradle's debug-signed build for testing; it is not"
+            echo "a Play Store release, a hardware performance certification,"
+            echo "or evidence of 1:1 emulation of commercial synthesizers."
+            echo
+            echo "- Source commit: [$SOURCE_SHA](https://github.com/$GITHUB_REPOSITORY/commit/$SOURCE_SHA)"
+            echo "- All five CI jobs: [run $VERIFIED_RUN_ID](https://github.com/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID)"
+            echo "- APK SHA-256: $digest"
+            echo "- Minimum Android API 26; target API 35."
+          } > "$notes"
+          gh release create "$tag" \
+            "$RUNNER_TEMP/ORBITAL-$SOURCE_SHORT-debug.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title "ORBITAL debug $SOURCE_SHORT — developer-only APK" \
+            --prerelease \
+            --notes-file "$notes"
