@@ -21,14 +21,22 @@ finish() {
 }
 trap finish EXIT
 
-printf 'assemble-real-app-and-android-test-apks\n' > "$phase"
-gradle :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon --console=plain
+# Host JVM/lint/APK build has already passed and uploaded both binaries.
+# Never run Gradle compilation while QEMU owns this runner's RAM: recent API35
+# runs repeatedly lost emulator-5554 just after duplicate APK assembly.
+printf 'validate-previous-host-job-apk-artifacts\n' > "$phase"
 app_apk=app/build/outputs/apk/debug/app-debug.apk
 test_apk=app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 [[ -s "$app_apk" && -s "$test_apk" ]] || {
-  echo 'The production app or Android instrumentation APK is missing.' >&2
+  echo 'Missing nonempty host-job APK artifacts: refuse to rebuild inside live emulator.' >&2
   exit 1
 }
+printf 'apk_origin=needs.build/actions.download-artifact@v4\napp_apk_sha256=%s\nandroid_test_apk_sha256=%s\n' \
+  "$(sha256sum "$app_apk" | cut -d' ' -f1)" \
+  "$(sha256sum "$test_apk" | cut -d' ' -f1)" >> "$summary"
+# Diagnostics are best-effort and must not block a genuinely passing capture.
+free -m > artifacts/focus-bootstrap-host-memory.txt 2>&1 || true
+ps -eo pid,comm,rss --sort=-rss > artifacts/focus-bootstrap-host-processes.txt 2>&1 || true
 
 printf 'install-apks\n' > "$phase"
 timeout 120s adb install -r "$app_apk" > artifacts/focus-bootstrap-app-install.txt
@@ -53,9 +61,13 @@ for attempt in {1..70}; do
   sleep 1
 done
 [[ "$ready" == 1 ]] || {
-  echo 'Fresh emulator never focused the drawn production MainActivity.' >&2
+  printf 'focus_gate=failed\nlast_window_lines:\n' >> "$summary"
+  grep -E 'mCurrentFocus|mFocusedApp|Application Not Responding|Splash Screen' \
+    artifacts/focus-bootstrap-window.txt | tail -n 18 >> "$summary" || true
+  echo 'Fresh emulator never focused drawn MainActivity; inspect window-state and host memory artifacts.' >&2
   exit 1
 }
+timeout 8s adb shell cat /proc/meminfo > artifacts/focus-bootstrap-device-memory.txt 2>&1 || true
 sleep 2
 
 printf 'capture-genuine-normal-app-baseline\n' > "$phase"
