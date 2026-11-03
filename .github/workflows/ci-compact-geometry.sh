@@ -124,8 +124,8 @@ min_px = 80 * density / 160
 if bottom - top < min_px - 1:
     raise AssertionError(f"{active}: visible keyboard height {bottom-top}px < usable 80dp ({min_px:.1f}px)")
 tab_nodes = [n for n in nodes if n.attrib.get("content-desc") == f"Tab {active}"]
-if len(tab_nodes) != 1 or tab_nodes[0].attrib.get("selected") != "true":
-    raise AssertionError(f"{active}: selected tab not announced by accessibility; matches={[n.attrib for n in tab_nodes]}")
+if len(tab_nodes) != 1 or tab_nodes[0].attrib.get("selected") != "true" or tab_nodes[0].attrib.get("clickable") != "true":
+    raise AssertionError(f"{active}: active tab must be a selected AND clickable accessibility node; matches={[n.attrib for n in tab_nodes]}")
 print(f"PASS {active}: keyboard {keyboard}, screen={width}x{height}, min80dp={min_px:.1f}px, selected tab")
 PY
 }
