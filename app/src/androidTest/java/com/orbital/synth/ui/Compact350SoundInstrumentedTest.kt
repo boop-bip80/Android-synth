@@ -192,7 +192,19 @@ class Compact350SoundInstrumentedTest {
         val enginePage = compose.onNodeWithContentDescription("Sound rack ENGINE")
         enginePage.assertIsDisplayed().performClick()
         Log.i(TAG, "phase=engine-page-open")
-        compose.onNodeWithTag("compactEngineOptionsRow").assertIsDisplayed()
+        val choiceRowBounds = compose.onNodeWithTag("compactEngineOptionsRow")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val editorBounds = compose.onNodeWithTag("soundEditorScroll")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            "Engine option row must provide at least a 48dp touch corridor",
+            choiceRowBounds.height >= 48f * density - 1f,
+        )
+        assertTrue(
+            "All engine choice controls must fit above the pinned piano without hidden scroll",
+            choiceRowBounds.top >= editorBounds.top - 1f &&
+                choiceRowBounds.bottom <= editorBounds.bottom + 1f,
+        )
         compose.onNodeWithTag("compactPatchHeader").assertExists()
         compose.onAllNodesWithContentDescription(
             "Select synthesis architecture", substring = true,

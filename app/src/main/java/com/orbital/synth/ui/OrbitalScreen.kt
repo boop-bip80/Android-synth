@@ -2505,7 +2505,10 @@ private fun CompactSoundPanel(
                 }
             }
             CompactSoundPage.ENGINE -> {
-                Label("SYNTHESIS ARCHITECTURE  /  MODELED + INSPIRED")
+                // The five-way toolbar already names ENGINE. The extra
+                // decorative headline previously pushed its real choices
+                // beyond the 350dp viewport and beneath the pinned piano.
+                // Keep the 48dp radio choices first and fully visible.
                 Row(
                     Modifier.fillMaxWidth()
                         .horizontalScroll(rememberScrollState())

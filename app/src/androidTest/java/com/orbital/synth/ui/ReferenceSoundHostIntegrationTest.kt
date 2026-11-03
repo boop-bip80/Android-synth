@@ -9,9 +9,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import kotlin.math.roundToInt
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -173,30 +171,56 @@ class ReferenceSoundHostIntegrationTest {
             // The chromatic reference keybed really drives the one AudioTrack
             // engine: a held note must register in post-write PCM telemetry.
             compose.waitUntil(8_000L) { audio.audioVisualSnapshot.rms > .0005f }
-            val pixels = compose.onNodeWithTag("referenceSoundHeroOrb")
-                .captureToImage().toPixelMap()
-            var saturated = 0
-            // Validate the orb's interior, excluding the cyan HUD text at the
-            // top and XY ribbon at the bottom. A black/broken shader cannot
-            // pass simply because the interface's labels are colorful.
-            val left = (pixels.width * .25f).toInt()
-            val right = (pixels.width * .75f).toInt()
-            val top = (pixels.height * .29f).toInt()
-            val bottom = (pixels.height * .54f).toInt()
-            for (y in top until bottom step 7) {
-                for (x in left until right step 7) {
-                    val color = pixels[x, y]
-                    val spread = maxOf(color.red, color.green, color.blue) -
-                        minOf(color.red, color.green, color.blue)
-                    if (spread > .12f && maxOf(color.red, color.green, color.blue) > .25f) {
-                        saturated++
+            // Sample the REAL foreground SurfaceFlinger framebuffer, not
+            // Compose PixelCopy. On Swangle API35, PixelCopy can time out
+            // after a foreground-overlay removal even while actual UI and
+            // accepted AudioTrack PCM are healthy. The magenta marker above
+            // already proved this exact Activity instance owns that window.
+            val orbWindow = compose.onNodeWithTag("referenceSoundHeroOrb")
+                .fetchSemanticsNode().boundsInWindow
+            val decorOrigin = IntArray(2)
+            compose.runOnIdle {
+                compose.activity.window.decorView.getLocationOnScreen(decorOrigin)
+            }
+            val realFrame: Bitmap = (0 until 4).firstNotNullOfOrNull {
+                foregroundAutomation.takeScreenshot().also { frame ->
+                    if (frame == null) Thread.sleep(170L)
+                }
+            } ?: throw AssertionError("Real foreground screenshot unavailable during PCM note")
+            try {
+                val originX = orbWindow.left + decorOrigin[0]
+                val originY = orbWindow.top + decorOrigin[1]
+                val orbWidth = orbWindow.width
+                val orbHeight = orbWindow.height
+                val left = (originX + orbWidth * .25f).toInt().coerceIn(0, realFrame.width)
+                val right = (originX + orbWidth * .75f).toInt().coerceIn(0, realFrame.width)
+                val top = (originY + orbHeight * .29f).toInt().coerceIn(0, realFrame.height)
+                val bottom = (originY + orbHeight * .54f).toInt().coerceIn(0, realFrame.height)
+                assertTrue(
+                    "Measured live orb ROI is outside real foreground framebuffer",
+                    right - left >= 48 && bottom - top >= 24,
+                )
+                var saturated = 0
+                // Exclude HUD and XY. A black/broken shader cannot pass from
+                // colorful text elsewhere because samples stay INSIDE orb.
+                for (y in top until bottom step 7) {
+                    for (x in left until right step 7) {
+                        val color = realFrame.getPixel(x, y)
+                        val maxChannel = maxOf(PixelColor.red(color), PixelColor.green(color), PixelColor.blue(color))
+                        val minChannel = minOf(PixelColor.red(color), PixelColor.green(color), PixelColor.blue(color))
+                        if (maxChannel - minChannel > 31 && maxChannel > 64) saturated++
                     }
                 }
+                assertTrue(
+                    "Real accepted-PCM Android hero screenshot lost plasma: " +
+                        "saturated=$saturated ROI=[$left,$top][$right,$bottom]",
+                    saturated >= 24,
+                )
+                println("REFERENCE_HOST_PCM_ORB_REAL_FRAME saturation=$saturated " +
+                    "ROI=[$left,$top][$right,$bottom] frame=${realFrame.width}x${realFrame.height}")
+            } finally {
+                realFrame.recycle()
             }
-            assertTrue(
-                "Actual running Android hero framebuffer lost its colorful plasma",
-                saturated >= 24,
-            )
         } finally {
             keys.performTouchInput { up() }
         }
