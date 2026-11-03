@@ -1,5 +1,6 @@
 package com.orbital.synth.ui
 
+import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.Modifier
@@ -31,17 +32,21 @@ class ReferenceKeybedGlassRiverTest {
         val attacks = mutableListOf<Int>()
         val releases = mutableListOf<Int>()
 
-        compose.setContent {
-            ReferencePerformanceKeybed(
-                octave = 4,
-                onNoteOn = { attacks += it },
-                onNoteOff = { releases += it },
-                modifier = Modifier.fillMaxWidth(),
-                morph = morph.floatValue,
-                movement = movement.floatValue,
-                audioRms = acceptedPcmRms.floatValue,
-                preferredHeight = 108.dp,
-            )
+        // MainActivity owns its initial content. Replace it on its actual
+        // foreground Activity; AndroidComposeTestRule.setContent would throw.
+        compose.activityRule.scenario.onActivity { activity ->
+            activity.setContent {
+                ReferencePerformanceKeybed(
+                    octave = 4,
+                    onNoteOn = { attacks += it },
+                    onNoteOff = { releases += it },
+                    modifier = Modifier.fillMaxWidth(),
+                    morph = morph.floatValue,
+                    movement = movement.floatValue,
+                    audioRms = acceptedPcmRms.floatValue,
+                    preferredHeight = 108.dp,
+                )
+            }
         }
         val keybed = compose.onNodeWithTag("referencePerformanceKeybed")
         compose.waitForIdle()
