@@ -48,6 +48,9 @@ class AndroidAudioOutput(
     // Keeping request and abandon serialized prevents a stale stop abandoning
     // a newer start's focus claim.
     private val focusState = AudioFocusSessionState()
+    // An unexpected AudioTrack failure gets at most one retry per foreground session.
+    // All policy transitions are guarded by lifecycleLock, never the audio sample loop.
+    private val failureRecovery = AudioFailureRecoveryPolicy()
     private val audioManager =
         context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val attributes = AudioAttributes.Builder()
@@ -102,6 +105,10 @@ class AndroidAudioOutput(
     @Volatile private var workerThread: Thread? = null
     @Volatile private var lastUnderruns = 0
     @Volatile private var lastEncoding = AudioFormat.ENCODING_PCM_FLOAT
+    @Volatile private var fatalFailureNotice: String? = null
+
+    /** Sticky foreground failure after the one bounded retry; suitable for a UI warning. */
+    val fatalErrorMessage: String? get() = fatalFailureNotice
 
     val isRunning: Boolean get() = running
 
@@ -225,10 +232,12 @@ class AndroidAudioOutput(
             return@synchronized false
         }
         lastEncoding = config.encoding
+        fatalFailureNotice = null
         playback = config.track
         visualTelemetry.begin()
         running = true
-        val thread = Thread({ renderLoop(config) }, "OrbitalAudioRender")
+        val workerGeneration = lifecycleGeneration
+        val thread = Thread({ renderLoop(config, workerGeneration) }, "OrbitalAudioRender")
         thread.isDaemon = true
         workerThread = thread
         thread.start()
@@ -245,6 +254,8 @@ class AndroidAudioOutput(
             lifecycleGeneration++
             pendingRestartToken = null
             focusState.cancelPlayback()
+            failureRecovery.resetOnExplicitStop()
+            fatalFailureNotice = null
             running = false
             visualTelemetry.stop()
             synth.allNotesOff()
@@ -300,7 +311,8 @@ class AndroidAudioOutput(
         return null
     }
 
-    private fun renderLoop(config: TrackConfig) {
+    private fun renderLoop(config: TrackConfig, workerGeneration: Long) {
+        var unexpectedFailure = false
         try {
             runCatching {
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
@@ -353,7 +365,10 @@ class AndroidAudioOutput(
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         } catch (failure: RuntimeException) {
-            if (running) Log.e("OrbitalAudio", "Audio render stopped unexpectedly", failure)
+            if (running) {
+                unexpectedFailure = true
+                Log.e("OrbitalAudio", "Audio render stopped unexpectedly", failure)
+            }
         } finally {
             running = false
             visualTelemetry.stop()
@@ -371,13 +386,29 @@ class AndroidAudioOutput(
                 val restartAllowed = restartToken != null && !disposed &&
                     lifecycleGeneration == restartToken &&
                     focusState.playbackRequested && !focusState.awaitingGain
+                val sameForegroundFailure = unexpectedFailure &&
+                    lifecycleGeneration == workerGeneration &&
+                    focusState.playbackRequested && !focusState.awaitingGain && !disposed
+                val boundedRecovery = !restartAllowed && failureRecovery.claimRetry(
+                    unexpectedFailure = unexpectedFailure,
+                    generationMatches = lifecycleGeneration == workerGeneration,
+                    playbackRequested = focusState.playbackRequested,
+                    awaitingFocusGain = focusState.awaitingGain,
+                    disposed = disposed,
+                )
                 // Keep our focus request registered while temporarily suspended,
                 // otherwise Android cannot deliver the focus-gain callback.
                 // A queued rapid restart also retains the claim without churn.
-                if (!focusState.retainClaimAfterWorkerExit(restartAllowed)) {
+                if (!focusState.retainClaimAfterWorkerExit(restartAllowed || boundedRecovery)) {
                     abandonFocusLocked()
                 }
-                if (restartAllowed) start()
+                if (restartAllowed || boundedRecovery) {
+                    if (!start()) {
+                        fatalFailureNotice = "Audio output could not restart. Reopen the app to retry."
+                    }
+                } else if (sameForegroundFailure) {
+                    fatalFailureNotice = "Audio output stopped unexpectedly. Reopen the app to retry."
+                }
             }
         }
     }
