@@ -79,7 +79,7 @@ jobs:
           retention-days: 14
 
   emulator:
-    name: API 35 ${{ matrix.suite }} tests and emulator screenshots
+    name: API ${{ matrix.suite == 'compact' && '34' || '35' }} ${{ matrix.suite }} tests and emulator screenshots
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 50
@@ -109,7 +109,7 @@ jobs:
       - name: Launch emulator, run instrumentation and capture actual UI
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ matrix.suite == 'compact' && 34 || 35 }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
@@ -126,7 +126,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: orbital-api35-${{ matrix.suite }}-emulator-screenshot
+          name: orbital-api${{ matrix.suite == 'compact' && '34' || '35' }}-${{ matrix.suite }}-emulator-screenshot
           path: |
             artifacts/orbital-emulator.png
             artifacts/orbital-compact-emulator.png
@@ -139,7 +139,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: orbital-api35-${{ matrix.suite }}-emulator-diagnostics
+          name: orbital-api${{ matrix.suite == 'compact' && '34' || '35' }}-${{ matrix.suite }}-emulator-diagnostics
           path: |
             artifacts/emulator-logcat.txt
             artifacts/compact-test-live-logcat.txt
