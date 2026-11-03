@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.util.Log
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -30,6 +31,12 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ImmersiveLiveFrameCaptureTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    /** Streamed logcat survives an emulator death; never changes pass criteria. */
+    private fun mark(phase: String) {
+        Log.i("ORBITAL_STAGE_CAPTURE", phase)
+        println("ORBITAL_STAGE_CAPTURE " + phase)
+    }
 
     private data class PixelEvidence(val samples: Int, val visible: Int, val colorful: Int)
 
@@ -126,9 +133,11 @@ class ImmersiveLiveFrameCaptureTest {
     }
 
     @Test fun photographsVividStageDuringRealAudioTrackHeldNoteAndReleasesSafely() {
+        mark("begin")
         val audio = realAudioTrack()
         compose.waitUntil(10_000L) { audio.isRunning }
         assertTrue("The actual Android audio worker must stream", audio.isRunning)
+        mark("audio-worker-running")
 
         requireFocusedActivity("before stage entry")
         compose.onNodeWithTag("immersiveModeToggle").performClick()
@@ -140,10 +149,12 @@ class ImmersiveLiveFrameCaptureTest {
         compose.onNodeWithTag("stageConfigOpen").assertDoesNotExist()
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(0)
+        mark("focus-stage-controls-hidden")
 
         // Compose semantics update before SurfaceFlinger presents the next frame.
         // Force multiple actual UI frames to settle before sampling the idle
         // stage; an immediate UiAutomation frame may still show the SOUND tab.
+        mark("idle-settle-before-clock")
         compose.waitForIdle()
         // FOCUS removes all stage chrome and fades the live field to actual
         // black over 950ms before a note begins. Never compare against the
@@ -153,6 +164,7 @@ class ImmersiveLiveFrameCaptureTest {
         Thread.sleep(1_150L)
         requireFocusedActivity("before idle stage framebuffer")
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        mark("idle-ui-automation-capture")
         val idleBitmap = checkNotNull(automation.takeScreenshot()) {
             "Android UiAutomation could not capture the real idle stage"
         }
@@ -169,6 +181,7 @@ class ImmersiveLiveFrameCaptureTest {
         println("ORBITAL_FOCUS_IDLE_DRAW_METRICS " + idle)
         assertTrue("Untouched FOCUS must render a genuinely blank black center: " + idle,
             idle.visible <= idle.samples / 100 && idle.colorful <= idle.samples / 500)
+        mark("idle-black-canvas-verified")
         val canvas = compose.onNodeWithTag("immersiveCanvas")
         var held = false
         try {
@@ -180,6 +193,7 @@ class ImmersiveLiveFrameCaptureTest {
             canvas.performTouchInput { moveTo(Offset(center.x * 1.24f, center.y * .59f)) }
             Thread.sleep(170L)
             canvas.performTouchInput { moveTo(Offset(center.x * .92f, center.y * .86f)) }
+            mark("held-pointer-gestures")
 
             // Real meter samples only PCM successfully submitted to AudioTrack.
             val deadline = System.nanoTime() + 6_000_000_000L
@@ -190,12 +204,14 @@ class ImmersiveLiveFrameCaptureTest {
             }
             assertTrue("No non-silent PCM accepted by AudioTrack during held note",
                 pcm.rms > .002f && pcm.peak > .004f)
+            mark("audio-track-pcm-confirmed")
             compose.waitForIdle()
             compose.mainClock.advanceTimeBy(100L)
             compose.waitForIdle()
             Thread.sleep(220L)
 
             requireFocusedActivity("before held-note stage framebuffer")
+            mark("held-note-ui-automation-capture")
             val liveBitmap = checkNotNull(automation.takeScreenshot()) {
                 "Android UiAutomation failed during the live held-note gesture"
             }
@@ -226,6 +242,7 @@ class ImmersiveLiveFrameCaptureTest {
                     live.visible >= idle.visible + maxOf(100, live.samples / 400))
                 assertTrue("Held-note frame must add actual vivid chromatic filaments: idleColorful=" + idle.colorful + " liveColorful=" + live.colorful + " samples=" + live.samples,
                     live.colorful >= idle.colorful + maxOf(50, live.samples / 800))
+                mark("held-note-colorful-frame-verified")
             } finally {
                 liveBitmap.recycle()
             }
@@ -246,5 +263,6 @@ class ImmersiveLiveFrameCaptureTest {
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(1)
         assertTrue("Exiting stage must leave the real audio worker alive", audio.isRunning)
+        mark("exit-keyboard-audio-worker-confirmed")
     }
 }

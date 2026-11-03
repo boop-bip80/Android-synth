@@ -80,6 +80,7 @@ import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.dsp.processing.FxModuleConfig
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import com.orbital.synth.core.music.SequencerNote
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -106,6 +107,10 @@ data class OrbitalUiState(
     /** Immutable 8-LFO and 64-cable snapshots from the actual audio engine. */
     val modulationLfos: List<ModulationLfoConfig> = emptyList(),
     val modulationRoutes: List<ModulationRouteConfig> = emptyList(),
+    /** Live audio-worker STEP pattern; null hides the editor for unconnected hosts. */
+    val modulationSteps: ModulationStepConfig? = null,
+    /** Read-only sample-clock index from the shared synthesis worker. */
+    val modulationStepPlayhead: Int = 0,
     /** Six ordered user FX stages from the same live synth as keyboard and MIDI. */
     val fxSlots: List<FxModuleConfig> = emptyList(),
     /** User-adjusted performance layout, reused when the keyboardless stage reopens. */
@@ -183,6 +188,8 @@ fun OrbitalScreen(
     onModulationRouteChange: ((Int, ModulationRouteConfig) -> Unit)? = null,
     onModulationRouteClear: ((Int) -> Unit)? = null,
     onModulationTempoChange: ((Float) -> Unit)? = null,
+    /** Publish drawn bipolar STEP pads to the same engine rendering the keyboard. */
+    onModulationStepsChange: ((ModulationStepConfig) -> Unit)? = null,
     /** Edit/render FX snapshots on the single audio engine; UI owns no DSP. */
     onFxSlotChange: ((Int, FxModuleConfig) -> Unit)? = null,
     onFxMoveSlot: ((Int, Int) -> Unit)? = null,
@@ -675,6 +682,9 @@ fun OrbitalScreen(
                         onRouteChange = onModulationRouteChange,
                         onRouteClear = onModulationRouteClear,
                         onTempoChange = onModulationTempoChange,
+                        stepConfig = state.modulationSteps,
+                        stepPlayhead = state.modulationStepPlayhead,
+                        onStepChange = onModulationStepsChange,
                     )
                 }
             }
