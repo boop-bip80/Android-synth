@@ -56,6 +56,10 @@ fun ImmersiveVisualField(
     audioPeak: Float = 0f,
     audioTransient: Float = 0f,
     audioBrightness: Float = 0f,
+    /** Actual accepted-PCM broad crossover energy, not an FFT or microphone. */
+    audioLowBand: Float = 0f,
+    audioMidBand: Float = 0f,
+    audioHighBand: Float = 0f,
     /** Avoid expensive strokes after the hosting focus layer has fully faded. */
     skipArtwork: Boolean = false,
 ) {
@@ -70,8 +74,14 @@ fun ImmersiveVisualField(
     val fingerY = normalized(touchY, .5f)
     val pressure = normalized(touchIntensity, 0f)
     // Actual output-PCM meter; optional args preserve original old-host visuals.
-    val pcm = remember(audioRms, audioPeak, audioTransient, audioBrightness) {
-        AudioVisualResponse.from(audioRms, audioPeak, audioTransient, audioBrightness)
+    val pcm = remember(
+        audioRms, audioPeak, audioTransient, audioBrightness,
+        audioLowBand, audioMidBand, audioHighBand,
+    ) {
+        AudioVisualResponse.from(
+            audioRms, audioPeak, audioTransient, audioBrightness,
+            audioLowBand, audioMidBand, audioHighBand,
+        )
     }
 
     // The idle black surface has no active animation at all, saving battery.
@@ -162,18 +172,27 @@ fun ImmersiveVisualField(
         val ink = Color(0xFF010207)
         val turn = (2.0 * PI).toFloat()
         val energy = (.58f + pressure * .42f + pcm.energyBoost).coerceAtMost(1.18f)
+        // The SAME accepted-PCM loudness can produce different *geometry*:
+        // low notes open warm gold apertures; mid bands braid purple volumes;
+        // highs tighten fast cyan filaments. Zero telemetry preserves old artwork.
+        val warm = 1f + pcm.lowGold * .85f
+        val braid = 1f + pcm.midViolet * .68f
+        val filaments = 1f + pcm.highCyan * .80f
         val c = Offset(
             width * (.5f + (fingerX - .5f) * pressure * .10f),
             height * (.49f + (fingerY - .5f) * pressure * .075f),
         )
-        val radius = shortEdge * (.265f + aperture * .045f) * (1f + pcm.radiusBoost)
+        val radius = shortEdge * (.265f + aperture * .045f) *
+            (1f + pcm.radiusBoost + pcm.lowGold * .105f)
         val touch = Offset(width * fingerX, height * fingerY)
         val tapOrigin = Offset(width * tapX, height * tapY)
         val stroke = (shortEdge / 390f).coerceIn(.6f, 2.2f)
         val conduitEnergy = ImmersiveLightMath.conduitEnergy(pressure, pcm.rms, pcm.peak)
         val petalFlare = ImmersiveLightMath.petalFlare(pressure, pcm.rms, pcm.transient)
         val chroma = ImmersiveLightMath.chromaBlend(pcm.brightness, aperture)
-        val livingHue = androidx.compose.ui.graphics.lerp(ultraviolet, cyan, chroma)
+        val livingHue = androidx.compose.ui.graphics.lerp(
+            ultraviolet, cyan, (chroma + pcm.highCyan * .20f - pcm.midViolet * .14f).coerceIn(0f, 1f),
+        )
 
         drawRect(ink)
 
@@ -189,8 +208,14 @@ fun ImmersiveVisualField(
                 1, 2 -> ultraviolet
                 else -> ice
             }
+            val starBandBoost = when (i % 9) {
+                0 -> warm
+                1, 2 -> braid
+                else -> filaments
+            }
             drawCircle(
-                color.copy(alpha = (star.alpha * twinkle * (1f + pcm.rms * .12f)).coerceAtMost(1f)),
+                color.copy(alpha = (star.alpha * twinkle *
+                    (1f + pcm.rms * .12f) * starBandBoost).coerceAtMost(1f)),
                 radius = (if (i % 11 == 0) 1.2f else .55f) * stroke,
                 center = Offset(width * star.x, height * star.y),
             )
@@ -204,10 +229,10 @@ fun ImmersiveVisualField(
             for (i in 0..horizontalSteps) {
                 val u = i.toFloat() / horizontalSteps
                 val x = width * u
-                val bend = sin(u * turn * (1.25f + timbre) + animatedPhase * turn +
-                    band * .83f + motion * 2.4f)
+                val bend = sin(u * turn * (1.25f + timbre + pcm.highCyan * .82f) +
+                    animatedPhase * turn + band * .83f + motion * 2.4f)
                 val y = height * (.15f + band * .145f) +
-                    bend * shortEdge * (.035f + band * .003f)
+                    bend * shortEdge * (.035f + band * .003f) * braid
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
             val tint = when (band % 3) {
@@ -215,8 +240,11 @@ fun ImmersiveVisualField(
                 1 -> ultraviolet
                 else -> cyan
             }
-            drawPath(path, tint.copy(alpha = .027f), style = Stroke(width = 17f * stroke))
-            drawPath(path, tint.copy(alpha = .11f), style = Stroke(width = .70f * stroke))
+            val silkAccent = if (band % 3 == 1) braid else filaments
+            drawPath(path, tint.copy(alpha = (.027f * silkAccent).coerceAtMost(1f)),
+                style = Stroke(width = 17f * stroke))
+            drawPath(path, tint.copy(alpha = (.11f * silkAccent).coerceAtMost(1f)),
+                style = Stroke(width = .70f * stroke))
         }
 
         // Three depth-graded light volumes establish a physical-looking core.
@@ -272,9 +300,9 @@ fun ImmersiveVisualField(
             for (petal in 0 until ImmersiveLightMath.PETAL_COUNT) {
                 val a = turn * petal / ImmersiveLightMath.PETAL_COUNT + phase +
                     timbre * .22f
-                val span = .20f + focus * .16f
+                val span = .20f + focus * .16f + pcm.midViolet * .065f
                 val inner = radius * (.66f + aperture * .10f)
-                val outer = radius * (1.36f + petalFlare * .28f)
+                val outer = radius * (1.36f + petalFlare * .28f + pcm.lowGold * .12f)
                 val begin = c + Offset(cos(a) * inner, sin(a) * inner * .78f)
                 val tipA = a + span
                 val tip = c + Offset(cos(tipA) * outer, sin(tipA) * outer * .78f)
@@ -295,9 +323,14 @@ fun ImmersiveVisualField(
                     2 -> ultraviolet
                     else -> electricBlue
                 }
-                drawPath(wing, tint.copy(alpha = .028f * petalFlare),
+                val spectralAccent = when (petal % 4) {
+                    0 -> warm
+                    1, 2 -> braid
+                    else -> filaments
+                }
+                drawPath(wing, tint.copy(alpha = (.028f * petalFlare * spectralAccent).coerceAtMost(1f)),
                     style = Stroke(width = 22f * stroke, cap = StrokeCap.Round))
-                drawPath(wing, tint.copy(alpha = .15f * petalFlare),
+                drawPath(wing, tint.copy(alpha = (.15f * petalFlare * spectralAccent).coerceAtMost(1f)),
                     style = Stroke(width = 3.6f * stroke, cap = StrokeCap.Round))
                 drawPath(wing, ice.copy(alpha = .25f * petalFlare),
                     style = Stroke(width = .57f * stroke, cap = StrokeCap.Round))
@@ -381,18 +414,20 @@ fun ImmersiveVisualField(
         // Live timbre ribbons: phase and fold depend on the controls, not random noise.
         // 8 x 96 points is a bounded amount of geometry even on small/old phones.
         val t = animatedPhase * turn
-        val wobbleFrequency = 2.5f + timbre * 4.5f
+        val wobbleFrequency = 2.5f + timbre * 4.5f + pcm.highCyan * 2.8f
         for (layer in 0 until 8) {
             val line = Path()
             for (i in ImmersiveFieldGeometry.orbit.indices) {
                 val unit = ImmersiveFieldGeometry.orbit[i]
                 val wave = sin(unit.angle * wobbleFrequency + motion * 4.1f + t * .73f +
                     layer * .42f)
-                val flutter = sin(unit.angle * (7.1f + focus * 4.7f) -
+                val flutter = sin(unit.angle * (7.1f + focus * 4.7f + pcm.highCyan * 7.2f) -
                     t * 1.42f + layer * .89f)
                 val rr = radius * (.43f + layer * .073f +
-                    wave * (.075f + timbre * .048f + pcm.filamentBoost) +
-                    flutter * (.026f * focus + pcm.brightness * .008f))
+                    wave * (.075f + timbre * .048f + pcm.filamentBoost +
+                        pcm.midViolet * .048f) +
+                    flutter * (.026f * focus + pcm.brightness * .008f +
+                        pcm.highCyan * .026f))
                 val x = c.x + unit.x * rr
                 val y = c.y + unit.y * rr * (.76f + timbre * .16f)
                 if (i == 0) line.moveTo(x, y) else line.lineTo(x, y)
@@ -404,11 +439,18 @@ fun ImmersiveVisualField(
                 2 -> ultraviolet
                 else -> amber
             }
-            drawPath(line, tint.copy(alpha = .038f * energy),
+            val bandAccent = when (layer % 4) {
+                0 -> filaments
+                2 -> braid
+                3 -> warm
+                else -> 1f
+            }
+            drawPath(line, tint.copy(alpha = (.038f * energy * bandAccent).coerceAtMost(1f)),
                 style = Stroke(width = (10.0f + layer * .36f) * stroke))
-            drawPath(line, tint.copy(alpha = .20f * energy),
+            drawPath(line, tint.copy(alpha = (.20f * energy * bandAccent).coerceAtMost(1f)),
                 style = Stroke(width = 3.4f * stroke))
-            drawPath(line, tint.copy(alpha = (.61f + focus * .17f) * energy),
+            drawPath(line, tint.copy(alpha = ((.61f + focus * .17f) *
+                energy * bandAccent).coerceAtMost(1f)),
                 style = Stroke(width = .86f * stroke, cap = StrokeCap.Round))
         }
 
@@ -420,7 +462,9 @@ fun ImmersiveVisualField(
             val inside = radius * (1.10f + if (major) .02f else .09f)
             val outside = inside + radius * (if (major) .14f + focus * .07f else .03f)
             drawLine(
-                (if (i % 9 == 0) amber else cyan).copy(alpha = if (major) .64f else .22f),
+                (if (i % 9 == 0) amber else cyan).copy(
+                    alpha = ((if (major) .64f else .22f) *
+                        (if (i % 9 == 0) warm else filaments)).coerceAtMost(1f)),
                 c + Offset(tick.x * inside, tick.y * inside),
                 c + Offset(tick.x * outside, tick.y * outside),
                 strokeWidth = if (major) 1.25f * stroke else .50f * stroke,
@@ -499,7 +543,8 @@ fun ImmersiveVisualField(
         val audible = (pcm.rms * .62f + pcm.peak * .38f).coerceIn(0f, 1f)
         if (audible > .014f) {
             for (arc in 0 until 7) {
-                val rr = radius * (.58f + arc * .094f + pcm.radiusBoost * .45f)
+                val rr = radius * (.58f + arc * .094f + pcm.radiusBoost * .45f +
+                    (if (arc % 4 == 0) pcm.lowGold * .12f else 0f))
                 val angle = arc * 51.43f + timbre * 70f +
                     if (animationsEnabled) animatedPhase * 95f else 0f
                 val tint = when (arc % 4) {
@@ -508,10 +553,17 @@ fun ImmersiveVisualField(
                     2 -> electricBlue
                     else -> ultraviolet
                 }
+                val arcAccent = when (arc % 4) {
+                    0 -> warm
+                    1, 3 -> braid
+                    else -> filaments
+                }
                 drawArc(
-                    color = tint.copy(alpha = (.065f + audible * .36f) * (.65f + arc * .038f)),
+                    color = tint.copy(alpha = ((.065f + audible * .36f) *
+                        (.65f + arc * .038f) * arcAccent).coerceAtMost(1f)),
                     startAngle = angle,
-                    sweepAngle = (19f + aperture * 26f + pcm.brightness * 18f),
+                    sweepAngle = 19f + aperture * 26f + pcm.brightness * 18f +
+                        (if (arc % 4 == 0) pcm.lowGold * 17f else pcm.highCyan * 11f),
                     useCenter = false,
                     topLeft = Offset(c.x - rr, c.y - rr * .82f),
                     size = Size(rr * 2f, rr * 1.64f),

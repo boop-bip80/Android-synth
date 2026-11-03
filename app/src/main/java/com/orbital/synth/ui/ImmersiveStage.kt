@@ -284,6 +284,9 @@ internal fun ImmersiveStage(
             audioPeak = audioVisual.peak,
             audioTransient = audioVisual.transient,
             audioBrightness = audioVisual.brightness,
+            audioLowBand = audioVisual.lowBand,
+            audioMidBand = audioVisual.midBand,
+            audioHighBand = audioVisual.highBand,
             skipArtwork = ImmersiveFieldDrawGate.shouldSkip(cleanCanvas, fieldAlpha),
         )
 
