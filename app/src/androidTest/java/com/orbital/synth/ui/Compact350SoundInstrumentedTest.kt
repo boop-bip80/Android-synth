@@ -169,6 +169,24 @@ class Compact350SoundInstrumentedTest {
         // Five compact controls must each expose true TalkBack/touch targets
         // at least 48dp high on a real 350dp-constrained Compose screen.
         val density = compose.activity.resources.displayMetrics.density
+        val topNavBounds = compose.onNodeWithTag("compactTopNavigation")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            "Tiny landscape must use a single compact ≥48dp header/nav row",
+            topNavBounds.height >= 48f * density - 1f,
+        )
+        listOf("Tab SOUND", "Tab PLAY", "Tab SEQ", "Tab FX",
+            "Enter immersive performance", "Open patch library").forEach { description ->
+            val rect = compose.onNodeWithContentDescription(description)
+                .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertTrue(
+                "Compact navigation must keep $description at least 48dp in BOTH axes: $rect",
+                rect.height >= 48f * density - 1f &&
+                    rect.width >= 48f * density - 1f &&
+                    rect.top >= topNavBounds.top - 1f &&
+                    rect.bottom <= topNavBounds.bottom + 1f,
+            )
+        }
         val toolbarNames = listOf("LIVE", "TONE", "VOICE", "ENGINE")
         compose.onNodeWithTag("compactOscillatorToggle").assertIsDisplayed().let { chip ->
             val bounds = chip.fetchSemanticsNode().boundsInRoot
@@ -197,11 +215,11 @@ class Compact350SoundInstrumentedTest {
         val editorBounds = compose.onNodeWithTag("soundEditorScroll")
             .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         assertTrue(
-            "Engine option row must provide at least a 48dp touch corridor",
+            "Engine option row must provide 48dp touch corridor; row=$choiceRowBounds editor=$editorBounds",
             choiceRowBounds.height >= 48f * density - 1f,
         )
         assertTrue(
-            "All engine choice controls must fit above the pinned piano without hidden scroll",
+            "All engine choices must fit above piano; row=$choiceRowBounds editor=$editorBounds",
             choiceRowBounds.top >= editorBounds.top - 1f &&
                 choiceRowBounds.bottom <= editorBounds.bottom + 1f,
         )

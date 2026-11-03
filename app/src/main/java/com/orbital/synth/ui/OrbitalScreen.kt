@@ -358,6 +358,15 @@ fun OrbitalScreen(
                 else if (compactOrbitLayout) 8.dp else 12.dp,
             ),
         ) {
+        if (compactHeight) {
+            CompactTopNavigation(
+                selectedTab = selectedTab,
+                onTabSelect = { selectedTab = it },
+                onEnterImmersive = { immersiveMode = true },
+                onOpenLibrary = { showPatchLibrary = true },
+                libraryEnabled = onSavePatch != null || onSelectPatch != null,
+            )
+        } else {
         Header(
             patch = state.patchName,
             onOpenLibrary = { showPatchLibrary = true },
@@ -434,6 +443,8 @@ fun OrbitalScreen(
                     )
                 }
             }
+        }
+
         }
 
         // Editor area is the only vertical scroller. Performance controls remain anchored below it.
@@ -1424,6 +1435,100 @@ private fun Header(
         ) {
             Text("☰", color = if (libraryEnabled) OrbitalPalette.Cyan else OrbitalPalette.Muted,
                 fontSize = 20.sp)
+        }
+    }
+}
+
+/**
+ * One 48dp-high six-action nav for tiny landscape: four real tabs plus STAGE
+ * and patch library in the same row. Replaces two stacked 40dp headers and
+ * returns 32dp to the genuine 48dp SOUND/ENGINE editors above pinned keys.
+ * Portrait preserves the full ORBITAL masthead and separate generous tabs.
+ */
+@Composable
+private fun CompactTopNavigation(
+    selectedTab: Tab,
+    onTabSelect: (Tab) -> Unit,
+    onEnterImmersive: () -> Unit,
+    onOpenLibrary: () -> Unit,
+    libraryEnabled: Boolean,
+) {
+    val corner = RoundedCornerShape(11.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .testTag("compactTopNavigation")
+            .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .55f), corner)
+            .background(OrbitalPalette.Void.copy(alpha = .82f), corner)
+            .padding(1.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Tab.entries.forEach { tab ->
+            val active = selectedTab == tab
+            val glow = when (tab) {
+                Tab.SOUND -> OrbitalPalette.Cyan
+                Tab.PLAY -> OrbitalPalette.Gold
+                Tab.SEQ -> OrbitalPalette.Violet
+                Tab.FX -> OrbitalPalette.Teal
+            }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("compactTopTab_" + tab.name)
+                    .border(1.dp, if (active) glow.copy(alpha = .78f)
+                        else OrbitalPalette.PanelEdge.copy(alpha = .42f), corner)
+                    .background(
+                        if (active) glow.copy(alpha = .18f)
+                        else OrbitalPalette.Panel.copy(alpha = .45f), corner,
+                    )
+                    .selectable(
+                        selected = active,
+                        role = Role.Tab,
+                        onClick = { onTabSelect(tab) },
+                    )
+                    .clearAndSetSemantics {
+                        contentDescription = "Tab " + tab.title
+                        selected = active
+                        role = Role.Tab
+                        onClick(label = "Open " + tab.title) {
+                            onTabSelect(tab)
+                            true
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(tab.title, color = if (active) Color.White else OrbitalPalette.Muted,
+                    fontSize = 9.sp, fontWeight = if (active) FontWeight.SemiBold
+                    else FontWeight.Normal, maxLines = 1)
+            }
+        }
+        Box(
+            Modifier
+                .weight(1f)
+                .heightIn(min = 48.dp)
+                .testTag("immersiveModeToggle")
+                .border(1.dp, OrbitalPalette.Cyan.copy(alpha = .60f), corner)
+                .background(OrbitalPalette.Blue.copy(alpha = .20f), corner)
+                .clickable(role = Role.Button, onClick = onEnterImmersive)
+                .semantics { contentDescription = "Enter immersive performance" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("STAGE", color = OrbitalPalette.Cyan, fontSize = 9.sp, maxLines = 1)
+        }
+        Box(
+            Modifier
+                .weight(1f)
+                .heightIn(min = 48.dp)
+                .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .55f), corner)
+                .background(OrbitalPalette.Panel.copy(alpha = .55f), corner)
+                .clickable(enabled = libraryEnabled, role = Role.Button, onClick = onOpenLibrary)
+                .semantics { contentDescription = "Open patch library" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("LIB", color = if (libraryEnabled) OrbitalPalette.Cyan
+                else OrbitalPalette.Muted, fontSize = 9.sp, maxLines = 1)
         }
     }
 }
