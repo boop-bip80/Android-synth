@@ -116,13 +116,17 @@ class ReferenceMiniSignalTapNavigationTest {
             target.bottom <= editor.bottom + 1f
 
     /**
-     * No Compose test-only auto-scroll: touch the SAME real editor viewport a
-     * human uses. The 3px inset avoids nested LFO horizontal shape chips.
-     * Require fully visible >=48dp geometry after at most six bounded swipes.
+     * Only real, bounded finger swipes in the live scroll container.
+     *
+     * Crucially a target above the editor requires a DOWN swipe; below it
+     * requires UP. A wholly clipped Compose node may report Rect.Zero, so
+     * retain the last observed edge. Small 30..60px moves avoid flinging an
+     * already revealed 48dp chip out of view on high-density phones.
      */
     private fun physicallyRevealGardenAction(tag: String) {
         val editor = compose.onNodeWithTag("soundEditorScroll").assertIsDisplayed()
-        repeat(6) {
+        var lastObservedEdge = 1 // +1 below the viewport; -1 above.
+        repeat(16) { attempt ->
             val target = compose.onNodeWithTag(tag)
             val editorRect = editor.fetchSemanticsNode().boundsInRoot
             val targetRect = try {
@@ -134,11 +138,40 @@ class ReferenceMiniSignalTapNavigationTest {
                 target.assertIsDisplayed()
                 return
             }
+            val missingBounds = targetRect.width <= 1f || targetRect.height <= 1f
+            val travel = when {
+                missingBounds ->
+                    if (lastObservedEdge < 0) 60f else -60f
+                targetRect.top < editorRect.top -> {
+                    lastObservedEdge = -1
+                    (editorRect.top - targetRect.top + 3f).coerceIn(30f, 60f)
+                }
+                targetRect.bottom > editorRect.bottom -> {
+                    lastObservedEdge = 1
+                    -(targetRect.bottom - editorRect.bottom + 3f).coerceIn(30f, 60f)
+                }
+                else -> {
+                    // The node is geometrically inside the viewport but not
+                    // >=48dp: scrolling cannot fix an intrinsic hitbox defect.
+                    assertTrue(
+                        "LFO action itself is too small: " + tag +
+                            " editor=" + editorRect + " target=" + targetRect,
+                        fullyInEditor(editorRect, targetRect, 48f),
+                    )
+                    return
+                }
+            }
+            check(travel.isFinite() && kotlin.math.abs(travel) in 30f..60f) {
+                "Physical mini LFO swipe must be finite and 30..60px: " + travel
+            }
+            android.util.Log.i("MiniLfoReveal", "attempt=" + attempt + " tag=" + tag +
+                " target=" + targetRect + " editor=" + editorRect +
+                " fingerTravelPx=" + travel)
             editor.performTouchInput {
                 swipe(
-                    start = Offset(3f, size.height * .79f),
-                    end = Offset(3f, size.height * .21f),
-                    durationMillis = 280,
+                    start = Offset(3f, center.y - travel * .5f),
+                    end = Offset(3f, center.y + travel * .5f),
+                    durationMillis = 400, // Slow bounded drag, no inertial fling.
                 )
             }
             compose.waitForIdle()
@@ -147,8 +180,8 @@ class ReferenceMiniSignalTapNavigationTest {
             .fetchSemanticsNode().boundsInRoot
         val editorRect = editor.fetchSemanticsNode().boundsInRoot
         assertTrue(
-            "Real LFO action must be fully touchable >=48dp after physical swipes: " +
-                tag + " editor=" + editorRect + " target=" + target,
+            "Real LFO action must be fully touchable >=48dp after 16 physical " +
+                "bidirectional swipes: " + tag + " editor=" + editorRect + " target=" + target,
             fullyInEditor(editorRect, target, 48f),
         )
     }
