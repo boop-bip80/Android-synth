@@ -92,8 +92,25 @@ fun LuminousOscillatorWaveEditor(
             listOf(Color(0xFF10213A), Color(0xFF08152A), Color(0xFF030814))
         )
     }
+    // Stroke styles are reused across 240-point Canvas redraws; only the
+    // active finger state changes their widths, never the audio worker.
+    val referenceStroke = remember { Stroke(width = 1.4f, cap = StrokeCap.Round) }
+    val bloomStroke = remember(touching) {
+        Stroke(width = if (touching) 30f else 24f, cap = StrokeCap.Round)
+    }
+    val haloStroke = remember { Stroke(width = 12f, cap = StrokeCap.Round) }
+    val coreStroke = remember { Stroke(width = 5.5f, cap = StrokeCap.Round) }
+    val lightStroke = remember(touching) {
+        Stroke(width = if (touching) 3.5f else 2.7f, cap = StrokeCap.Round)
+    }
     val selectedWave = (slot.waveform.coerceIn(0f, 1f) * 4f).roundToInt()
-    val family = listOf("SINE", "TRIANGLE", "SAW", "PULSE", "GLASS")[selectedWave]
+    val family = when (selectedWave) {
+        0 -> "SINE"
+        1 -> "TRIANGLE"
+        2 -> "SAW"
+        3 -> "PULSE"
+        else -> "GLASS"
+    }
     val morphPercent = (slot.morph.coerceIn(0f, 1f) * 100).roundToInt()
     val gainPercent = (slot.level.coerceIn(0f, 1f) * 100).roundToInt()
 
@@ -232,24 +249,23 @@ fun LuminousOscillatorWaveEditor(
             // Android bitmap blur, RenderEffect allocations or per-frame arrays.
             drawPath(
                 referencePath, WaveGold.copy(alpha = .24f),
-                style = Stroke(width = 1.4f, cap = StrokeCap.Round),
+                style = referenceStroke,
             )
             drawPath(
                 wavePath, accent.copy(alpha = if (touching) .15f else .07f),
-                style = Stroke(width = if (touching) 30f else 24f, cap = StrokeCap.Round),
+                style = bloomStroke,
             )
             drawPath(
                 wavePath, WaveViolet.copy(alpha = if (touching) .34f else .20f),
-                style = Stroke(width = 12f, cap = StrokeCap.Round),
+                style = haloStroke,
             )
             drawPath(
                 wavePath, accent.copy(alpha = .40f),
-                style = Stroke(width = 5.5f, cap = StrokeCap.Round),
+                style = coreStroke,
             )
             drawPath(
                 wavePath, lightBrush,
-                style = Stroke(width = if (touching) 3.5f else 2.7f,
-                    cap = StrokeCap.Round),
+                style = lightStroke,
             )
 
             val control = Offset(
@@ -320,7 +336,7 @@ fun LuminousOscillatorWaveEditor(
 }
 
 /**
- * Fully custom luminous 68dp tactile rail. TalkBack users can invoke SetProgress
+ * Fully custom luminous tactile rail (70dp portrait / 52dp compact). TalkBack users can invoke SetProgress
  * from any value 0..1; precision and drag both publish the real slot parameter.
  * The pointer owner consumes MOVE/DOWN so the enclosing SOUND scroller cannot
  * steal or leave a held/frozen control after ACTION_UP or cancellation.
@@ -340,11 +356,14 @@ private fun LuminousValueRail(
     val current = value.coerceIn(0f, 1f)
     val percentage = (current * 100f).roundToInt()
     val shape = RoundedCornerShape(12.dp)
+    val glass = remember {
+        Brush.verticalGradient(listOf(Color(0xFF12213A), Color(0xFF060D20)))
+    }
     Box(
         modifier
             .height(if (compact) 52.dp else 70.dp)
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(Color(0xFF12213A), Color(0xFF060D20))))
+            .background(glass)
             .border(1.dp, tint.copy(alpha = if (pressed) .82f else .28f), shape),
     ) {
         Canvas(
