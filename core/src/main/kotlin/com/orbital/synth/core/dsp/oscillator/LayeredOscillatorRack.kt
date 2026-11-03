@@ -22,7 +22,9 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
     private val applied = arrayOfNulls<OscillatorSlot>(SLOT_COUNT)
     private val phases = DoubleArray(SLOT_COUNT)
     private val wave = FloatArray(SLOT_COUNT)
+    private val targetWave = FloatArray(SLOT_COUNT)
     private val morph = FloatArray(SLOT_COUNT) { 1f }
+    private val targetMorph = FloatArray(SLOT_COUNT) { 1f }
     private val currentGain = FloatArray(SLOT_COUNT)
     private val targetGain = FloatArray(SLOT_COUNT)
     private val currentRatio = DoubleArray(SLOT_COUNT) { 1.0 }
@@ -42,8 +44,8 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
     fun configure(index: Int, slot: OscillatorSlot) {
         if (applied[index] === slot) return
         applied[index] = slot
-        wave[index] = slot.waveform
-        morph[index] = slot.morph
+        targetWave[index] = slot.waveform
+        targetMorph[index] = slot.morph
         targetGain[index] = if (slot.enabled) slot.level else 0f
         targetRatio[index] = 2.0.pow(
             (slot.coarseSemitones.toDouble() * 100.0 + slot.fineCents.toDouble()) / 1200.0
@@ -97,6 +99,8 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
             anyRemaining = true
             val ratio = currentRatio[i] + (targetRatio[i] - currentRatio[i]) * slew
             currentRatio[i] = ratio
+            wave[i] += (targetWave[i] - wave[i]) * slew
+            morph[i] += (targetMorph[i] - morph[i]) * slew
             val frequency = (fundamentalHz * ratio)
                 .coerceIn(0.0, sampleRate * 0.45)
             val oscillator = WavetableBank.sample(
