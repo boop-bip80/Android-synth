@@ -12,49 +12,69 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Physical gesture tests must inject into the **unclipped** viewport.
+ * Physical gestures must be injected into the full **unclipped** viewport.
  *
- * performScrollTo() alone can minimally reveal a descendant at the editor
- * boundary; a pointer at 20% height then lands underneath the clipped parent
- * and never reaches the Canvas. ScrollBy targets the real parent viewport
- * instead of watering down the intended gesture coordinates/assertions.
+ * performScrollTo() can leave a child entirely clipped under a tall scroller
+ * (API35 observed boundsInRoot=Rect.Zero despite a measured Canvas). When
+ * clipped, boundsInRoot cannot tell us the direction; the caller supplies
+ * whether the target lies below (+1) or above (-1) the current view. Walk
+ * by bounded ScrollBy steps until its measured size is really visible.
  */
 internal fun ComposeTestRule.fullyRevealOscillatorCanvas(
     canvasTag: String,
     scrollContainerTag: String,
+    searchDirection: Int = 1,
 ): SemanticsNodeInteraction {
+    require(searchDirection == 1 || searchDirection == -1)
     val canvas = onNodeWithTag(canvasTag).performScrollTo()
     val editor = onNodeWithTag(scrollContainerTag)
 
-    repeat(5) {
+    for (attempt in 0 until 24) {
         waitForIdle()
-        val bounds = canvas.fetchSemanticsNode().boundsInRoot
+        val node = canvas.fetchSemanticsNode()
+        val bounds = node.boundsInRoot
         val editorBounds = editor.fetchSemanticsNode().boundsInRoot
         val rootBounds = onRoot().fetchSemanticsNode().boundsInRoot
         val visibleTop = max(editorBounds.top, rootBounds.top) + 12f
         val visibleBottom = min(editorBounds.bottom, rootBounds.bottom) - 12f
+        val measuredWidth = node.size.width.toFloat()
+        val measuredHeight = node.size.height.toFloat()
+        assertTrue(
+            "Touch Canvas has zero measured size: tag=$canvasTag node-size=${node.size} bounds=$bounds",
+            measuredWidth > 20f && measuredHeight > 20f,
+        )
+        val fullyVisible = bounds.width >= measuredWidth - 1f &&
+            bounds.height >= measuredHeight - 1f &&
+            bounds.top >= visibleTop - 1f && bounds.bottom <= visibleBottom + 1f
+        if (fullyVisible) return canvas
+
+        val step = ((visibleBottom - visibleTop) * .55f).coerceIn(120f, 900f)
+        val missingHeight = (measuredHeight - bounds.height).coerceAtLeast(0f)
         val scrollDeltaY = when {
-            bounds.bottom > visibleBottom -> bounds.bottom - visibleBottom
-            bounds.top < visibleTop -> bounds.top - visibleTop
-            else -> 0f
+            bounds.width <= 1f || bounds.height <= 1f -> searchDirection * step
+            bounds.bottom >= visibleBottom - 2f && missingHeight > 1f ->
+                (missingHeight + 16f).coerceAtMost(step)
+            bounds.top <= visibleTop + 2f && missingHeight > 1f ->
+                -(missingHeight + 16f).coerceAtMost(step)
+            bounds.bottom > visibleBottom -> bounds.bottom - visibleBottom + 16f
+            bounds.top < visibleTop -> bounds.top - visibleTop - 16f
+            missingHeight > 1f -> searchDirection * step
+            else -> searchDirection * 20f
         }
-        if (kotlin.math.abs(scrollDeltaY) > 0.5f) {
-            editor.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
-                scroll(0f, scrollDeltaY)
-            }
+        editor.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
+            scroll(0f, scrollDeltaY)
         }
     }
 
     waitForIdle()
-    val bounds = canvas.fetchSemanticsNode().boundsInRoot
+    val node = canvas.fetchSemanticsNode()
+    val bounds = node.boundsInRoot
     val editorBounds = editor.fetchSemanticsNode().boundsInRoot
     val rootBounds = onRoot().fetchSemanticsNode().boundsInRoot
-    val visibleTop = max(editorBounds.top, rootBounds.top) + 12f
-    val visibleBottom = min(editorBounds.bottom, rootBounds.bottom) - 12f
     assertTrue(
-        "Oscillator canvas must be fully touch-visible, not just semantically present: " +
-            "canvas=$bounds editor=$editorBounds root=$rootBounds",
-        bounds.top >= visibleTop - 1f && bounds.bottom <= visibleBottom + 1f,
+        "Canvas still clipped after bounded explicit ScrollBy: tag=$canvasTag " +
+            "measured=${node.size} bounds=$bounds editor=$editorBounds root=$rootBounds",
+        false,
     )
     return canvas
 }

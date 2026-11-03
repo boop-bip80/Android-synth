@@ -157,7 +157,7 @@ class OscillatorNoisePanelTest {
                 slots[0].noiseLevel in 0.72f..0.89f)
         }
 
-        compose.fullyRevealOscillatorCanvas("oscillatorWaveCanvas", "noiseEditorScroll")
+        compose.fullyRevealOscillatorCanvas("oscillatorWaveCanvas", "noiseEditorScroll", -1)
             .performTouchInput { click(center) }
         compose.waitForIdle()
         compose.runOnIdle {
