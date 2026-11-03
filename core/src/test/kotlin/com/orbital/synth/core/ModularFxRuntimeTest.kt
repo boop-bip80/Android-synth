@@ -227,6 +227,46 @@ class ModularFxRuntimeTest {
         }
     }
 
+    @Test fun modulationGestureAndFxRackShapeTheSameLiveVoiceWithoutLosingEitherState() {
+        // A pitch route published by the modulation editor and a new FX
+        // chain slot must share one live OrbitalSynth bus, not two demo paths.
+        val unmodulated = clearTone()
+        val routed = clearTone()
+        for (synth in listOf(unmodulated, routed)) {
+            synth.setFxSlot(0, FxModuleType.SATURATION, true, 0.85f, 0.7f)
+            synth.setFxSlot(1, FxModuleType.TREMOLO, true, 0.35f, 0.5f, 0.7f)
+        }
+        routed.setModulationRoute(
+            0, com.orbital.synth.core.dsp.processing.ModSource.TOUCH_X,
+            com.orbital.synth.core.dsp.processing.ModDestination.PITCH, 0.45f,
+        )
+        routed.setModulationSource(
+            com.orbital.synth.core.dsp.processing.ModSource.TOUCH_X, 0.9f,
+        )
+        unmodulated.noteOn(69)
+        routed.noteOn(69)
+        val baseline = FloatArray(4_096 * 2)
+        val affected = FloatArray(baseline.size)
+        unmodulated.renderStereo(baseline, 4_096)
+        routed.renderStereo(affected, 4_096)
+        var audibleDifference = 0.0
+        for (i in baseline.indices) {
+            audibleDifference += abs((baseline[i] - affected[i]).toDouble())
+            assertTrue(affected[i].isFinite())
+        }
+        assertTrue("Touch modulation must affect the real FX-processed synth voice",
+            audibleDifference > 10.0)
+        assertEquals(
+            com.orbital.synth.core.dsp.processing.ModDestination.PITCH,
+            routed.modulationRoute(0).destination,
+        )
+        routed.moveFxSlot(0, 1)
+        routed.renderStereo(FloatArray(128), 64)
+        assertEquals(FxModuleType.SATURATION, routed.fxSlot(1).type)
+        assertTrue("FX reorder cannot clear a live modulation route",
+            routed.modulationRoute(0).enabled)
+    }
+
     private fun clearTone(): OrbitalSynth = OrbitalSynth().apply {
         setParameter(ParameterId.WAVE, 0f)
         setParameter(ParameterId.MORPH, 0f)
