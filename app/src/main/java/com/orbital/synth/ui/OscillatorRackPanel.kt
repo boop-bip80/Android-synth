@@ -354,6 +354,17 @@ fun OscillatorRackPanel(
                     testTag = "oscillatorNoiseColor",
                 )
             }
+            // Per-oscillator VCA is independently programmable, underneath the
+            // existing noise surface. The upper 350dp OSC8 selector, pinned
+            // piano and luminous waveform geometry remain unchanged.
+            LayerAmpEnvelopePanel(
+                envelope = layer.ampEnvelope,
+                onEnvelopeChange = { edited ->
+                    onSlotChange(selected, layer.copy(ampEnvelope = edited))
+                },
+                compact = compact,
+                modifier = Modifier.fillMaxWidth(),
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "COARSE TUNE",

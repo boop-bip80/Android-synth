@@ -45,7 +45,7 @@ class PatchStepsV5Test {
             modulationTempoBpm = 131f,
         )
         val text = PatchCodec.encode(patch)
-        assertEquals(6, PatchCodec.CURRENT_VERSION)
+        assertEquals(7, PatchCodec.CURRENT_VERSION)
         assertTrue(text.startsWith("ORBITAL-PATCH/5\n"))
         assertTrue(text.contains("step.seq=1,PING_PONG,11,0.5,0.42,1"))
         assertEquals(1, text.lines().count { it.startsWith("step.seq=") })

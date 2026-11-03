@@ -41,7 +41,7 @@ class PatchNoiseV6Test {
                 enabled = true, wet = .65f, depth = .75f)),
         )
         val encoded = PatchCodec.encode(patch)
-        assertEquals(6, PatchCodec.CURRENT_VERSION)
+        assertEquals(7, PatchCodec.CURRENT_VERSION)
         assertTrue(encoded.startsWith("ORBITAL-PATCH/6\n"))
         assertTrue(encoded.contains("step.seq="))
         assertTrue(encoded.contains("fx.0=1,BITCRUSH,"))

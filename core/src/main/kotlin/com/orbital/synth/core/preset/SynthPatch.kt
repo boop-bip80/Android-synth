@@ -59,7 +59,11 @@ data class SynthPatch(
                 slot.coarseSemitones in -48..48 &&
                 slot.fineCents.isFinite() && slot.fineCents in -100f..100f &&
                 slot.noiseLevel.isFinite() && slot.noiseLevel in 0f..1f &&
-                slot.noiseColor.isFinite() && slot.noiseColor in 0f..1f
+                slot.noiseColor.isFinite() && slot.noiseColor in 0f..1f &&
+                slot.ampEnvelope.attack.isFinite() && slot.ampEnvelope.attack in 0f..1f &&
+                slot.ampEnvelope.decay.isFinite() && slot.ampEnvelope.decay in 0f..1f &&
+                slot.ampEnvelope.sustain.isFinite() && slot.ampEnvelope.sustain in 0f..1f &&
+                slot.ampEnvelope.release.isFinite() && slot.ampEnvelope.release in 0f..1f
         }) { "Invalid oscillator slot settings" }
         require(modulationRoutes.size <= 64) { "A patch supports at most 64 modulation routes" }
         require(modulationRoutes.all { it.depth.isFinite() && it.depth in -4f..4f }) {

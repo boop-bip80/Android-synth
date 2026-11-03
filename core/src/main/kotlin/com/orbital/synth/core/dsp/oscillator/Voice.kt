@@ -331,6 +331,7 @@ internal class Voice(private val sampleRate: Int) {
         // Deterministically decorrelate each voice's eight noise lanes across
         // MIDI notes and allocation/retrigger order without any audio allocation.
         oscillatorRack.resetPhase((midiNote.toLong() shl 32) xor order)
+        oscillatorRack.noteOn()
         integrator1 = 0.0
         integrator2 = 0.0
         ladder.reset()
@@ -364,6 +365,7 @@ internal class Voice(private val sampleRate: Int) {
         stage = Stage.RELEASE
         releaseStep = envelopeLevel / releaseFrames
         if (releaseStep < 0.00000001f) releaseStep = 0.00000001f
+        oscillatorRack.noteOff()
     }
 
     fun hardStop() {
@@ -376,6 +378,7 @@ internal class Voice(private val sampleRate: Int) {
         integrator2 = 0.0
         ghostSamples = 0
         oscillatorRack.resetPhase()
+        oscillatorRack.hardStopAmp()
         ladder.reset()
         sem.reset()
         ghostLadder.reset()

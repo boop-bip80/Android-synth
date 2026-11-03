@@ -56,6 +56,19 @@ enum class VoiceMode { POLY, MONO, LEGATO }
  * of the legacy UNISON control and disabled by default for compatibility.
  * These immutable snapshots may be safely passed across UI/audio threads.
  */
+/**
+ * Optional additive-layer VCA inside the master voice ADSR.
+ * Normalized 0..1 parameters; disabled is exact pre-V7 PCM behavior.
+ * A short master release can end a layer's tail sooner than this release.
+ */
+data class LayerAmpEnvelope(
+    val enabled: Boolean = false,
+    val attack: Float = 0f,
+    val decay: Float = 0f,
+    val sustain: Float = 1f,
+    val release: Float = 0f,
+)
+
 data class OscillatorSlot(
     val enabled: Boolean = false,
     val waveform: Float = 0f,
@@ -68,6 +81,7 @@ data class OscillatorSlot(
     val noiseLevel: Float = 0f,
     // Continuous color: 0 = white, 0.5 = pink, 1 = brown.
     val noiseColor: Float = 0f,
+    val ampEnvelope: LayerAmpEnvelope = LayerAmpEnvelope(),
 )
 
 class OrbitalSynth(
@@ -390,7 +404,11 @@ class OrbitalSynth(
         require(index in 0 until oscillatorSlotCount) { "oscillator slot must be 0..7" }
         if (!config.waveform.isFinite() || !config.morph.isFinite() ||
             !config.level.isFinite() || !config.fineCents.isFinite() ||
-            !config.noiseLevel.isFinite() || !config.noiseColor.isFinite()) return
+            !config.noiseLevel.isFinite() || !config.noiseColor.isFinite() ||
+            !config.ampEnvelope.attack.isFinite() ||
+            !config.ampEnvelope.decay.isFinite() ||
+            !config.ampEnvelope.sustain.isFinite() ||
+            !config.ampEnvelope.release.isFinite()) return
         oscillatorSlots.set(index, config.copy(
             waveform = config.waveform.coerceIn(0f, 1f),
             morph = config.morph.coerceIn(0f, 1f),
@@ -399,6 +417,12 @@ class OrbitalSynth(
             fineCents = config.fineCents.coerceIn(-100f, 100f),
             noiseLevel = config.noiseLevel.coerceIn(0f, 1f),
             noiseColor = config.noiseColor.coerceIn(0f, 1f),
+            ampEnvelope = config.ampEnvelope.copy(
+                attack = config.ampEnvelope.attack.coerceIn(0f, 1f),
+                decay = config.ampEnvelope.decay.coerceIn(0f, 1f),
+                sustain = config.ampEnvelope.sustain.coerceIn(0f, 1f),
+                release = config.ampEnvelope.release.coerceIn(0f, 1f),
+            ),
         ))
     }
 

@@ -1,6 +1,7 @@
 package com.orbital.synth.core.preset
 
 import com.orbital.synth.core.OscillatorSlot
+import com.orbital.synth.core.LayerAmpEnvelope
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.dsp.processing.LfoShape
@@ -27,13 +28,14 @@ import java.nio.charset.StandardCharsets
  * param.CUTOFF=0.62
  */
 object PatchCodec {
-    const val CURRENT_VERSION: Int = 6
+    const val CURRENT_VERSION: Int = 7
     private const val MAGIC_V1 = "ORBITAL-PATCH/1"
     private const val MAGIC_V2 = "ORBITAL-PATCH/2"
     private const val MAGIC_V3 = "ORBITAL-PATCH/3"
     private const val MAGIC_V4 = "ORBITAL-PATCH/4"
     private const val MAGIC_V5 = "ORBITAL-PATCH/5"
     private const val MAGIC_V6 = "ORBITAL-PATCH/6"
+    private const val MAGIC_V7 = "ORBITAL-PATCH/7"
     private val OSC_FIELD = Regex("osc\\.[0-7]")
     private val LFO_FIELD = Regex("lfo\\.[0-7]")
     private val ROUTE_FIELD = Regex("route\\.([0-9]|[1-5][0-9]|6[0-3])")
@@ -49,10 +51,16 @@ object PatchCodec {
         val hasNoise = patch.oscillatorSlots.any {
             it.noiseLevel != 0f || it.noiseColor != 0f
         }
+        // Even disabled envelope edit metadata must survive save/reload.
+        // With all default/bypassed envelopes, preserve V1-V6 wire bytes.
+        val hasLayerEnvelope = patch.oscillatorSlots.any {
+            it.ampEnvelope != LayerAmpEnvelope()
+        }
         val hasModulation = patch.modulationRoutes.isNotEmpty() ||
             patch.modulationLfos.isNotEmpty() || patch.modulationTempoBpm != 120f
         out.append(
             when {
+                hasLayerEnvelope -> MAGIC_V7
                 hasNoise -> MAGIC_V6
                 hasSteps -> MAGIC_V5
                 hasFx -> MAGIC_V4
@@ -77,13 +85,21 @@ object PatchCodec {
                 .append(slot.level).append(',')
                 .append(slot.coarseSemitones).append(',')
                 .append(slot.fineCents)
-            if (hasNoise) {
+            if (hasNoise || hasLayerEnvelope) {
                 out.append(',').append(slot.noiseLevel)
                     .append(',').append(slot.noiseColor)
             }
+            if (hasLayerEnvelope) {
+                val env = slot.ampEnvelope
+                out.append(',').append(if (env.enabled) '1' else '0')
+                    .append(',').append(env.attack)
+                    .append(',').append(env.decay)
+                    .append(',').append(env.sustain)
+                    .append(',').append(env.release)
+            }
             out.append('\n')
         }
-        if (hasModulation || hasFx || hasSteps || hasNoise) {
+        if (hasModulation || hasFx || hasSteps || hasNoise || hasLayerEnvelope) {
             out.append("mod.tempo=").append(patch.modulationTempoBpm).append('\n')
             patch.modulationLfos.forEachIndexed { index, lfo ->
                 out.append("lfo.").append(index).append('=')
@@ -138,6 +154,7 @@ object PatchCodec {
             MAGIC_V4 -> 4
             MAGIC_V5 -> 5
             MAGIC_V6 -> 6
+            MAGIC_V7 -> 7
             else -> throw IllegalArgumentException("Unknown patch format/version")
         }
 
@@ -177,7 +194,12 @@ object PatchCodec {
             val index = key.removePrefix("osc.").toInt()
             require(index == oscillators.size) { "Oscillator slots must be sequential" }
             val fields = rawValue.split(',')
-            require(fields.size == (if (version == 6) 8 else 6)) {
+            val expectedOscFields = when (version) {
+                7 -> 13 // V6's noise fields plus enabled + four ADSR parameters
+                6 -> 8
+                else -> 6
+            }
+            require(fields.size == expectedOscFields) {
                 "Malformed oscillator settings for patch version"
             }
             val enabled = when (fields[0]) {
@@ -197,16 +219,30 @@ object PatchCodec {
                     ?: throw IllegalArgumentException("Malformed oscillator semitones"),
                 fineCents = fields[5].toFloatOrNull()
                     ?: throw IllegalArgumentException("Malformed oscillator cents"),
-                noiseLevel = if (version == 6) fields[6].toFloatOrNull()
+                noiseLevel = if (version >= 6) fields[6].toFloatOrNull()
                     ?: throw IllegalArgumentException("Malformed oscillator noise blend") else 0f,
-                noiseColor = if (version == 6) fields[7].toFloatOrNull()
+                noiseColor = if (version >= 6) fields[7].toFloatOrNull()
                     ?: throw IllegalArgumentException("Malformed oscillator noise color") else 0f,
+                ampEnvelope = if (version >= 7) LayerAmpEnvelope(
+                    enabled = flag(fields[8]),
+                    attack = fields[9].toFloatOrNull()
+                        ?: throw IllegalArgumentException("Malformed layer envelope attack"),
+                    decay = fields[10].toFloatOrNull()
+                        ?: throw IllegalArgumentException("Malformed layer envelope decay"),
+                    sustain = fields[11].toFloatOrNull()
+                        ?: throw IllegalArgumentException("Malformed layer envelope sustain"),
+                    release = fields[12].toFloatOrNull()
+                        ?: throw IllegalArgumentException("Malformed layer envelope release"),
+                ) else LayerAmpEnvelope(),
             )
         }
 
         if (version == 6) require(oscillators.any {
             it.noiseLevel != 0f || it.noiseColor != 0f
         }) { "V6 patches must contain explicit colored oscillator state" }
+        if (version == 7) require(oscillators.any {
+            it.ampEnvelope != LayerAmpEnvelope()
+        }) { "V7 patches must contain explicit oscillator envelope state" }
 
         val tempo = if (version >= 3) {
             values["mod.tempo"]?.toFloatOrNull()
@@ -278,7 +314,7 @@ object PatchCodec {
             "V4 patches must contain explicit FX slot state"
         }
 
-        val steps = if (version == 5 || (version == 6 && "step.seq" in values)) {
+        val steps = if (version == 5 || (version >= 6 && "step.seq" in values)) {
             val fields = (values["step.seq"]
                 ?: throw IllegalArgumentException("V5 STEP settings are required")).split(',')
             require(fields.size == 22) { "A V5 STEP lane requires sixteen pads" }

@@ -36,6 +36,7 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
     private val mipLevel = IntArray(SLOT_COUNT)
     private val mipFade = FloatArray(SLOT_COUNT)
     private val noiseBank = LayerNoiseBank(sampleRate)
+    private val ampEnvelopes = LayerAmpEnvelopeBank(sampleRate)
     private val noiseMix = FloatArray(SLOT_COUNT)
     private val targetNoiseMix = FloatArray(SLOT_COUNT)
     private val noiseColor = FloatArray(SLOT_COUNT)
@@ -53,6 +54,7 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
     fun configure(index: Int, slot: OscillatorSlot) {
         if (applied[index] === slot) return
         applied[index] = slot
+        ampEnvelopes.configure(index, slot.ampEnvelope)
         targetWave[index] = slot.waveform
         targetMorph[index] = slot.morph
         targetNoiseMix[index] = slot.noiseLevel
@@ -100,9 +102,15 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
         morph[index] = targetMorph[index]
         noiseMix[index] = targetNoiseMix[index]
         noiseColor[index] = targetNoiseColor[index]
+        ampEnvelopes.primeSilentSlot(index)
         mipCeilingRatio[index] = targetRatio[index]
         if (currentGain[index] > 0f) hasLayers = true
     }
+
+    /** Independent VCA gates belong to the same worker-owned voice lifecycle. */
+    fun noteOn() = ampEnvelopes.noteOn()
+    fun noteOff() = ampEnvelopes.noteOff()
+    fun hardStopAmp() = ampEnvelopes.hardStop()
 
     /** Every new note can use its current harmonically safe mip ceiling. */
     fun resetPhase(seed: Long = 0L) {
@@ -167,15 +175,19 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
             val source = if (noiseMix[i] > 0f) {
                 oscillator + (noiseBank.next(i, noiseColor[i]) - oscillator) * noiseMix[i]
             } else oscillator
-            if (gainMultipliers == null) {
-                // Untouched literal legacy arithmetic: no new route means
-                // frame-by-frame, bit-for-bit identical additive PCM.
+            val shaped = ampEnvelopes.isEngaged(i)
+            if (gainMultipliers == null && !shaped) {
+                // Literal legacy (and V6) arithmetic, unchanged for bypassed
+                // envelopes and no OSC gain cable: raw PCM remains identical.
                 extra += source * gain
                 gains += gain
             } else {
-                val routedGain = gain * gainMultipliers[i]
-                extra += source * routedGain
-                gains += routedGain
+                val routedGain = if (gainMultipliers == null) gain
+                    else gain * gainMultipliers[i]
+                val vcaGain = if (shaped) routedGain * ampEnvelopes.nextGain(i)
+                    else routedGain
+                extra += source * vcaGain
+                gains += vcaGain
             }
             phases[i] += frequency / sampleRate
             if (phases[i] >= 1.0) phases[i] -= floor(phases[i])
