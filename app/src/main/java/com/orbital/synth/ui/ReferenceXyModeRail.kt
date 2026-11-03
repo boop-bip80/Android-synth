@@ -77,6 +77,8 @@ fun ReferenceXyModeRail(
     ribbonHeight: Dp = 88.dp,
     onBeforeOpen: () -> Unit = {},
     onBeforeSelect: () -> Unit = {},
+    /** A fresh, genuine EXPR tile tap can request this existing in-orb palette. */
+    openRequestEpoch: Int = 0,
 ) {
     val activeMode = selectedMode.resolveFallback(normalizedEngine)
     val currentOnModeSelected by rememberUpdatedState(onModeSelected)
@@ -91,6 +93,15 @@ fun ReferenceXyModeRail(
         if (expanded) {
             withFrameNanos { }
             menuArmed = true
+        }
+    }
+    // An EXPR mini tap is a new real pointer-down outside the rail. Route it
+    // into the SAME six live XY modes; never capture its old trailing UP.
+    LaunchedEffect(openRequestEpoch) {
+        if (openRequestEpoch > 0 && !expanded) {
+            menuArmed = false
+            onBeforeOpen()
+            expanded = true
         }
     }
     val railShape = RoundedCornerShape(12.dp)

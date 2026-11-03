@@ -33,8 +33,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
@@ -77,6 +80,9 @@ fun ReferenceSoundControls(
     compact: Boolean = false,
     showExpressionRibbon: Boolean = true,
     synthSampleRate: Int = 48_000,
+    /** Existing destinations only; null leaves standalone previews read-only. */
+    onOpenMiniSignal: ((ReferenceMiniSignalDestination) -> Unit)? = null,
+    canEditModulationRack: Boolean = false,
 ) {
     fun param(id: ParameterId): Float =
         ReferenceSoundUiModel.normalized(parameters[id] ?: .5f)
@@ -193,6 +199,9 @@ fun ReferenceSoundControls(
                 tag = "referenceMiniEnv",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
+                onOpen = onOpenMiniSignal
+                    ?.takeIf { ReferenceMiniSignalDestination.ENVELOPE.canOpen(canEditModulationRack) }
+                    ?.let { handler -> { handler(ReferenceMiniSignalDestination.ENVELOPE) } },
             )
             ReferenceMiniSignal(
                 title = "LFO",
@@ -202,6 +211,9 @@ fun ReferenceSoundControls(
                 tag = "referenceMiniLfo",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
+                onOpen = onOpenMiniSignal
+                    ?.takeIf { ReferenceMiniSignalDestination.LFO.canOpen(canEditModulationRack) }
+                    ?.let { handler -> { handler(ReferenceMiniSignalDestination.LFO) } },
             )
             ReferenceMiniSignal(
                 title = "EXPR",
@@ -211,6 +223,9 @@ fun ReferenceSoundControls(
                 tag = "referenceMiniExpr",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
+                onOpen = onOpenMiniSignal
+                    ?.takeIf { ReferenceMiniSignalDestination.EXPRESSION.canOpen(canEditModulationRack) }
+                    ?.let { handler -> { handler(ReferenceMiniSignalDestination.EXPRESSION) } },
             )
             ReferenceMiniSignal(
                 title = "MOD",
@@ -220,6 +235,9 @@ fun ReferenceSoundControls(
                 tag = "referenceMiniMod",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
+                onOpen = onOpenMiniSignal
+                    ?.takeIf { ReferenceMiniSignalDestination.MODULATION.canOpen(canEditModulationRack) }
+                    ?.let { handler -> { handler(ReferenceMiniSignalDestination.MODULATION) } },
             )
         }
     }
@@ -614,20 +632,41 @@ private fun ReferenceMiniSignal(
     tag: String,
     modifier: Modifier,
     height: Dp,
+    onOpen: (() -> Unit)?,
 ) {
     Column(
         modifier
             .height(height)
-            .border(1.dp, tint.copy(alpha = .42f), RoundedCornerShape(8.dp))
+            .border(
+                1.dp, tint.copy(alpha = if (onOpen != null) .72f else .42f),
+                RoundedCornerShape(8.dp),
+            )
             .background(
                 Brush.verticalGradient(listOf(ReferenceGlass, ReferenceBlack)),
                 RoundedCornerShape(8.dp),
+            )
+            // A real full-card finger target. Use a separate semantics click
+            // so the original caption Text nodes remain discoverable to tests
+            // and assistive navigation (clickable would merge them away).
+            .then(
+                if (onOpen != null) Modifier.pointerInput(onOpen) {
+                    detectTapGestures(onTap = { onOpen() })
+                } else Modifier
             )
             .padding(horizontal = 5.dp, vertical = 5.dp)
             .testTag(tag)
             .semantics {
                 contentDescription = title + " configured preview, " + caption +
-                    ". This is not sampled audio"
+                    ". This is not sampled audio. " +
+                    (if (onOpen != null) "Double tap to edit " + title + "." else
+                        "Editing unavailable in this view.")
+                if (onOpen != null) {
+                    role = Role.Button
+                    onClick(label = "Edit " + title + " sound controls") {
+                        onOpen()
+                        true
+                    }
+                }
             },
         verticalArrangement = Arrangement.SpaceBetween,
     ) {

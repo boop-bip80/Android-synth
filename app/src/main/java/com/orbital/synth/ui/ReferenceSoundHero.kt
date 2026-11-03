@@ -118,7 +118,11 @@ fun ReferenceSoundHero(
     xyMode: ReferenceXyMode? = null,
     onXyModeSelected: ((ReferenceXyMode) -> Unit)? = null,
     synthSampleRate: Int = 48_000,
+    /** Actual host editor destination, never a visual-only modal or fake control. */
+    onOpenMiniSignal: ((ReferenceMiniSignalDestination) -> Unit)? = null,
+    canEditModulationRack: Boolean = false,
 ) {
+    var miniPaletteOpenEpoch by remember { mutableIntStateOf(0) }
     var localModeName by rememberSaveable {
         mutableStateOf(ReferenceXyMode.PERFORMANCE.name)
     }
@@ -479,6 +483,7 @@ fun ReferenceSoundHero(
                 ribbonHeight = ribbonHeight,
                 onBeforeOpen = { haltGestureAndNavigate {} },
                 onBeforeSelect = { haltGestureAndNavigate {} },
+                openRequestEpoch = miniPaletteOpenEpoch,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -493,6 +498,18 @@ fun ReferenceSoundHero(
             compact = compact,
             showExpressionRibbon = false,
             synthSampleRate = synthSampleRate,
+            onOpenMiniSignal = onOpenMiniSignal?.let { openHostEditor ->
+                { destination ->
+                    if (destination == ReferenceMiniSignalDestination.EXPRESSION) {
+                        // The same live 6-mode rail owns XY route selection.
+                        // Invalidate any held orb/ribbon finger before reopening.
+                        miniPaletteOpenEpoch++
+                    } else {
+                        openHostEditor(destination)
+                    }
+                }
+            },
+            canEditModulationRack = canEditModulationRack,
         )
     }
 }
