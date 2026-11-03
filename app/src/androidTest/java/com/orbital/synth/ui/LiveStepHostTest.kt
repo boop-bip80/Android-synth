@@ -10,6 +10,7 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
@@ -22,10 +23,10 @@ import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
-import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import com.orbital.synth.preset.PatchOutcome
 import com.orbital.synth.preset.UserPatchRepository
 import com.orbital.synth.core.preset.PatchCodec
+import com.orbital.synth.core.preset.FactoryPresets
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -128,8 +129,16 @@ class LiveStepHostTest {
             assertEquals(synth.modulationSteps, PatchCodec.decode(text).modulationSteps)
             assertEquals(route, PatchCodec.decode(text).modulationRoutes[0])
             val expected = synth.modulationSteps
-            synth.setModulationSteps(ModulationStepConfig())
-            assertTrue(!synth.modulationSteps.enabled)
+            // Real user-bank activation must clear V5 STEP when an older factory
+            // patch has no STEP field; reactivating the saved V5 restores it.
+            val factory = FactoryPresets.ALL.first()
+            assertTrue("Factory migration fixture must predate V5 STEP",
+                factory.modulationSteps == null)
+            val legacy = runBlocking { repository.activate(factory.id) }
+            assertTrue("Legacy factory activation failed: " + legacy,
+                legacy is PatchOutcome.Success)
+            assertTrue("Older patch leaked the previous STEP modulation",
+                !synth.modulationSteps.enabled)
             val restored = runBlocking { repository.activate(id) }
             assertTrue("Disk-backed STEP recall failed: " + restored, restored is PatchOutcome.Success)
             assertEquals(expected, synth.modulationSteps)
@@ -157,10 +166,16 @@ class MainActivityStepHostTest {
                 .single()
             assertTrue("Actual MainActivity STEP touch did not update live state: " + changed,
                 changed.contains("STEP pad 1") && changed.contains("-0."))
+            // The connected host must also arm the real STEP clock and retain
+            // that source state while the keyboardless performance view owns UI.
+            compose.onNodeWithContentDescription("Toggle STEP modulator")
+                .performScrollTo().performClick()
+            compose.onNodeWithText("STEP CLOCK ARMED", substring = true).assertExists()
             compose.onNodeWithTag("immersiveModeToggle").performClick()
             compose.onNodeWithTag("immersiveStage").assertExists()
             compose.onNodeWithTag("immersiveExit").performClick()
             compose.onNodeWithTag("modStepRhythmPanel").assertExists()
+            compose.onNodeWithText("STEP CLOCK ARMED", substring = true).assertExists()
             val returned = compose.onNodeWithTag("modStepPad0")
                 .fetchSemanticsNode().config[SemanticsProperties.ContentDescription]
                 .single()
