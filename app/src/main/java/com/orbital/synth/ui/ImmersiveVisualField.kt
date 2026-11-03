@@ -327,6 +327,43 @@ fun ImmersiveVisualField(
             )
         }
 
+        // A visible relationship between the finger and sounding orbit: nine
+        // high-curvature light tendons bend toward the actual touched pixel.
+        // Disconnected/idle surfaces never draw a remembered finger position.
+        if (pressure > .01f && conduitEnergy > .01f) {
+            val dx = touch.x - c.x
+            val dy = touch.y - c.y
+            val distance = kotlin.math.sqrt(dx * dx + dy * dy).coerceAtLeast(1f)
+            val tangent = Offset(-dy / distance, dx / distance)
+            val touchToCore = Offset(dx, dy)
+            for (strand in 0 until ImmersiveLightMath.CONDUIT_STRANDS) {
+                val lane = (strand - 4) * .25f
+                val start = c + tangent * (lane * radius * .08f)
+                val end = touch + tangent * (lane * shortEdge * .009f)
+                val twist = sin(t * .62f + strand * .79f + timbre * 3.1f) *
+                    shortEdge * (.022f + motion * .02f)
+                val ctrl1 = c + touchToCore * .28f + tangent * (lane * radius * .22f + twist)
+                val ctrl2 = c + touchToCore * .72f -
+                    tangent * (lane * radius * .12f + twist * .48f)
+                val filament = Path().apply {
+                    moveTo(start.x, start.y)
+                    cubicTo(ctrl1.x, ctrl1.y, ctrl2.x, ctrl2.y, end.x, end.y)
+                }
+                val tint = when (strand % 4) {
+                    0 -> amber
+                    1 -> ultraviolet
+                    2 -> cyan
+                    else -> livingHue
+                }
+                drawPath(filament, tint.copy(alpha = .032f * conduitEnergy),
+                    style = Stroke(width = 15f * stroke, cap = StrokeCap.Round))
+                drawPath(filament, tint.copy(alpha = .24f * conduitEnergy),
+                    style = Stroke(width = 2.8f * stroke, cap = StrokeCap.Round))
+                drawPath(filament, ice.copy(alpha = .41f * conduitEnergy),
+                    style = Stroke(width = .7f * stroke, cap = StrokeCap.Round))
+            }
+        }
+
         // Live timbre ribbons: phase and fold depend on the controls, not random noise.
         // 8 x 96 points is a bounded amount of geometry even on small/old phones.
         val t = animatedPhase * turn
