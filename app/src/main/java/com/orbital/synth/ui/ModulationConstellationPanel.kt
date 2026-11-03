@@ -150,8 +150,19 @@ fun ModulationConstellationPanel(
             }
         }
 
-        Text("EIGHT LFO OSCILLATORS  /  SWIPE", color = OrbitalPalette.Text,
-            fontSize = 11.sp, letterSpacing = .7.sp)
+        // Eight real atomic LFO snapshots and their existing *cable* depths:
+        // this garden never invents a per-LFO amplitude field or UI phase clock.
+        LfoConfigurationGarden(
+            lfos = lanes,
+            routes = patch,
+            tempoBpm = bpm,
+            onLfoChange = onLfoChange,
+            onRouteChange = onRouteChange,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Text("EIGHT LFO OSCILLATORS  /  PRECISION CARDS  /  SWIPE",
+            color = OrbitalPalette.Text, fontSize = 11.sp, letterSpacing = .7.sp)
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
                 .testTag("modulationLfoCarousel"),
