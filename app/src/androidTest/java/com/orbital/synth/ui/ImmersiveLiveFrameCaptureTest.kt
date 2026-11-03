@@ -2,6 +2,8 @@ package com.orbital.synth.ui
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -80,11 +82,55 @@ class ImmersiveLiveFrameCaptureTest {
         return field.get(compose.activity) as AndroidAudioOutput
     }
 
+    /** True window focus is an OS/surface state; Compose semantics alone can be
+     *  inspected while a launcher/system overlay owns the physical screen.
+     *  An 8-second wait covers transient emulator focus handoff, never an ANR
+     *  or an arbitrary foreign window. Real focus is required on every capture.
+     */
+    private fun requireFocusedActivity(phase: String) {
+        val decor = compose.activity.window.decorView
+        val deadline = SystemClock.uptimeMillis() + 8_000L
+        var focused = false
+        do {
+            if (compose.activity.hasWindowFocus() && decor.isShown &&
+                decor.width >= 600 && decor.height >= 1000) {
+                focused = true
+                break
+            }
+            Thread.sleep(125L)
+        } while (SystemClock.uptimeMillis() < deadline)
+
+        if (!focused) {
+            val details = runCatching {
+                val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation
+                    .executeShellCommand("dumpsys window")
+                val matches = mutableListOf<String>()
+                ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { reader ->
+                    reader.forEachLine { line ->
+                        if (matches.size < 20 && listOf(
+                            "mCurrentFocus", "mFocusedApp", "mTopFullscreenOpaqueWindowState",
+                            "Window #", "Application Not Responding"
+                        ).any { line.contains(it) }) matches.add(line.trim())
+                    }
+                }
+                matches.joinToString(" | ").take(1250)
+            }.getOrElse { "dumpsys window unavailable: " + it.javaClass.simpleName }
+            throw AssertionError(
+                "Stage app Activity did not reacquire real foreground focus within 8s" +
+                    " during " + phase + "; hasWindowFocus=" + compose.activity.hasWindowFocus() +
+                    "; decorShown=" + decor.isShown + "; size=" + decor.width + "x" + decor.height +
+                    "; focusedWindows=" + details
+            )
+        }
+        println("ORBITAL_STAGE_FOCUS_VERIFIED " + phase + " app=MainActivity")
+    }
+
     @Test fun photographsVividStageDuringRealAudioTrackHeldNoteAndReleasesSafely() {
         val audio = realAudioTrack()
         compose.waitUntil(10_000L) { audio.isRunning }
         assertTrue("The actual Android audio worker must stream", audio.isRunning)
 
+        requireFocusedActivity("before stage entry")
         compose.onNodeWithTag("immersiveModeToggle").performClick()
         compose.onNodeWithTag("immersiveStage").assertIsDisplayed()
         compose.onNodeWithTag("immersiveVisualField").assertExists()
@@ -99,11 +145,7 @@ class ImmersiveLiveFrameCaptureTest {
         compose.mainClock.advanceTimeBy(180L)
         compose.waitForIdle()
         Thread.sleep(260L)
-        val decor = compose.activity.window.decorView
-        val ownsFocus = compose.activity.hasWindowFocus()
-        println("ORBITAL_STAGE_FOREGROUND app_window_focus=" + ownsFocus +
-            " decor_shown=" + decor.isShown + " decor_size=" + decor.width + "x" + decor.height)
-        assertTrue("Stage app Activity does not own window focus", ownsFocus && decor.isShown)
+        requireFocusedActivity("before idle stage framebuffer")
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val idleBitmap = checkNotNull(automation.takeScreenshot()) {
             "Android UiAutomation could not capture the real idle stage"
@@ -148,10 +190,12 @@ class ImmersiveLiveFrameCaptureTest {
             compose.waitForIdle()
             Thread.sleep(220L)
 
+            requireFocusedActivity("before held-note stage framebuffer")
             val liveBitmap = checkNotNull(automation.takeScreenshot()) {
                 "Android UiAutomation failed during the live held-note gesture"
             }
             try {
+                requireFocusedActivity("after held-note stage framebuffer")
                 saveRealFrame(liveBitmap, "orbital-stage-held-performance.png")
                 val live = analyzeStage(liveBitmap)
                 println("ORBITAL_STAGE_LIVE_PIXEL_CORNERS " +
