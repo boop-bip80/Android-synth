@@ -22,7 +22,6 @@ import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
-import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import com.orbital.synth.preset.PatchOutcome
 import com.orbital.synth.preset.UserPatchRepository
 import com.orbital.synth.core.preset.PatchCodec
