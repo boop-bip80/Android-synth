@@ -34,7 +34,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Validate emulator harness syntax
-        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh && bash -n .github/workflows/ci-immersive-stage.sh
+        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh && bash -n .github/workflows/ci-immersive-stage.sh && bash -n .github/workflows/ci-oscillator-workbench.sh
       - name: Host tests, lint, app APK and instrumentation test APK
         run: gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
       - name: Upload debug APK
@@ -121,7 +121,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           # The runner executes each nonempty script line in a separate `sh -c`.
           # Use one Bash command so traps, pipefail and exit codes work together.
-          script: ${{ matrix.suite == 'compact' && 'bash .github/workflows/ci-compact-geometry.sh' || 'bash .github/workflows/ci-emulator.sh && bash .github/workflows/ci-immersive-stage.sh && bash .github/workflows/ci-landscape.sh' }}
+          script: ${{ matrix.suite == 'compact' && 'bash .github/workflows/ci-compact-geometry.sh' || 'bash .github/workflows/ci-emulator.sh && bash .github/workflows/ci-immersive-stage.sh && bash .github/workflows/ci-oscillator-workbench.sh && bash .github/workflows/ci-landscape.sh' }}
       - name: Upload real emulator screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -132,6 +132,7 @@ jobs:
             artifacts/orbital-compact-emulator.png
             artifacts/orbital-landscape-emulator.png
             artifacts/orbital-immersive-emulator.png
+            artifacts/orbital-oscillator-workbench.png
             artifacts/compact-350-sound.png
             artifacts/compact-350-fx.png
             artifacts/compact-350-sound-return.png
@@ -185,6 +186,13 @@ jobs:
             artifacts/immersive-emulator-logcat.txt
             artifacts/immersive-emulator-phase.txt
             artifacts/immersive-emulator-summary.txt
+            artifacts/oscillator-capture-phase.txt
+            artifacts/oscillator-capture-summary.txt
+            artifacts/oscillator-capture-logcat.txt
+            artifacts/oscillator-activity-launch.txt
+            artifacts/oscillator-window-state.txt
+            artifacts/oscillator-*.xml
+            artifacts/oscillator-*-dump.txt
             artifacts/immersive-gesture.txt
             artifacts/immersive-activity-launch.txt
             artifacts/immersive-window-state.txt
