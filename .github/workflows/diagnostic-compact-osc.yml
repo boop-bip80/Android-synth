@@ -36,23 +36,9 @@ jobs:
           printf '\n=== JUNIT COMPACT350 FAILURE XML ===\n'
           find results -type f -name '*.xml' -print0 | while IFS= read -r -d '' file; do
             printf 'XML file %s\n' "$file"
-            python3 - "$file" <<'PY'
-import sys
-from xml.etree import ElementTree as ET
-path=sys.argv[1]
-try:
-    doc=ET.parse(path)
-    for case in doc.findall(".//testcase"):
-        print("CASE",case.attrib)
-        for tag in ("failure","error","skipped"):
-            for elem in case.findall(tag):
-                print("RESULT",tag,elem.attrib)
-                print((elem.text or "")[:9000])
-except Exception as exc:
-    print("XML_READ_FAILED",repr(exc))
-PY
+            python3 -c 'import sys,xml.etree.ElementTree as E; d=E.parse(sys.argv[1]); print([(c.attrib, [(n.tag, n.attrib, (n.text or "")[:4000]) for n in c if n.tag in ("failure","error","skipped")]) for c in d.findall(".//testcase")])' "$file"
           done
-          printf '\n=== INSTRUMENTATION HOST / CORE REASONS ===\n'
+          printf '\n=== HOST MEMORY BEFORE NATIVE EMULATOR EXIT ===\n'
           find diagnostics -type f -name '*host-memory*' -print0 | while IFS= read -r -d '' file; do
             tail -n 65 "$file" | cut -c 1-240
           done
