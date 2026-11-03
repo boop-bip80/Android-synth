@@ -74,7 +74,7 @@ fi
 printf 'extract-actual-device-frames\n' > "$phase"
 # Android UiAutomation sampled both actual display frames. Read private bytes
 # written by the real debug app; no host-side rendering or mock alternative.
-for frame in orbital-stage-idle-proof.png orbital-stage-held-performance.png; do
+for frame in orbital-focus-idle-black.png orbital-focus-held-note.png; do
   extracted=0
   for attempt in 1 2; do
     if timeout 30s adb exec-out run-as com.orbital.synth cat "files/$frame" > "artifacts/$frame" &&
@@ -88,11 +88,11 @@ for frame in orbital-stage-idle-proof.png orbital-stage-held-performance.png; do
   done
   [[ "$extracted" == 1 ]] || { echo "No genuine Android screenshot bytes: $frame" >&2; exit 1; }
 done
-timeout 15s adb exec-out run-as com.orbital.synth cat files/orbital-stage-live-evidence.txt \
+timeout 15s adb exec-out run-as com.orbital.synth cat files/orbital-focus-live-evidence.txt \
   > artifacts/held-stage-capture-evidence.txt
 test -s artifacts/held-stage-capture-evidence.txt
 
-python3 - artifacts/orbital-stage-idle-proof.png artifacts/orbital-stage-held-performance.png \
+python3 - artifacts/orbital-focus-idle-black.png artifacts/orbital-focus-held-note.png \
   artifacts/orbital-emulator.png artifacts/held-stage-capture-evidence.txt "$screen_w" "$screen_h" <<'PY'
 import hashlib
 import struct
@@ -140,8 +140,11 @@ live_visible = int(values["live_visible"])
 idle_colorful = int(values["idle_colorful"])
 live_colorful = int(values["live_colorful"])
 sample_count = int(values["live_samples"])
-# This first proof captures the normal STAGE, which intentionally has idle
-# orbital artwork; true blank-black FOCUS is a separately gated mode.
+idle_samples = int(values["idle_samples"])
+if idle_visible > idle_samples//100 or idle_colorful > idle_samples//500:
+    raise SystemExit("Untouched FOCUS was not genuinely black")
+# The clean-canvas FOCUS mode is deliberately dark until input; it must
+# show actual PCM-driven light rather than a fake idle screenshot.
 if live_visible < idle_visible + max(100,sample_count//400):
     raise SystemExit("Held-note frame has no credible extra illuminated pixels")
 if live_colorful < idle_colorful + max(50,sample_count//800):
@@ -152,6 +155,6 @@ print(f"PASS real AndroidAudioTrack PCM and held-note colored field; PNG {width}
       f"idle={idle_bytes} live={live_bytes} bytes SHA256={sha(live)} "
       f"colorful={idle_colorful}->{live_colorful} visible={idle_visible}->{live_visible}")
 PY
-printf 'held_note=PCM_ACCEPTED\nvisual_field=LIVE_VISIBLE\nnote_up_and_exit=PASS\nscreenshot_sha256=%s\n' \
-  "$(sha256sum artifacts/orbital-stage-held-performance.png | cut -d' ' -f1)" >> "$summary"
+printf 'mode=FOCUS\nheld_note=PCM_ACCEPTED\nvisual_field=LIVE_VISIBLE\nback_revealed_exit=PASS\nnote_up_and_exit=PASS\nscreenshot_sha256=%s\n' \
+  "$(sha256sum artifacts/orbital-focus-held-note.png | cut -d' ' -f1)" >> "$summary"
 printf 'complete\n' > "$phase"
