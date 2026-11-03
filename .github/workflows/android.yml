@@ -34,7 +34,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Validate emulator harness syntax
-        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-landscape.sh
+        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh
       - name: Host tests, lint, app APK and instrumentation test APK
         run: gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
       - name: Upload debug APK
@@ -79,10 +79,16 @@ jobs:
           retention-days: 14
 
   emulator:
-    name: API 35 emulator, smoke test and screenshot
+    name: API 35 ${{ matrix.suite }} tests and emulator screenshots
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [general, compact]
+    env:
+      ORBITAL_TEST_SUITE: ${{ matrix.suite }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -110,21 +116,24 @@ jobs:
           cores: 2
           ram-size: 3072M
           heap-size: 512M
-          disk-size: 6000M
+          disk-size: ${{ matrix.suite == 'compact' && '4000M' || '6000M' }}
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           # The runner executes each nonempty script line in a separate `sh -c`.
           # Use one Bash command so traps, pipefail and exit codes work together.
-          script: bash .github/workflows/ci-emulator.sh && bash .github/workflows/ci-landscape.sh
+          script: ${{ matrix.suite == 'compact' && 'bash .github/workflows/ci-compact-geometry.sh' || 'bash .github/workflows/ci-emulator.sh && bash .github/workflows/ci-landscape.sh' }}
       - name: Upload real emulator screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: orbital-api35-emulator-screenshot
+          name: orbital-api35-${{ matrix.suite }}-emulator-screenshot
           path: |
             artifacts/orbital-emulator.png
             artifacts/orbital-compact-emulator.png
             artifacts/orbital-landscape-emulator.png
+            artifacts/compact-350-sound.png
+            artifacts/compact-350-fx.png
+            artifacts/compact-350-sound-return.png
           # On a green job, a missing deliverable is a CI failure; on a failed
           # build/emulator run, retain best-effort artifact diagnostics.
           if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
@@ -133,9 +142,18 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: orbital-api35-emulator-diagnostics
+          name: orbital-api35-${{ matrix.suite }}-emulator-diagnostics
           path: |
             artifacts/emulator-logcat.txt
+            artifacts/compact-test-live-logcat.txt
+            artifacts/instrumentation-suite.txt
+            artifacts/compact-e2e-phase.txt
+            artifacts/compact-e2e-summary.txt
+            artifacts/compact-350-logcat.txt
+            artifacts/compact-350-launch.txt
+            artifacts/compact-350-window.txt
+            artifacts/compact-350-*.xml
+            artifacts/compact-350-*-dump.txt
             artifacts/activity-state.txt
             artifacts/activity-launch.txt
             artifacts/diagnostic-screen.png
@@ -164,10 +182,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload instrumentation results
-        if: always()
+        if: always() && matrix.suite == 'general'
         uses: actions/upload-artifact@v4
         with:
-          name: orbital-android-test-results
+          name: orbital-${{ matrix.suite }}-android-test-results
           path: |
             app/build/outputs/androidTest-results/
             app/build/reports/androidTests/

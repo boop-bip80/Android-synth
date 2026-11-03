@@ -82,28 +82,6 @@ class OrbitalScreenTest {
         }
     }
 
-    @Test fun keyboardRemainsAvailableInCompactHeight() {
-        compose.setContent {
-            Box(Modifier.fillMaxWidth().height(350.dp)) {
-                OrbitalScreen(
-                    state = OrbitalUiState(),
-                    onNoteOn = {},
-                    onNoteOff = {},
-                    onParameterChange = { _, _ -> },
-                    onModeChange = {},
-                    onOctaveChange = {},
-                )
-            }
-        }
-        val keyboard = compose.onNodeWithContentDescription(
-            "Multitouch piano keyboard",
-            substring = true,
-        )
-        keyboard.assertIsDisplayed()
-        compose.onNodeWithContentDescription("Tab FX").performClick()
-        keyboard.assertIsDisplayed()
-    }
-
     @Test fun presetArrowsAreAccessibleAndCallNavigation() {
         var previous = 0
         var next = 0

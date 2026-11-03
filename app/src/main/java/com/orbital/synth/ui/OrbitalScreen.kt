@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -60,9 +61,12 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.text.font.FontWeight
@@ -78,6 +82,9 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 
 enum class PlayMode { POLY, MONO, LEGATO }
+
+/** UI-level direction; the Android host maps this to the portable arp engine. */
+enum class ArpDirection { UP, DOWN, UP_DOWN, AS_PLAYED, RANDOM, CHORD }
 
 /** The persistence layer owns IDs and patch data; UI needs only selectable metadata. */
 data class PatchChoice(val id: String, val name: String, val isFactory: Boolean)
@@ -104,6 +111,13 @@ data class OrbitalUiState(
     val sequenceChoices: List<SequenceChoice> = emptyList(),
     val activeSequenceId: String? = null,
     val patchFeedback: String? = null,
+    val arpEnabled: Boolean = false,
+    val arpDirection: ArpDirection = ArpDirection.UP,
+    /** Rate in steps per quarter-note beat. Supported detents are 1, 2, 4, and 8. */
+    val arpRate: Int = 4,
+    val arpLatch: Boolean = false,
+    /** A normalized 0..1 swing amount, interpreted by the host transport. */
+    val arpSwing: Float = 0f,
 )
 
 private enum class Tab(val title: String) {
@@ -142,6 +156,11 @@ fun OrbitalScreen(
     onSequencerLengthChange: ((Int) -> Unit)? = null,
     onSequencerStepNotesChange: ((Int, List<SequencerNote>) -> Unit)? = null,
     onSaveSequence: ((String) -> Unit)? = null,
+    onArpEnabledChange: ((Boolean) -> Unit)? = null,
+    onArpDirectionChange: ((ArpDirection) -> Unit)? = null,
+    onArpRateChange: ((Int) -> Unit)? = null,
+    onArpLatchChange: ((Boolean) -> Unit)? = null,
+    onArpSwingChange: ((Float) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var compactGraphExpanded by remember { mutableStateOf(false) }
@@ -203,7 +222,6 @@ fun OrbitalScreen(
     }
 
     val editorScroll = rememberScrollState()
-    LaunchedEffect(selectedTab) { editorScroll.scrollTo(0) }
 
     BoxWithConstraints(
         Modifier
@@ -211,9 +229,16 @@ fun OrbitalScreen(
             .background(MainGradient)
             .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
-        // These atmospheric gradients are intentionally decorative. The live orbit below
-        // is still the signal-controlled, interactive visualization.
-        Canvas(Modifier.fillMaxSize()) {
+        val compactHeight = maxHeight < 500.dp
+        // Avoid concurrent scroll reset while a 350dp performance viewport changes
+        // editor content; preserving scroll still permits deliberate user scrolling.
+        LaunchedEffect(selectedTab, compactHeight) {
+            if (!compactHeight) editorScroll.scrollTo(0)
+        }
+        // The short-landscape performance layout has a strict vertical budget.
+        // Its waveform panel remains scrollable; the keyboard must retain space.
+        // Skip decorative full-screen gradients in that mode to reduce GPU work.
+        if (!compactHeight) Canvas(Modifier.fillMaxSize()) {
             val cyanCenter = Offset(size.width * .06f, size.height * .22f)
             val violetCenter = Offset(size.width * .96f, size.height * .46f)
             val lightRadius = maxOf(size.width, size.height) * .72f
@@ -239,24 +264,29 @@ fun OrbitalScreen(
                 x += spacing
             }
         }
-        val compactHeight = maxHeight < 500.dp
-        val compactOrbitLayout = maxWidth < 380.dp || LocalDensity.current.fontScale >= 1.2f
+        val compactOrbitLayout = compactHeight || maxWidth < 380.dp || LocalDensity.current.fontScale >= 1.2f
         Column(
-            Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalArrangement = Arrangement.spacedBy(if (compactHeight) 6.dp else if (compactOrbitLayout) 8.dp else 12.dp),
+            Modifier.fillMaxSize().padding(
+                horizontal = if (compactHeight) 8.dp else 12.dp,
+                vertical = if (compactHeight) 3.dp else 9.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(
+                if (compactHeight) 2.dp else if (compactOrbitLayout) 8.dp else 12.dp,
+            ),
         ) {
         Header(
             patch = state.patchName,
             onOpenLibrary = { showPatchLibrary = true },
             libraryEnabled = onSavePatch != null || onSelectPatch != null,
+            compact = compactHeight,
         )
         Row(
             Modifier
                 .fillMaxWidth()
                 .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .55f), RoundedCornerShape(16.dp))
                 .background(OrbitalPalette.Void.copy(alpha = .74f), RoundedCornerShape(16.dp))
-                .padding(3.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(if (compactHeight) 0.dp else 3.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compactHeight) 2.dp else 4.dp),
         ) {
             Tab.entries.forEachIndexed { index, tab ->
                 val active = selectedTab == tab
@@ -280,13 +310,26 @@ fun OrbitalScreen(
                             ) else Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent)),
                             RoundedCornerShape(12.dp),
                         )
-                        .semantics {
-                            selected = active
+                        .selectable(
+                            selected = active,
+                            role = Role.Tab,
+                            onClick = { selectedTab = tab },
+                        )
+                        // A single actionable accessibility node must own its
+                        // label, selection, and click action. Nested semantics
+                        // otherwise make UIAutomator see a non-clickable label
+                        // with selected=false even when the tab is active.
+                        .clearAndSetSemantics {
                             contentDescription = "Tab " + tab.title
+                            selected = active
+                            role = Role.Tab
+                            onClick(label = "Open " + tab.title) {
+                                selectedTab = tab
+                                true
+                            }
                         }
-                        .clickable(role = Role.Tab) { selectedTab = tab }
-                        .heightIn(min = 48.dp)
-                        .padding(vertical = 5.dp),
+                        .heightIn(min = if (compactHeight) 40.dp else 48.dp)
+                        .padding(vertical = if (compactHeight) 3.dp else 5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
@@ -332,6 +375,14 @@ fun OrbitalScreen(
                     onNextPatch = onNextPatch,
                     engineName = engineChoice.name,
                 )
+                if (compactHeight) {
+                    CompactSoundPanel(
+                        parameter = parameter,
+                        engineId = engineId,
+                        engineValue = engineValue,
+                        onParameterChange = onParameterChange,
+                    )
+                } else {
                 if (compactOrbitLayout) {
                     Box(Modifier.fillMaxWidth().height(148.dp).testTag("compactOrbitViewport")) {
                         OrbitalDisplay(
@@ -503,6 +554,7 @@ fun OrbitalScreen(
                         SignalTile("MOD", move, OrbitalPalette.Violet, Modifier.fillMaxWidth())
                     }
                 }
+                }
             }
             Tab.PLAY -> PlayPanel(
                 state.playMode,
@@ -511,6 +563,12 @@ fun OrbitalScreen(
                 parameter(ParameterId.GLIDE),
                 onModeChange,
                 onParameterChange,
+                state,
+                onArpEnabledChange,
+                onArpDirectionChange,
+                onArpRateChange,
+                onArpLatchChange,
+                onArpSwingChange,
             )
             Tab.SEQ -> SequencerPanel(
                 if (externalSequencer) List(visibleStepCount) { it in state.enabledSteps }
@@ -539,35 +597,67 @@ fun OrbitalScreen(
                 ((state.octave + 1) * 12).coerceIn(0, 127),
                 onSaveSequence,
             )
-            Tab.FX -> FxPanel(parameter, onParameterChange)
+            Tab.FX -> FxPanel(parameter, onParameterChange, compactHeight)
         }
         }
 
-        // The keyboard stays reachable in portrait and compact landscape layouts.
+        // A short landscape viewport reserves its last 82dp for actual playable
+        // keys. Octave controls become a 36dp utility strip above the keyboard;
+        // full 48dp voice-mode targets remain in the PLAY editor.
+        if (compactHeight) {
+            Row(
+                Modifier.fillMaxWidth().height(36.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Label("OCT")
+                CompactOctaveButton(
+                    symbol = "−", description = "Lower octave",
+                    enabled = state.octave > 0,
+                    onClick = { onOctaveChange((state.octave - 1).coerceAtLeast(0)) },
+                )
+                Text(
+                    state.octave.toString(),
+                    color = OrbitalPalette.Text,
+                    fontSize = 12.sp,
+                )
+                CompactOctaveButton(
+                    symbol = "+", description = "Raise octave",
+                    enabled = state.octave < 8,
+                    onClick = { onOctaveChange((state.octave + 1).coerceAtMost(8)) },
+                )
+                Spacer(Modifier.weight(1f))
+                Label("MODE / " + state.playMode.name)
+            }
+        }
+
+        // Editor content scrolls independently; keyboard never becomes scrollable.
         OrbitalKeyboard(
             octave = state.octave.coerceIn(0, 8),
             onNoteOn = onNoteOn,
             onNoteOff = onNoteOff,
             modifier = Modifier.fillMaxWidth(),
-            preferredHeight = if (compactHeight) 94.dp else if (compactOrbitLayout) 110.dp else null,
+            preferredHeight = if (compactHeight) 82.dp else if (compactOrbitLayout) 110.dp else null,
         )
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            Label("OCT")
-            Pill("−", false, { onOctaveChange((state.octave - 1).coerceAtLeast(0)) }, description = "Lower octave", enabled = state.octave > 0)
-            Text(
-                state.octave.toString(),
-                color = OrbitalPalette.Text,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(horizontal = 2.dp),
-            )
-            Pill("+", false, { onOctaveChange((state.octave + 1).coerceAtMost(8)) }, description = "Raise octave", enabled = state.octave < 8)
-            Spacer(Modifier.weight(1f))
-            PlayMode.entries.forEach { mode ->
-                Pill(mode.name, state.playMode == mode, { onModeChange(mode) }, role = Role.RadioButton)
+        if (!compactHeight) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Label("OCT")
+                Pill("−", false, { onOctaveChange((state.octave - 1).coerceAtLeast(0)) }, description = "Lower octave", enabled = state.octave > 0)
+                Text(
+                    state.octave.toString(),
+                    color = OrbitalPalette.Text,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 2.dp),
+                )
+                Pill("+", false, { onOctaveChange((state.octave + 1).coerceAtMost(8)) }, description = "Raise octave", enabled = state.octave < 8)
+                Spacer(Modifier.weight(1f))
+                PlayMode.entries.forEach { mode ->
+                    Pill(mode.name, state.playMode == mode, { onModeChange(mode) }, role = Role.RadioButton)
+                }
             }
         }
         Spacer(Modifier.height(if (compactHeight) 0.dp else 6.dp))
@@ -987,12 +1077,40 @@ private fun PresetArrow(
 }
 
 @Composable
-private fun Header(patch: String, onOpenLibrary: () -> Unit, libraryEnabled: Boolean) {
+private fun CompactOctaveButton(
+    symbol: String,
+    description: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .width(42.dp)
+            .height(36.dp)
+            .border(
+                1.dp,
+                if (enabled) OrbitalPalette.Cyan.copy(alpha = .75f) else OrbitalPalette.PanelEdge,
+                RoundedCornerShape(10.dp),
+            )
+            .background(OrbitalPalette.Panel.copy(alpha = .75f), RoundedCornerShape(10.dp))
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            symbol, color = if (enabled) OrbitalPalette.Cyan else OrbitalPalette.Muted,
+            fontSize = 20.sp, fontWeight = FontWeight.Light,
+        )
+    }
+}
+
+@Composable
+private fun Header(patch: String, onOpenLibrary: () -> Unit, libraryEnabled: Boolean, compact: Boolean) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Canvas(Modifier.size(34.dp)) {
+        Canvas(Modifier.size(if (compact) 28.dp else 34.dp)) {
             val c = center
             val r = size.minDimension * .38f
             drawCircle(OrbitalPalette.Cyan.copy(alpha = .14f), radius = r * 1.24f)
@@ -1030,7 +1148,7 @@ private fun Header(patch: String, onOpenLibrary: () -> Unit, libraryEnabled: Boo
             modifier = Modifier.semantics { contentDescription = "Patch loaded: $patch" })
         Box(
             Modifier
-                .size(48.dp)
+                .size(if (compact) 40.dp else 48.dp)
                 .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .45f), RoundedCornerShape(14.dp))
                 .background(OrbitalPalette.Panel.copy(alpha = .60f), RoundedCornerShape(14.dp))
                 .clickable(enabled = libraryEnabled, role = Role.Button, onClick = onOpenLibrary)
@@ -1098,6 +1216,12 @@ private fun PlayPanel(
     glide: Float,
     onModeChange: (PlayMode) -> Unit,
     onParameterChange: (ParameterId, Float) -> Unit,
+    state: OrbitalUiState,
+    onArpEnabledChange: ((Boolean) -> Unit)?,
+    onArpDirectionChange: ((ArpDirection) -> Unit)?,
+    onArpRateChange: ((Int) -> Unit)?,
+    onArpLatchChange: ((Boolean) -> Unit)?,
+    onArpSwingChange: ((Float) -> Unit)?,
 ) {
     val updateParameter by rememberUpdatedState(onParameterChange)
     Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
@@ -1186,6 +1310,232 @@ private fun PlayPanel(
             }
         }
         ParameterSlider("GLIDE", glide, ParameterId.GLIDE, onParameterChange, "Slow pitch transition")
+        ArpeggiatorPanel(
+            state = state,
+            onEnabledChange = onArpEnabledChange,
+            onDirectionChange = onArpDirectionChange,
+            onRateChange = onArpRateChange,
+            onLatchChange = onArpLatchChange,
+            onSwingChange = onArpSwingChange,
+        )
+    }
+}
+
+
+private val ArpRateDetents = listOf(1, 2, 4, 8)
+private val ArpDirectionLabels = listOf(
+    ArpDirection.UP to "UP",
+    ArpDirection.DOWN to "DOWN",
+    ArpDirection.UP_DOWN to "UP–DOWN",
+    ArpDirection.AS_PLAYED to "AS PLAYED",
+    ArpDirection.RANDOM to "RANDOM",
+    ArpDirection.CHORD to "CHORD",
+)
+
+/**
+ * Fully host-controlled arpeggiator. Buttons without a corresponding host
+ * callback are disabled instead of simulating a running sound engine.
+ */
+@Composable
+internal fun ArpeggiatorPanel(
+    state: OrbitalUiState,
+    onEnabledChange: ((Boolean) -> Unit)?,
+    onDirectionChange: ((ArpDirection) -> Unit)?,
+    onRateChange: ((Int) -> Unit)?,
+    onLatchChange: ((Boolean) -> Unit)?,
+    onSwingChange: ((Float) -> Unit)?,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .testTag("arpeggiatorPanel")
+            .border(1.dp, OrbitalPalette.Violet.copy(alpha = .55f), RoundedCornerShape(18.dp))
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color(0xFF151538), OrbitalPalette.Panel.copy(alpha = .97f), Color(0xFF06122A)),
+                ),
+                RoundedCornerShape(18.dp),
+            )
+            .padding(11.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "ARPEGGIATOR",
+                    color = OrbitalPalette.Text,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.4.sp,
+                )
+                Label("PERFORMANCE / KEYED MOTION")
+            }
+            Box(
+                Modifier
+                    .border(
+                        1.dp,
+                        if (state.arpEnabled) OrbitalPalette.Teal else OrbitalPalette.PanelEdge,
+                        RoundedCornerShape(12.dp),
+                    )
+                    .background(
+                        if (state.arpEnabled) OrbitalPalette.Teal.copy(alpha = .20f)
+                        else OrbitalPalette.Void.copy(alpha = .60f),
+                        RoundedCornerShape(12.dp),
+                    )
+                    .clickable(enabled = onEnabledChange != null, role = Role.Switch) {
+                        onEnabledChange?.invoke(!state.arpEnabled)
+                    }
+                    .semantics {
+                        selected = state.arpEnabled
+                        contentDescription = if (state.arpEnabled) "Turn arpeggiator off"
+                            else "Turn arpeggiator on"
+                    }
+                    .heightIn(min = 48.dp)
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    if (state.arpEnabled) "ARP ON" else "ARP OFF",
+                    color = if (state.arpEnabled) OrbitalPalette.Teal else OrbitalPalette.Muted,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 10.sp,
+                )
+            }
+        }
+
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Label("DIRECTION")
+            Spacer(Modifier.weight(1f))
+            Label("06 MOTION MODES")
+        }
+        ArpDirectionLabels.chunked(3).forEach { rowChoices ->
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                rowChoices.forEach { (direction, label) ->
+                    ArpChoice(
+                        label = label,
+                        active = state.arpDirection == direction,
+                        description = "Arpeggiator direction " + direction.name,
+                        onClick = onDirectionChange?.let { callback ->
+                            { callback(direction) }
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Label("STEPS / BEAT")
+            Spacer(Modifier.weight(1f))
+            Label(state.arpRate.coerceIn(1, 8).toString() + "× SPEED")
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            ArpRateDetents.forEach { rate ->
+                ArpChoice(
+                    label = rate.toString() + "×",
+                    active = state.arpRate == rate,
+                    description = "Arpeggiator rate " + rate + " steps per beat",
+                    onClick = onRateChange?.let { callback -> { callback(rate) } },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("LATCH", color = OrbitalPalette.Text, fontSize = 11.sp, letterSpacing = 1.sp)
+                Label("KEEP THE HELD NOTE POOL AFTER KEY RELEASE")
+            }
+            ArpChoice(
+                label = if (state.arpLatch) "HOLD ON" else "HOLD OFF",
+                active = state.arpLatch,
+                description = if (state.arpLatch) "Disable arpeggiator latch"
+                    else "Enable arpeggiator latch",
+                onClick = onLatchChange?.let { callback ->
+                    { callback(!state.arpLatch) }
+                },
+                modifier = Modifier.width(105.dp),
+            )
+        }
+
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("SWING", color = OrbitalPalette.Text, fontSize = 10.sp, letterSpacing = 1.sp)
+            Spacer(Modifier.weight(1f))
+            Text(
+                percent(state.arpSwing),
+                color = if (onSwingChange == null) OrbitalPalette.Muted else OrbitalPalette.Gold,
+                fontSize = 10.sp,
+            )
+        }
+        Slider(
+            value = state.arpSwing.coerceIn(0f, 1f),
+            onValueChange = { onSwingChange?.invoke(it) },
+            enabled = onSwingChange != null,
+            valueRange = 0f..1f,
+            colors = SliderDefaults.colors(
+                thumbColor = OrbitalPalette.Gold,
+                activeTrackColor = OrbitalPalette.Violet,
+                inactiveTrackColor = OrbitalPalette.PanelEdge,
+            ),
+            modifier = Modifier.semantics { contentDescription = "Arpeggiator swing" },
+        )
+        Label("PLAY THE KEYBOARD TO FEED LIVE NOTES  /  NO PATTERN RECORDING")
+    }
+}
+
+@Composable
+private fun ArpChoice(
+    label: String,
+    active: Boolean,
+    description: String,
+    onClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier
+            .heightIn(min = 48.dp)
+            .border(
+                1.dp,
+                if (active) OrbitalPalette.Cyan else OrbitalPalette.PanelEdge.copy(alpha = .70f),
+                RoundedCornerShape(11.dp),
+            )
+            .background(
+                if (active) OrbitalPalette.Cyan.copy(alpha = .20f)
+                else OrbitalPalette.Void.copy(alpha = .68f),
+                RoundedCornerShape(11.dp),
+            )
+            .clickable(enabled = onClick != null, role = Role.RadioButton) { onClick?.invoke() }
+            .semantics {
+                selected = active
+                contentDescription = description
+            }
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (active) OrbitalPalette.Text
+                else if (onClick != null) OrbitalPalette.Muted
+                else OrbitalPalette.PanelEdge,
+            fontSize = 9.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+            letterSpacing = .35.sp,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+        )
     }
 }
 
@@ -1829,23 +2179,266 @@ private fun StepValueSlider(
     }
 }
 
+private enum class CompactSoundPage(val caption: String) {
+    LIVE("LIVE"), TONE("TONE"), VOICE("VOICE"), ENGINE("ENGINE")
+}
+
+/**
+ * A 350dp-high landscape viewport gives the editor very little visible space.
+ * Render a lightweight, paged performance rack rather than eagerly creating
+ * the full orbit/ribbon graph, knob bank and four signal visualizations.
+ * All parameters remain accessible, and the full portrait editor is unchanged.
+ */
+@Composable
+private fun CompactSoundPanel(
+    parameter: (ParameterId) -> Float,
+    engineId: ParameterId?,
+    engineValue: Float,
+    onParameterChange: (ParameterId, Float) -> Unit,
+) {
+    var page by remember { mutableStateOf(CompactSoundPage.LIVE) }
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Text(
+            "SONIC RACK  /  STAGE VIEW",
+            color = OrbitalPalette.Cyan, fontSize = 11.sp, letterSpacing = 1.5.sp,
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            CompactSoundPage.entries.forEach { choice ->
+                Pill(
+                    label = choice.caption,
+                    active = page == choice,
+                    onClick = { page = choice },
+                    description = "Sound rack " + choice.name,
+                    role = Role.RadioButton,
+                )
+            }
+        }
+        when (page) {
+            CompactSoundPage.LIVE -> {
+                CompactFxControl("MORPH", parameter(ParameterId.MORPH), ParameterId.MORPH,
+                    onParameterChange, "Cross-wavetable expression")
+                CompactFxControl("MOTION", parameter(ParameterId.MOVEMENT), ParameterId.MOVEMENT,
+                    onParameterChange, "Modulation movement")
+                CompactFxControl("FX", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT,
+                    onParameterChange, "Stereo space and texture")
+            }
+            CompactSoundPage.TONE -> {
+                CompactFxControl("WAVE", parameter(ParameterId.WAVE), ParameterId.WAVE,
+                    onParameterChange, "Oscillator shape")
+                CompactFxControl("CUTOFF", parameter(ParameterId.CUTOFF), ParameterId.CUTOFF,
+                    onParameterChange, "Filter cutoff")
+                CompactFxControl("RESONANCE", parameter(ParameterId.RESONANCE), ParameterId.RESONANCE,
+                    onParameterChange, "Filter resonance")
+            }
+            CompactSoundPage.VOICE -> {
+                val digitalMode = engineArchitectureIndex(engineValue) >= 3
+                if (digitalMode) {
+                    Text(
+                        "UNISON / DETUNE: WT + ANALOG ENGINES",
+                        color = OrbitalPalette.Muted, fontSize = 9.sp,
+                    )
+                }
+                val voiceIds = listOf("UNISON", "DETUNE", "CHARACTER")
+                    .mapNotNull { name ->
+                        ParameterId.entries.firstOrNull { it.name == name }?.let { name to it }
+                    }
+                voiceIds.forEach { (label, id) ->
+                    CompactFxControl(label, parameter(id), id, onParameterChange,
+                        "Synthesis voice parameter")
+                }
+                if (voiceIds.isEmpty()) {
+                    Label("VOICE MACROS WILL APPEAR WITH SUPPORTED ENGINES")
+                }
+            }
+            CompactSoundPage.ENGINE -> {
+                Label("SYNTHESIS ARCHITECTURE  /  MODELED + INSPIRED")
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    EngineArchitectures.forEachIndexed { index, choice ->
+                        Pill(
+                            label = choice.name,
+                            active = engineArchitectureIndex(engineValue) == index,
+                            onClick = { engineId?.let { onParameterChange(it, choice.value) } },
+                            description = "Select synthesis architecture " + choice.name,
+                            role = Role.RadioButton,
+                            enabled = engineId != null,
+                        )
+                    }
+                }
+                ParameterId.entries.firstOrNull { it.name == "CHARACTER" }?.let { id ->
+                    CompactFxControl("CHARACTER", parameter(id), id, onParameterChange,
+                        "Engine timbre and model character")
+                }
+            }
+        }
+    }
+}
+
+private enum class CompactFxPage(val caption: String) {
+    QUICK("QUICK"), ENVELOPE("ENV"), MODULATION("LFO"), SPACE("SPACE")
+}
+
+/**
+ * Short landscape screens cannot afford the full envelope + LFO + FX slider
+ * subtree in one eager scrolling column. Page it by effect family, keeping
+ * every parameter editable and the 82dp piano keyboard anchored below.
+ */
 @Composable
 private fun FxPanel(
     parameter: (ParameterId) -> Float,
     onParameterChange: (ParameterId, Float) -> Unit,
+    compactHeight: Boolean,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("ENVELOPES  /  EFFECTS", color = OrbitalPalette.Text, fontSize = 13.sp, letterSpacing = 1.8.sp)
-        SignalTile("ENV", parameter(ParameterId.ATTACK), OrbitalPalette.Violet, Modifier.fillMaxWidth())
-        ParameterSlider("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
-        ParameterSlider("DECAY", parameter(ParameterId.DECAY), ParameterId.DECAY, onParameterChange, "Transient fall")
-        ParameterSlider("SUSTAIN", parameter(ParameterId.SUSTAIN), ParameterId.SUSTAIN, onParameterChange, "Held volume")
-        ParameterSlider("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
-        Spacer(Modifier.height(3.dp))
-        SignalTile("LFO", parameter(ParameterId.LFO_RATE), OrbitalPalette.Cyan, Modifier.fillMaxWidth())
-        ParameterSlider("LFO RATE", parameter(ParameterId.LFO_RATE), ParameterId.LFO_RATE, onParameterChange, "Modulation speed")
-        ParameterSlider("LFO DEPTH", parameter(ParameterId.LFO_DEPTH), ParameterId.LFO_DEPTH, onParameterChange, "Modulation strength")
-        ParameterSlider("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
+    if (compactHeight) {
+        var page by remember { mutableStateOf(CompactFxPage.QUICK) }
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text(
+                "FX  /  PERFORMANCE RACK",
+                color = OrbitalPalette.Text, fontSize = 12.sp, letterSpacing = 1.3.sp,
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                CompactFxPage.entries.forEach { choice ->
+                    Pill(
+                        label = choice.caption,
+                        active = page == choice,
+                        onClick = { page = choice },
+                        description = "FX page " + choice.name,
+                        role = Role.RadioButton,
+                    )
+                }
+            }
+            when (page) {
+                CompactFxPage.QUICK -> {
+                    CompactFxControl("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
+                    CompactFxControl("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
+                    CompactFxControl("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
+                }
+                CompactFxPage.ENVELOPE -> {
+                    CompactFxControl("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
+                    CompactFxControl("DECAY", parameter(ParameterId.DECAY), ParameterId.DECAY, onParameterChange, "Transient fall")
+                    CompactFxControl("SUSTAIN", parameter(ParameterId.SUSTAIN), ParameterId.SUSTAIN, onParameterChange, "Held volume")
+                    CompactFxControl("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
+                }
+                CompactFxPage.MODULATION -> {
+                    CompactFxControl("LFO RATE", parameter(ParameterId.LFO_RATE), ParameterId.LFO_RATE, onParameterChange, "Modulation speed")
+                    CompactFxControl("LFO DEPTH", parameter(ParameterId.LFO_DEPTH), ParameterId.LFO_DEPTH, onParameterChange, "Modulation strength")
+                }
+                CompactFxPage.SPACE ->
+                    CompactFxControl("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
+            }
+        }
+    } else {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("ENVELOPES  /  EFFECTS", color = OrbitalPalette.Text, fontSize = 13.sp, letterSpacing = 1.8.sp)
+            SignalTile("ENV", parameter(ParameterId.ATTACK), OrbitalPalette.Violet, Modifier.fillMaxWidth())
+            ParameterSlider("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
+            ParameterSlider("DECAY", parameter(ParameterId.DECAY), ParameterId.DECAY, onParameterChange, "Transient fall")
+            ParameterSlider("SUSTAIN", parameter(ParameterId.SUSTAIN), ParameterId.SUSTAIN, onParameterChange, "Held volume")
+            ParameterSlider("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
+            Spacer(Modifier.height(3.dp))
+            SignalTile("LFO", parameter(ParameterId.LFO_RATE), OrbitalPalette.Cyan, Modifier.fillMaxWidth())
+            ParameterSlider("LFO RATE", parameter(ParameterId.LFO_RATE), ParameterId.LFO_RATE, onParameterChange, "Modulation speed")
+            ParameterSlider("LFO DEPTH", parameter(ParameterId.LFO_DEPTH), ParameterId.LFO_DEPTH, onParameterChange, "Modulation strength")
+            ParameterSlider("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
+        }
+    }
+}
+
+/**
+ * Lightweight FX bar for tiny landscape editors: bounded composition,
+ * tap/drag gesture control, and accessible incremental adjustments.
+ */
+@Composable
+private fun CompactFxControl(
+    title: String,
+    value: Float,
+    id: ParameterId,
+    onParameterChange: (ParameterId, Float) -> Unit,
+    description: String,
+) {
+    val update by rememberUpdatedState(onParameterChange)
+    val normalized = value.coerceIn(0f, 1f)
+    val tint = when (id) {
+        ParameterId.ATTACK, ParameterId.DECAY, ParameterId.SUSTAIN, ParameterId.RELEASE -> OrbitalPalette.Violet
+        ParameterId.LFO_RATE, ParameterId.LFO_DEPTH -> OrbitalPalette.Cyan
+        else -> OrbitalPalette.Gold
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .45f), RoundedCornerShape(13.dp))
+            .background(OrbitalPalette.Panel.copy(alpha = .40f), RoundedCornerShape(13.dp))
+            .padding(horizontal = 9.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(title, color = OrbitalPalette.Text, fontSize = 9.sp,
+            letterSpacing = .55.sp, maxLines = 1, modifier = Modifier.width(78.dp))
+        Box(
+            Modifier
+                .weight(1f)
+                .height(48.dp)
+                .testTag("compactFxBar_" + id.name)
+                .semantics {
+                    contentDescription = "$title. $description. ${percent(normalized)}."
+                    customActions = listOf(
+                        CustomAccessibilityAction("Increase $title") {
+                            update(id, (normalized + .05f).coerceAtMost(1f)); true
+                        },
+                        CustomAccessibilityAction("Decrease $title") {
+                            update(id, (normalized - .05f).coerceAtLeast(0f)); true
+                        },
+                    )
+                }
+                .pointerInput(id) {
+                    detectTapGestures { position ->
+                        val inset = 8.dp.toPx()
+                        val length = (size.width - 2f * inset).coerceAtLeast(1f)
+                        update(id, ((position.x - inset) / length).coerceIn(0f, 1f))
+                    }
+                }
+                .pointerInput(id) {
+                    detectDragGestures(onDragStart = { offset ->
+                        val inset = 8.dp.toPx()
+                        val length = (size.width - 2f * inset).coerceAtLeast(1f)
+                        update(id, ((offset.x - inset) / length).coerceIn(0f, 1f))
+                    }) { change, _ ->
+                        val inset = 8.dp.toPx()
+                        val length = (size.width - 2f * inset).coerceAtLeast(1f)
+                        update(id, ((change.position.x - inset) / length).coerceIn(0f, 1f))
+                        change.consume()
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(Modifier.fillMaxWidth().height(18.dp)) {
+                val inset = 8.dp.toPx()
+                val usableWidth = (size.width - 2f * inset).coerceAtLeast(1f)
+                val y = size.height / 2f
+                val trackStart = Offset(inset, y)
+                drawLine(OrbitalPalette.PanelEdge.copy(alpha = .85f), trackStart,
+                    Offset(inset + usableWidth, y),
+                    strokeWidth = 5.dp.toPx(), cap = StrokeCap.Round)
+                drawLine(tint.copy(alpha = .9f), trackStart,
+                    Offset(inset + usableWidth * normalized, y),
+                    strokeWidth = 5.dp.toPx(), cap = StrokeCap.Round)
+                drawCircle(tint.copy(alpha = .20f), radius = 9.dp.toPx(),
+                    center = Offset(inset + usableWidth * normalized, y))
+                drawCircle(tint, radius = 4.6.dp.toPx(),
+                    center = Offset(inset + usableWidth * normalized, y))
+            }
+        }
+        Text(percent(normalized), color = tint, fontSize = 10.sp,
+            modifier = Modifier.width(34.dp), textAlign = TextAlign.End)
     }
 }
 
