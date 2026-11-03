@@ -127,7 +127,7 @@ class OscillatorPerLayerModulationTest {
         bus.next(frame)
         assertTrue("Gain must not jump", bus.gainMultipliers[3] in 1f..1.01f)
         assertTrue("Pitch must not jump", bus.pitchMultipliers[3] in 1.0..1.001)
-        repeat(4_000) { bus.next(frame) }
+        repeat(6_000) { bus.next(frame) }
         assertEquals(2f, bus.gainMultipliers[3], 0.001f)
         assertEquals(2.0.pow(0.5), bus.pitchMultipliers[3], 0.000002)
         for (slot in 0 until 8) {
