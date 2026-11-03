@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
@@ -107,22 +108,32 @@ class ReferenceMiniSignalTapNavigationTest {
         compose.waitForIdle()
     }
 
+    /** A partly clipped 48dp editor button is not a usable physical touch target. */
+    private fun fullyInEditor(editor: Rect, target: Rect, minHeightDp: Float): Boolean =
+        target.width >= 48f * density - 1f &&
+            target.height >= minHeightDp * density - 1f &&
+            target.top >= editor.top - 1f &&
+            target.bottom <= editor.bottom + 1f
+
     /**
      * No Compose test-only auto-scroll: touch the SAME real editor viewport a
      * human uses. The 3px inset avoids nested LFO horizontal shape chips.
-     * Keep the target assertion strict after at most six bounded swipes.
+     * Require fully visible >=48dp geometry after at most six bounded swipes.
      */
     private fun physicallyRevealGardenAction(tag: String) {
         val editor = compose.onNodeWithTag("soundEditorScroll").assertIsDisplayed()
         repeat(6) {
             val target = compose.onNodeWithTag(tag)
-            val shown = try {
-                target.assertIsDisplayed()
-                true
+            val editorRect = editor.fetchSemanticsNode().boundsInRoot
+            val targetRect = try {
+                target.fetchSemanticsNode().boundsInRoot
             } catch (_: AssertionError) {
-                false
+                Rect.Zero
             }
-            if (shown) return
+            if (fullyInEditor(editorRect, targetRect, 48f)) {
+                target.assertIsDisplayed()
+                return
+            }
             editor.performTouchInput {
                 swipe(
                     start = Offset(3f, size.height * .79f),
@@ -132,7 +143,14 @@ class ReferenceMiniSignalTapNavigationTest {
             }
             compose.waitForIdle()
         }
-        compose.onNodeWithTag(tag).assertIsDisplayed()
+        val target = compose.onNodeWithTag(tag).assertIsDisplayed()
+            .fetchSemanticsNode().boundsInRoot
+        val editorRect = editor.fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            "Real LFO action must be fully touchable >=48dp after physical swipes: " +
+                tag + " editor=" + editorRect + " target=" + target,
+            fullyInEditor(editorRect, target, 48f),
+        )
     }
 
     @Test fun portraitMiniCardsRemainFourReal48dpPlusHitTargetsAndKeysRemainVisible() {
@@ -209,8 +227,14 @@ class ReferenceMiniSignalTapNavigationTest {
         compose.onNodeWithContentDescription("Tab FX").assertIsDisplayed()
         // The exact first-enabled node must already be in the real viewport:
         // no test scroll can disguise a broken product BringIntoView.
-        compose.onNodeWithTag("lfoGardenNode5")
-            .assertIsDisplayed().performTouchInput { click(center) }
+        val lane = compose.onNodeWithTag("lfoGardenNode5")
+            .assertIsDisplayed()
+        val laneBounds = lane.fetchSemanticsNode().boundsInRoot
+        val editorBounds = compose.onNodeWithTag("soundEditorScroll")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("Matching LFO source must be fully in the viewport, not clipped",
+            fullyInEditor(editorBounds, laneBounds, 84f))
+        lane.performTouchInput { click(center) }
         compose.onNodeWithText("SOURCE  06  /  TRIANGLE").assertExists()
         // This is the SAME eight-LFO editor visualized in the mini trace,
         // not the unrelated legacy DSP LFO_RATE / LFO_DEPTH sliders.
