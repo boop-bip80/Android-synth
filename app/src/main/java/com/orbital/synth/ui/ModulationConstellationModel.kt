@@ -35,8 +35,33 @@ internal object ModulationConstellationModel {
         return synchronizedBeats[(nearest + step).coerceIn(0, synchronizedBeats.lastIndex)]
     }
 
+    /** Only six engine buses currently reach actual PCM processing. */
+    val liveDestinations: List<ModDestination> = listOf(
+        ModDestination.PITCH, ModDestination.MORPH,
+        ModDestination.CUTOFF, ModDestination.RESONANCE,
+        ModDestination.AMP, ModDestination.PAN,
+    )
+
+    /** Present usable audio routes before editable, future-reserved metadata. */
+    val destinationChoices: List<ModDestination> =
+        liveDestinations + ModDestination.entries.filterNot { it in liveDestinations }
+
     fun audibleTarget(destination: ModDestination): Boolean =
-        destination == ModDestination.MORPH || destination == ModDestination.PITCH
+        destination in liveDestinations
+
+    fun destinationLabel(destination: ModDestination): String =
+        (if (audibleTarget(destination)) "LIVE  •  " else "RESERVED  •  ") +
+            enumLabel(destination.name)
+
+    fun destinationStatus(destination: ModDestination): String = when (destination) {
+        ModDestination.PITCH -> "AUDIBLE NOW • Live semitone modulation."
+        ModDestination.MORPH -> "AUDIBLE NOW • Live oscillator waveform morph."
+        ModDestination.CUTOFF -> "AUDIBLE NOW • Sweeps the actual per-voice filter cutoff."
+        ModDestination.RESONANCE -> "AUDIBLE NOW • Controls the actual filter resonance."
+        ModDestination.AMP -> "AUDIBLE NOW • Gain modulation before master effects."
+        ModDestination.PAN -> "AUDIBLE NOW • Stereo balance before master effects."
+        else -> "SAVED ROUTE • Reserved for a future audio engine connection."
+    }
 
     fun slotLabel(index: Int): String = (index.coerceIn(0, 63) + 1).toString().padStart(2, '0')
 
