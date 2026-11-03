@@ -2,7 +2,7 @@
 # Fresh API35 isolation lane for strict short-landscape SOUND assertions,
 # real oscillator editor scrolling, five ENGINE options and pinned piano notes.
 # The full general suite excludes only this class (plus the separately verified
-# immersive capture class), and this lane independently requires both JUnit XML cases.
+# immersive capture class), and this lane independently requires all four JUnit XML cases.
 set -euo pipefail
 
 mkdir -p artifacts
@@ -84,7 +84,7 @@ test_apk=app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
   echo 'Precompiled exact app and Android test APKs are required.' >&2
   exit 1
 }
-printf 'suite=compact350\nclass=com.orbital.synth.ui.Compact350SoundInstrumentedTest\nexpected_testcases=2\napp_sha256=%s\ntest_apk_sha256=%s\n' \
+printf 'suite=compact350\nclass=com.orbital.synth.ui.Compact350SoundInstrumentedTest\nexpected_testcases=4\napp_sha256=%s\ntest_apk_sha256=%s\n' \
   "$(sha256sum "$app_apk" | cut -d' ' -f1)" \
   "$(sha256sum "$test_apk" | cut -d' ' -f1)" \
   > artifacts/instrumentation-suite.txt
@@ -138,21 +138,23 @@ expected_class = "com.orbital.synth.ui.Compact350SoundInstrumentedTest"
 expected_names = {
     "shortLandscapeSoundHasReachableEightLayerEditorAndAnchoredPiano",
     "shortLandscapeCanSelectAllFiveArchitecturesWithAnchoredPiano",
+    "compactSoundPageRetainsSelectionAcrossOscillatorRoundTrips",
+    "compactPatchArrowsReachableByRealVerticalScrollAndPianoRemainsPlayable",
 }
-if len(cases) != 2:
-    raise SystemExit(f"Expected exactly two isolated compact350 tests; got {len(cases)} in {len(files)} XML files")
+if len(cases) != 4:
+    raise SystemExit(f"Expected exactly four isolated compact350 tests; got {len(cases)} in {len(files)} XML files")
 actual = {(c.get("classname"), c.get("name")) for c in cases}
 if actual != {(expected_class, name) for name in expected_names}:
-    raise SystemExit(f"Unexpected/ignored class filter, expected two distinct methods: {actual}")
+    raise SystemExit(f"Unexpected/ignored class filter, expected four distinct methods: {actual}")
 if any(c.findall(tag) for c in cases for tag in ("failure", "error", "skipped")):
     raise SystemExit("A compact350 test failed, errored, or skipped")
-print("Compact 350dp SOUND: exactly two real-device JUnit PASS cases")
+print("Compact 350dp SOUND: exactly four real API35 emulator JUnit PASS cases")
 PY
-printf '%s\n' 'PASS: exactly 2 isolated real API35 JUnit cases; oscillator scroll, five ENGINE choices, piano notes' \
+printf '%s\n' 'PASS: exactly 4 isolated real API35 JUnit cases; oscillator scroll, five ENGINE choices, page persistence, preset physical touch, balanced piano notes' \
   > artifacts/compact350-junit-summary.txt
 
 # Gradle UTP's connected-test cleanup can clear app-private files after it
-# reports its two JUnit cases. Those two cases above MUST still pass/XML-match.
+# reports its four JUnit cases. All four cases above MUST still pass/XML-match.
 # Re-install the EXACT previously SHA-logged debug/test APKs and rerun ONLY
 # the real OSC8 physical screenshot test with direct AndroidJUnitRunner, as
 # proven in STAGE/VISUALS. Capture/stream both PNGs before any UTP cleanup.
@@ -208,7 +210,7 @@ from pathlib import Path
 import struct
 
 names = ("orbital-compact350-osc8-selector.png", "orbital-compact350-luminous.png")
-evidence = ["source=android.uiAutomation.takeScreenshot", "exact_test_cases=2",
+evidence = ["source=android.uiAutomation.takeScreenshot", "exact_test_cases=4",
             "test=OSC8-selected-pinned-piano-then-physical-wave-XY"]
 for name in names:
     path = Path("artifacts") / name
