@@ -9,9 +9,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import kotlin.math.roundToInt
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -91,8 +89,18 @@ class ReferenceSoundHostIntegrationTest {
         // production Compose window; no setContent(), no fake audio, no second
         // synth. After real UiAutomation screenshot verification it is removed
         // before any SOUND gestures or screenshot assertions run.
-        val marker = View(compose.activity).apply {
-            setBackgroundColor(PixelColor.MAGENTA)
+        // Two sharply separated colors + exact on-screen View bounds make a
+        // false proof from the synth's natural violet/magenta neon impossible.
+        // A broad bottom-right color count alone could match unrelated UI.
+        val marker = object : View(compose.activity) {
+            private val paint = android.graphics.Paint()
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                paint.color = PixelColor.MAGENTA
+                canvas.drawRect(0f, 0f, width / 2f, height.toFloat(), paint)
+                paint.color = PixelColor.GREEN
+                canvas.drawRect(width / 2f, 0f, width.toFloat(), height.toFloat(), paint)
+            }
+        }.apply {
             isFocusable = false
             isClickable = false
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -107,39 +115,92 @@ class ReferenceSoundHostIntegrationTest {
                 ),
             )
         }
-        var physicalMarkerPixels = 0
+        var physicalMagentaPixels = 0
+        var physicalGreenPixels = 0
+        var exactMarkerVerified = false
         try {
             for (attempt in 0 until 6) {
                 val frame: Bitmap? = foregroundAutomation.takeScreenshot()
                 if (frame != null) {
-                    var matched = 0
-                    for (y in (frame.height * .78f).toInt() until frame.height step 2) {
-                        for (x in (frame.width * .82f).toInt() until frame.width step 2) {
-                            val pixel = frame.getPixel(x, y)
-                            if (PixelColor.red(pixel) >= 245 &&
-                                PixelColor.green(pixel) <= 10 &&
-                                PixelColor.blue(pixel) >= 245
-                            ) matched++
+                    try {
+                        // Location is read on the Activity's actual UI thread.
+                        // UiAutomation's display screenshot shares screen pixels
+                        // with getLocationOnScreen, unlike Compose-local bounds.
+                        val region = IntArray(4)
+                        compose.activityRule.scenario.onActivity {
+                            val topLeft = IntArray(2)
+                            marker.getLocationOnScreen(topLeft)
+                            region[0] = topLeft[0]
+                            region[1] = topLeft[1]
+                            region[2] = marker.width
+                            region[3] = marker.height
                         }
+                        val left = region[0]
+                        val top = region[1]
+                        val width = region[2]
+                        val height = region[3]
+                        if (width >= 20 && height >= 20) {
+                            // Ignore edges and the two-tone seam, which can be
+                            // antialiased by SurfaceFlinger or screenshot scaling.
+                            val xLeftStart = maxOf(0, left + width / 10)
+                            val xLeftEnd = minOf(frame.width, left + width * 4 / 10)
+                            val xRightStart = maxOf(0, left + width * 6 / 10)
+                            val xRightEnd = minOf(frame.width, left + width * 9 / 10)
+                            val yStart = maxOf(0, top + height / 5)
+                            val yEnd = minOf(frame.height, top + height * 4 / 5)
+                            var leftSamples = 0
+                            var rightSamples = 0
+                            var magentaMatches = 0
+                            var greenMatches = 0
+                            for (y in yStart until yEnd step 2) {
+                                for (x in xLeftStart until xLeftEnd step 2) {
+                                    val pixel = frame.getPixel(x, y)
+                                    leftSamples++
+                                    if (PixelColor.red(pixel) >= 245 &&
+                                        PixelColor.green(pixel) <= 10 &&
+                                        PixelColor.blue(pixel) >= 245
+                                    ) magentaMatches++
+                                }
+                                for (x in xRightStart until xRightEnd step 2) {
+                                    val pixel = frame.getPixel(x, y)
+                                    rightSamples++
+                                    if (PixelColor.red(pixel) <= 10 &&
+                                        PixelColor.green(pixel) >= 245 &&
+                                        PixelColor.blue(pixel) <= 10
+                                    ) greenMatches++
+                                }
+                            }
+                            physicalMagentaPixels = magentaMatches
+                            physicalGreenPixels = greenMatches
+                            exactMarkerVerified = leftSamples >= 12 &&
+                                rightSamples >= 12 &&
+                                magentaMatches * 100 >= leftSamples * 80 &&
+                                greenMatches * 100 >= rightSamples * 80
+                            if (exactMarkerVerified) break
+                        }
+                    } finally {
+                        frame.recycle()
                     }
-                    frame.recycle()
-                    physicalMarkerPixels = maxOf(physicalMarkerPixels, matched)
-                    if (physicalMarkerPixels >= 50) break
                 }
                 Thread.sleep(180L)
             }
             assertTrue(
-                "A different MainActivity owns SurfaceFlinger: this exact " +
-                    "AudioTrack-backed test Activity marker absent from real " +
-                    "bottom-right pixels; count=$physicalMarkerPixels OS=$foreground",
-                physicalMarkerPixels >= 50,
+                "A different MainActivity owns SurfaceFlinger: the precise " +
+                    "20dp magenta/green pixel signature is absent from the " +
+                    "actual ActivityScenario View bounds; magenta=" +
+                    "$physicalMagentaPixels green=$physicalGreenPixels " +
+                    "OS=$foreground",
+                exactMarkerVerified,
             )
         } finally {
             compose.activityRule.scenario.onActivity {
                 (marker.parent as? ViewGroup)?.removeView(marker)
             }
         }
-        println("REFERENCE_HOST_INSTANCE_PIXEL_PROOF count=$physicalMarkerPixels")
+        println(
+            "REFERENCE_HOST_INSTANCE_PIXEL_PROOF exact=true " +
+                "magenta=$physicalMagentaPixels green=$physicalGreenPixels",
+        )
         compose.onNodeWithTag("referenceSoundHero").assertExists()
         compose.onNodeWithTag("referenceSoundHeroOrb").assertIsDisplayed()
         compose.onNodeWithTag("orbitalPlasmaField").assertExists()
@@ -173,28 +234,80 @@ class ReferenceSoundHostIntegrationTest {
             // The chromatic reference keybed really drives the one AudioTrack
             // engine: a held note must register in post-write PCM telemetry.
             compose.waitUntil(8_000L) { audio.audioVisualSnapshot.rms > .0005f }
-            val pixels = compose.onNodeWithTag("referenceSoundHeroOrb")
-                .captureToImage().toPixelMap()
-            var saturated = 0
-            // Validate the orb's interior, excluding the cyan HUD text at the
-            // top and XY ribbon at the bottom. A black/broken shader cannot
-            // pass simply because the interface's labels are colorful.
-            val left = (pixels.width * .25f).toInt()
-            val right = (pixels.width * .75f).toInt()
-            val top = (pixels.height * .29f).toInt()
-            val bottom = (pixels.height * .54f).toInt()
-            for (y in top until bottom step 7) {
-                for (x in left until right step 7) {
-                    val color = pixels[x, y]
-                    val spread = maxOf(color.red, color.green, color.blue) -
-                        minOf(color.red, color.green, color.blue)
-                    if (spread > .12f && maxOf(color.red, color.green, color.blue) > .25f) {
-                        saturated++
+            // Compose captureToImage() uses PixelCopy, which timed out while
+            // the actual Android emulator and AudioTrack were still healthy.
+            // Read a genuine SurfaceFlinger DISPLAY frame instead. Translate
+            // the *same* Compose orb's exact in-root bounds to screen pixels
+            // using the production Activity's content root; do not accept
+            // bright pixels elsewhere in the app or a synthetic bitmap.
+            val orbBounds = compose.onNodeWithTag("referenceSoundHeroOrb")
+                .fetchSemanticsNode().boundsInRoot
+            val composeRootScreen = IntArray(2)
+            compose.activityRule.scenario.onActivity { activity ->
+                val contentRoot = activity.findViewById<View>(android.R.id.content)
+                    ?: error("Production MainActivity has no content root")
+                contentRoot.getLocationOnScreen(composeRootScreen)
+            }
+            var saturated = -1
+            var plasmaSampleRegion = ""
+            for (attempt in 0 until 3) {
+                val frame: Bitmap? = foregroundAutomation.takeScreenshot()
+                if (frame != null) {
+                    try {
+                        // Retain the exact middle-50%-width / 29%-54%-height
+                        // orb-interior gate from the old Compose PixelCopy
+                        // assertion: cyan HUD and XY ribbon are excluded.
+                        val left = maxOf(
+                            0,
+                            (composeRootScreen[0] + orbBounds.left +
+                                orbBounds.width * .25f).roundToInt(),
+                        )
+                        val right = minOf(
+                            frame.width,
+                            (composeRootScreen[0] + orbBounds.left +
+                                orbBounds.width * .75f).roundToInt(),
+                        )
+                        val top = maxOf(
+                            0,
+                            (composeRootScreen[1] + orbBounds.top +
+                                orbBounds.height * .29f).roundToInt(),
+                        )
+                        val bottom = minOf(
+                            frame.height,
+                            (composeRootScreen[1] + orbBounds.top +
+                                orbBounds.height * .54f).roundToInt(),
+                        )
+                        plasmaSampleRegion = "[$left,$top][$right,$bottom] " +
+                            "frame=${frame.width}x${frame.height}"
+                        assertTrue(
+                            "Real UiAutomation framebuffer has no usable " +
+                                "interior for the actual Compose orb " +
+                                plasmaSampleRegion,
+                            right - left >= 28 && bottom - top >= 28,
+                        )
+                        saturated = 0
+                        for (y in top until bottom step 7) {
+                            for (x in left until right step 7) {
+                                val pixel = frame.getPixel(x, y)
+                                val red = PixelColor.red(pixel)
+                                val green = PixelColor.green(pixel)
+                                val blue = PixelColor.blue(pixel)
+                                val max = maxOf(red, green, blue)
+                                val min = minOf(red, green, blue)
+                                if (max - min >= 31 && max >= 64) saturated++
+                            }
+                        }
+                    } finally {
+                        frame.recycle()
                     }
+                    if (saturated >= 24) break
                 }
+                Thread.sleep(120L)
             }
             assertTrue(
-                "Actual running Android hero framebuffer lost its colorful plasma",
+                "Actual running Android SurfaceFlinger orb interior lost " +
+                    "its colorful plasma: saturated=$saturated " +
+                    plasmaSampleRegion,
                 saturated >= 24,
             )
         } finally {
