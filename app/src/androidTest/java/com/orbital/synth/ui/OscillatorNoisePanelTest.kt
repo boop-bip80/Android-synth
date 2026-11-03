@@ -98,6 +98,53 @@ class OscillatorNoisePanelTest {
         }
     }
 
+    @Test fun continuousNoiseDragAndWaveTapBothUpdateLiveSoundDesign() {
+        var slots by mutableStateOf(List(8) {
+            if (it == 0) OscillatorSlot(enabled = true, level = .5f)
+            else OscillatorSlot()
+        })
+        compose.setContent {
+            MaterialTheme {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    OscillatorRackPanel(
+                        slots = slots,
+                        onSlotChange = { index, next ->
+                            slots = slots.mapIndexed { i, old -> if (i == index) next else old }
+                        },
+                    )
+                }
+            }
+        }
+
+        // The pad must own DOWN and MOVE; the enclosing vertical scroller
+        // must not steal finger sound-design gestures.
+        compose.onNodeWithTag("oscillatorNoiseCanvas").performScrollTo()
+            .performTouchInput {
+                swipe(
+                    start = Offset(center.x * .2f, center.y * 1.6f),
+                    end = Offset(center.x * 1.6f, center.y * .4f),
+                    durationMillis = 260,
+                )
+            }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertTrue("Noise drag X must reach color: ${slots[0].noiseColor}",
+                slots[0].noiseColor in 0.72f..0.89f)
+            assertTrue("Noise drag Y must reach mix: ${slots[0].noiseLevel}",
+                slots[0].noiseLevel in 0.72f..0.89f)
+        }
+
+        compose.onNodeWithTag("oscillatorWaveCanvas").performScrollTo()
+            .performTouchInput { click(center) }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals("Wave canvas tap X changes morph", .5f, slots[0].morph, .05f)
+            assertEquals("Wave canvas tap Y changes gain", .5f, slots[0].level, .05f)
+            assertTrue("Wave pad must preserve edited noise mix", slots[0].noiseLevel > .7f)
+            assertTrue("Wave pad must preserve edited noise color", slots[0].noiseColor > .7f)
+        }
+    }
+
     @Test fun accessibleNoiseSlidersPublishNormalizedTouchChanges() {
         var slots by mutableStateOf(List(8) {
             if (it == 0) OscillatorSlot(enabled = true, level = .5f) else OscillatorSlot()
