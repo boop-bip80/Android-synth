@@ -6,6 +6,7 @@ import com.orbital.synth.core.performance.ArpeggiatorDirection
 import com.orbital.synth.core.performance.ArpeggiatorSettings
 import com.orbital.synth.core.performance.PerformanceArpeggiator
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -27,7 +28,13 @@ internal class PerformanceArpTransport(
     private val noteOff: (Long, Int, Int) -> Unit,
     // Optional deterministic test seam after epoch check, before offer; never per sample.
     private val beforeInputEnqueue: (() -> Unit)? = null,
+    // Count only physical key/source commands. Safety fallback releases all keys
+    // if their producer outruns the audio worker for multiple render buffers.
+    private val maxPendingPhysicalCommands: Int = 2_048,
 ) {
+    init {
+        require(maxPendingPhysicalCommands > 0) { "Input queue capacity must be positive" }
+    }
     private sealed interface Command {
         data class Enabled(val value: Boolean) : Command
         data class Settings(val value: ArpeggiatorSettings) : Command
@@ -49,7 +56,11 @@ internal class PerformanceArpTransport(
     // from an earlier worker can NEVER be consumed by a newer worker, even if
     // the producer was preempted after checking isRunning but before queue.offer.
     private val inputEpoch = AtomicLong(0L)
+    private val pendingPhysicalCommands = AtomicInteger(0)
     private val editLock = Any()
+
+    // Exposed only within this module for deterministic stress assertions.
+    internal val pendingPhysicalInputCount: Int get() = pendingPhysicalCommands.get()
     @Volatile private var requestedEnabled = false
     @Volatile private var requestedSettings = ArpeggiatorSettings()
     private val arpeggiator = PerformanceArpeggiator(sampleRate)
@@ -141,27 +152,71 @@ internal class PerformanceArpTransport(
         if (channel !in 0..15 || note !in 0..127 || velocity !in 0..127) return false
         if (velocity == 0) return inputNoteOff(source, channel, note)
         val epoch = activeInputEpoch() ?: return false
-        if (inputEpoch.get() != epoch) return false
-        beforeInputEnqueue?.invoke()
-        // Even if stop/restart races this offer, the consumer rejects old epochs.
-        commands.offer(Command.InputOn(source, channel, note, velocity, epoch))
-        return inputEpoch.get() == epoch
+        return offerPhysicalCommand(epoch) {
+            Command.InputOn(source, channel, note, velocity, epoch)
+        }
     }
 
     fun inputNoteOff(source: Long, channel: Int, note: Int): Boolean {
         if (channel !in 0..15 || note !in 0..127) return false
         val epoch = activeInputEpoch() ?: return false
-        if (inputEpoch.get() != epoch) return false
-        beforeInputEnqueue?.invoke()
-        commands.offer(Command.InputOff(source, channel, note, epoch))
-        return inputEpoch.get() == epoch
+        return offerPhysicalCommand(epoch) { Command.InputOff(source, channel, note, epoch) }
     }
 
     fun inputSourceAllNotesOff(source: Long) {
         val epoch = activeInputEpoch() ?: return
-        if (inputEpoch.get() != epoch) return
-        beforeInputEnqueue?.invoke()
-        commands.offer(Command.SourceOff(source, epoch))
+        offerPhysicalCommand(epoch) { Command.SourceOff(source, epoch) }
+    }
+
+    /**
+     * Every physical event reserves exactly one slot before it can be offered.
+     * Release events are NEVER silently evicted: on saturation the epoch becomes
+     * even (closed), and the audio worker performs a global panic next buffer.
+     * This exceptional overload path may silence OTHER sources; ordinary
+     * source/channel ownership and note-offs remain unchanged below capacity.
+     */
+    private inline fun offerPhysicalCommand(epoch: Long, command: () -> Command): Boolean {
+        if (!reservePhysicalSlot(epoch)) return false
+        var enqueued = false
+        try {
+            beforeInputEnqueue?.invoke()
+            // The producer may have been preempted by stop or overload.
+            if (inputEpoch.get() != epoch) return false
+            commands.offer(command())
+            enqueued = true
+            // Even a late offer after another producer overloaded this epoch
+            // is harmless: the worker discards all events with that old epoch.
+            return inputEpoch.get() == epoch
+        } finally {
+            if (!enqueued) pendingPhysicalCommands.decrementAndGet()
+        }
+    }
+
+    private fun reservePhysicalSlot(epoch: Long): Boolean {
+        while (inputEpoch.get() == epoch) {
+            val pending = pendingPhysicalCommands.get()
+            if (pending >= maxPendingPhysicalCommands) {
+                // Single compare-and-set closes input immediately, even when a
+                // producer is preempted. The worker sees this even epoch and
+                // releases every held key before reopening a NEW epoch.
+                inputEpoch.compareAndSet(epoch, epoch + 1L)
+                return false
+            }
+            if (pendingPhysicalCommands.compareAndSet(pending, pending + 1)) {
+                if (inputEpoch.get() == epoch) return true
+                pendingPhysicalCommands.decrementAndGet()
+                return false
+            }
+        }
+        return false
+    }
+
+    private fun forgetPhysicalReservation(command: Command) {
+        when (command) {
+            is Command.InputOn, is Command.InputOff, is Command.SourceOff ->
+                pendingPhysicalCommands.decrementAndGet()
+            else -> Unit
+        }
     }
 
     fun panic() {
@@ -210,8 +265,13 @@ internal class PerformanceArpTransport(
         releaseDirect()
         workerEnabled = false
         // A focus-loss/resume must not play stale NoteOn events sent before loss.
+        // Account for reservations while draining, including concurrent producers
+        // that may still be paused BEFORE offer; those release in their finally.
         // Requested controls remain available as immutable volatile snapshots.
-        commands.clear()
+        while (true) {
+            val command = commands.poll() ?: break
+            forgetPhysicalReservation(command)
+        }
     }
 
     fun renderBlock(output: FloatArray, scratch: FloatArray, frames: Int) {
@@ -243,9 +303,23 @@ internal class PerformanceArpTransport(
     }
 
     private fun drainCommands() {
+        // A full physical queue has closed the odd input epoch. Release ALL
+        // currently held notes before admitting a new epoch, rather than lose
+        // a critical NoteOff and leave a sustained key behind. This check is
+        // deliberately independent of any queued Panic/Settings event.
+        val retiredEpoch = inputEpoch.get()
+        if (retiredEpoch > 0L && (retiredEpoch and 1L) == 0L) {
+            releaseGenerated(arpeggiator.panic())
+            releaseDirect()
+            if (workerEnabled) arpeggiator.start()
+            inputEpoch.compareAndSet(retiredEpoch, retiredEpoch + 1L)
+        }
+
         // Bound worst-case incoming MIDI bursts; leftovers drain next buffer.
         for (ignored in 0 until 512) {
-            when (val command = commands.poll() ?: break) {
+            val command = commands.poll() ?: break
+            forgetPhysicalReservation(command)
+            when (command) {
                 is Command.Enabled -> {
                     if (command.value != requestedEnabled) continue
                     if (workerEnabled == command.value) continue
