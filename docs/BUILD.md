@@ -64,7 +64,7 @@ Read [`PROVENANCE.md`](screenshots/PROVENANCE.md) for the **exact** source SHA, 
 
 Because publisher commits use GitHub Actions' bot token, a screenshot-only child commit may follow the validated source SHA without itself launching a new source CI run. This is documented, not a claim that unrelated untested changes were validated.
 
-## Publishing an immutable installable developer APK
+## Publishing a SHA-addressed installable developer APK
 
 [`publish-debug-prerelease.yml`](../.github/workflows/publish-debug-prerelease.yml) is deliberately **opt-in**. Ordinary source merges, PRs and screenshot bot commits must not create releases. Use one of:
 
@@ -73,7 +73,9 @@ Because publisher commits use GitHub Actions' bot token, a screenshot-only child
 
 The release publisher re-fetches the source CI run and verifies its `push`/`main` repository identity, Android workflow path, exact head SHA, and all nine successful named jobs. It rejects a changed current-main branch unless the only intervening commit is one immediate screenshot-only `github-actions[bot]` child with matching source/run provenance. No unrelated source edit can be smuggled into a released artifact.
 
-It downloads the **one** `orbital-debug-apk` artifact from that exact verified host build, checks ZIP integrity and `AndroidManifest.xml`, computes SHA-256, and creates an immutable tag `orbital-debug-<SOURCE_SHA12>` with asset `ORBITAL-<SOURCE_SHA12>-debug.apk`. Release notes include the full source SHA, the nine-job run and the APK SHA-256. Existing tags/releases must match provenance; they are never overwritten or retagged as an update. Check [GitHub Releases](https://github.com/boop-bip80/Android-synth/releases) for the **actual published asset**; a green workflow alone is not proof that an APK asset exists.
+It downloads the **one** `orbital-debug-apk` artifact from that exact verified host build, checks ZIP integrity and `AndroidManifest.xml`, computes SHA-256, and publishes a *SHA-addressed* tag `orbital-debug-<SOURCE_SHA12>` with asset `ORBITAL-<SOURCE_SHA12>-debug.apk`. Release notes include the full source SHA, the nine-job run and the APK SHA-256. After publication the workflow re-queries the actual GitHub Release and requires the correct tag target, prerelease state, **one uploaded APK of the expected name and byte length**, and GitHub's server-reported `sha256:` asset digest matching the verified local APK. On retries, a missing/corrupt/mismatched asset is a hard failure, never an assumed success. Existing tags and release assets are not overwritten or retagged by this workflow. Check [GitHub Releases](https://github.com/boop-bip80/Android-synth/releases) for the **actual published APK asset**; a green build workflow alone is not proof that one exists.
+
+**GitHub-enforced immutability is a separate repository setting**: enable **Settings → General → Releases → Enable release immutability** *before* publishing if the release and tag must be platform-locked against modification or deletion. Without that setting, SHA-addressed tags and the workflow's no-overwrite rule provide a write-once *automation policy*, not a GitHub-enforced immutable artifact. A repository-settings check is not implied by passing CI.
 
 These assets are **developer debug prereleases**, installable for controlled testing. They are not signed with a production keystore, not Play Store-ready, and not certification of low-latency sound design on a real phone. Physical-device benchmarks and a production signing/distribution decision are separate release requirements.
 
