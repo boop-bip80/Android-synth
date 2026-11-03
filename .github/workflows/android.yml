@@ -172,6 +172,7 @@ jobs:
             artifacts/emulator-logcat.txt
             artifacts/compact-test-live-logcat.txt
             artifacts/instrumentation-suite.txt
+            artifacts/step-restart-*.txt
             artifacts/compact-e2e-phase.txt
             artifacts/compact-e2e-summary.txt
             artifacts/compact-350-logcat.txt
