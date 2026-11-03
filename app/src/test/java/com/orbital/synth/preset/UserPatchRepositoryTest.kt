@@ -239,7 +239,7 @@ class UserPatchRepositoryTest {
         assertEquals(listOf(lfo), first.patch.modulationLfos)
         assertEquals(136f, first.patch.modulationTempoBpm, 0f)
         val exported = success(repository.exportPatchText(first.patch.id))
-        assertTrue(exported.startsWith("ORBITAL-PATCH/3\\n"))
+        assertTrue(exported.startsWith("ORBITAL-PATCH/3\n"))
         assertEquals(first.patch, PatchCodec.decode(exported))
 
         // A subsequent edit must not retroactively change earlier saved snapshots.
