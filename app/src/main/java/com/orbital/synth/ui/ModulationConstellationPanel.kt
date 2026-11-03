@@ -232,19 +232,19 @@ fun ModulationConstellationPanel(
                 EnumPicker(
                     "SOURCE", chosen.source, ModSource.entries,
                     { ModulationConstellationModel.enumLabel(it.name) },
-                    { onRouteChange(current, chosen.copy(source = it)) }, Modifier.weight(1f),
+                    { onRouteChange(current, chosen.copy(source = it, enabled = true)) }, Modifier.weight(1f),
                 )
                 Text("→", color = OrbitalPalette.Gold, fontSize = 22.sp)
                 EnumPicker(
                     "DESTINATION", chosen.destination, ModDestination.entries,
                     { ModulationConstellationModel.enumLabel(it.name) },
-                    { onRouteChange(current, chosen.copy(destination = it)) }, Modifier.weight(1f),
+                    { onRouteChange(current, chosen.copy(destination = it, enabled = true)) }, Modifier.weight(1f),
                 )
             }
             EnumPicker(
                 "MODULATION CURVE", chosen.curve, ModCurve.entries,
                 { ModulationConstellationModel.enumLabel(it.name) },
-                { onRouteChange(current, chosen.copy(curve = it)) }, Modifier.fillMaxWidth(),
+                { onRouteChange(current, chosen.copy(curve = it, enabled = true)) }, Modifier.fillMaxWidth(),
             )
             Text(
                 "DEPTH  " + ("%.2f".format(chosen.depth.coerceIn(-4f, 4f))) + "×",
@@ -253,7 +253,7 @@ fun ModulationConstellationPanel(
             )
             Slider(
                 value = chosen.depth.coerceIn(-4f, 4f),
-                onValueChange = { onRouteChange(current, chosen.copy(depth = it)) },
+                onValueChange = { onRouteChange(current, chosen.copy(depth = it, enabled = true)) },
                 valueRange = -4f..4f,
                 modifier = Modifier.fillMaxWidth().testTag("modulationDepthSlider"),
                 colors = SliderDefaults.colors(
