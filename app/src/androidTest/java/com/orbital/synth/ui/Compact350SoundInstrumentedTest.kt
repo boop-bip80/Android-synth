@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -76,7 +77,14 @@ class Compact350SoundInstrumentedTest {
         // far-right (eighth) oscillator inside a horizontally scrolling row.
         // The original piano assertions stay unchanged below this addition.
         Log.i(TAG, "phase=before-editor-physical-swipe")
-        compose.onNodeWithTag("soundEditorScroll").performTouchInput { swipeUp() }
+        compose.onNodeWithTag("soundEditorScroll").performTouchInput {
+            val x = center.x
+            down(Offset(x, center.y * 1.7f))
+            moveTo(Offset(x, center.y * 1.1f))
+            moveTo(Offset(x, center.y * .55f))
+            moveTo(Offset(x, center.y * .3f))
+            up()
+        }
         Log.i(TAG, "phase=after-editor-physical-swipe")
         compose.onNodeWithTag("oscillatorLayer7")
             .performScrollTo().assertIsDisplayed().performClick()
@@ -128,7 +136,14 @@ class Compact350SoundInstrumentedTest {
             "Multitouch piano keyboard", substring = true,
         ).assertIsDisplayed()
         Log.i(TAG, "phase=engine-before-physical-swipe")
-        compose.onNodeWithTag("soundEditorScroll").performTouchInput { swipeUp() }
+        compose.onNodeWithTag("soundEditorScroll").performTouchInput {
+            val x = center.x
+            down(Offset(x, center.y * 1.7f))
+            moveTo(Offset(x, center.y * 1.1f))
+            moveTo(Offset(x, center.y * .55f))
+            moveTo(Offset(x, center.y * .3f))
+            up()
+        }
         Log.i(TAG, "phase=engine-after-physical-swipe")
         compose.onNodeWithContentDescription("Sound rack ENGINE")
             .performScrollTo().assertIsDisplayed().performClick()
@@ -166,7 +181,10 @@ class Compact350SoundInstrumentedTest {
         // after scrolling the editor and selecting a digital architecture.
         compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
-        ).performTouchInput { click() }
+        ).performTouchInput {
+            down(center)
+            up()
+        }
         compose.runOnIdle { assertTrue("Pinned piano lost note ingress", noteOns.isNotEmpty()) }
         Log.i(TAG, "phase=engine-finished")
     }
