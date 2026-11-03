@@ -187,7 +187,7 @@ jobs:
           # concept image, or claim of successful UI test gates.
           sources = [
               ("SOUNDHOST", "artifacts/live-sound-host-normal", "orbital-emulator.png"),
-              ("SOUNDCOMPACT", "artifacts/live-sound-host-compact", "orbital-compact-emulator.png"),
+              ("SOUNDCOMPACT", "artifacts/live-sound-host-compact", "compact-350-sound.png"),
           ]
           for prefix, folder, name in sources:
               files = sorted(glob.glob(os.path.join(folder, '**', '*.png'), recursive=True))
@@ -200,7 +200,10 @@ jobs:
               assert blob.startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid live-host PNG'
               image = Image.open(io.BytesIO(blob))
               original = image.size
-              assert original[0] >= 600 and original[1] >= 1000, 'Expected actual phone framebuffer'
+              if prefix == "SOUNDHOST":
+                  assert original[0] >= 600 and original[1] >= 1000, 'Expected actual portrait phone'
+              else:
+                  assert original[0] >= 300 and original[1] >= 300, 'Expected authentic 350dp short-height emulator'
               preview = ImageOps.exif_transpose(image).convert('RGB')
               preview.thumbnail((700, 1556), Image.Resampling.LANCZOS)
               output = io.BytesIO()
