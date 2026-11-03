@@ -58,6 +58,9 @@ fun OrbitalSynth.loadPatch(patch: SynthPatch) {
     patch.fxSlots.forEachIndexed { index, config ->
         setFxSlot(index, config)
     }
+    // Clear the previous patch's actual delay/chorus memory on the worker.
+    // Its queued reset also fences off old reorders from touching this rack.
+    resetFxRackHistoryForPatch()
 }
 
 /** Friendly factory-name alias for application integrations. */
