@@ -1,5 +1,7 @@
 package com.orbital.synth.core.preset
 
+import com.orbital.synth.core.OscillatorSlot
+
 /** Stable engine parameter keys, matching com.orbital.synth.core.ParameterId names. */
 object PatchParameters {
     val ALL: List<String> = listOf(
@@ -21,6 +23,8 @@ data class SynthPatch(
     val description: String = "",
     val tags: Set<String> = emptySet(),
     val parameters: Map<String, Float>,
+    /** Extra additive oscillators; empty means a legacy, single-engine patch. */
+    val oscillatorSlots: List<OscillatorSlot> = emptyList(),
 ) {
     init {
         require(validId(id)) { "Invalid patch identifier" }
@@ -33,6 +37,14 @@ data class SynthPatch(
         require(parameters.values.all { it.isFinite() && it in 0f..1f }) {
             "Parameters must be normalized, finite values"
         }
+        require(oscillatorSlots.size <= 8) { "A patch supports at most eight additive oscillators" }
+        require(oscillatorSlots.all { slot ->
+            slot.waveform.isFinite() && slot.waveform in 0f..1f &&
+                slot.morph.isFinite() && slot.morph in 0f..1f &&
+                slot.level.isFinite() && slot.level in 0f..1f &&
+                slot.coarseSemitones in -48..48 &&
+                slot.fineCents.isFinite() && slot.fineCents in -100f..100f
+        }) { "Invalid oscillator slot settings" }
     }
 
     fun parameter(key: String, fallback: Float = 0.5f): Float = parameters[key] ?: fallback
