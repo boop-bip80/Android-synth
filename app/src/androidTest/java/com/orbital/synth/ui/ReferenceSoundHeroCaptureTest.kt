@@ -1,20 +1,25 @@
 package com.orbital.synth.ui
 
 import android.graphics.Bitmap
+import android.graphics.Color as PixelColor
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.orbital.synth.MainActivity
+import androidx.compose.ui.unit.dp
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.ParameterId
@@ -35,6 +40,23 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ReferenceSoundHeroCaptureTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    private fun markerPixels(bitmap: Bitmap): Int {
+        var found = 0
+        val row = IntArray(bitmap.width)
+        // Sample low-cost 4px grid across the REAL full-screen framebuffer.
+        for (y in 0 until bitmap.height step 4) {
+            bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
+            for (x in 0 until bitmap.width step 4) {
+                val pixel = row[x]
+                if (PixelColor.red(pixel) > 240 &&
+                    PixelColor.green(pixel) < 24 &&
+                    PixelColor.blue(pixel) > 185
+                ) found++
+            }
+        }
+        return found
+    }
 
     @Test fun captureActualAgslPlasmaAndLiveWidgetLayoutBeforeHostIntegration() {
         val parameters = mapOf(
@@ -70,6 +92,17 @@ class ReferenceSoundHeroCaptureTest {
                     engineName = "ORBITAL WT",
                     modifier = Modifier.fillMaxWidth(),
                 )
+                // Diagnostic-only SurfaceFlinger sentinel. This small magenta
+                // marker CANNOT exist on the original MainActivity SOUND
+                // screen; it catches an unrelated foreground-frame capture.
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 14.dp, bottom = 35.dp)
+                        .size(20.dp)
+                        .background(Color(0xFFF708DE))
+                        .testTag("heroPixelFixtureSentinel"),
+                )
             }
             }
         }
@@ -84,6 +117,7 @@ class ReferenceSoundHeroCaptureTest {
                 ribbonBounds.height > 48f)
         compose.onNodeWithTag("referenceKnobFX_AMOUNT").assertExists()
         compose.onNodeWithTag("referenceMiniMod").assertExists()
+        compose.onNodeWithTag("heroPixelFixtureSentinel").assertExists()
         compose.waitForIdle()
         val deadline = SystemClock.uptimeMillis() + 12_000L
         while (!compose.activity.hasWindowFocus() &&
@@ -120,9 +154,34 @@ class ReferenceSoundHeroCaptureTest {
 
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.waitForIdleSync()
-        val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot()) {
-            "Android UiAutomation did not return genuine frame pixels"
+        compose.mainClock.advanceTimeBy(300L)
+        compose.waitForIdle()
+        Thread.sleep(450L) // SurfaceFlinger presents AFTER Compose semantics.
+        // Pixel sentinel is part of THIS fixture's actual Android framebuffer.
+        // Compose nodes alone can exist while another Activity is onscreen;
+        // accepting such a screenshot would falsify reference parity.
+        val automation = instrumentation.uiAutomation
+        var verifiedFrame: Bitmap? = null
+        var verifiedMarkers = 0
+        for (attempt in 1..16) {
+            val frame = automation.takeScreenshot()
+            if (frame != null) {
+                val seen = markerPixels(frame)
+                println("REFERENCE_HERO_SCREENSHOT_FRAME_ATTEMPT attempt=$attempt markerPixels=$seen")
+                if (seen >= 50) {
+                    verifiedFrame = frame
+                    verifiedMarkers = seen
+                    break
+                }
+                frame.recycle()
+            }
+            Thread.sleep(260L)
         }
+        val bitmap = checkNotNull(verifiedFrame) {
+            "UiAutomation captured a DIFFERENT foreground window than the real " +
+                "ReferenceSoundHero fixture: magenta marker never reached SurfaceFlinger"
+        }
+        println("REFERENCE_HERO_SCREENSHOT_PROVENANCE_VERIFIED markerPixels=$verifiedMarkers")
         try {
             assertTrue("Real emulator screenshot must be portrait",
                 bitmap.height > bitmap.width)
