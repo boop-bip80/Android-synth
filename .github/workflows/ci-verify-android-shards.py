@@ -85,7 +85,7 @@ def runner_manifest(runner_output: Path, destination: Path) -> None:
     if not runner_output.is_file():
         die("AndroidJUnitRunner log-only output missing")
     output = runner_output.read_text(encoding="utf-8", errors="replace")
-    if not re.search(r"INSTRUMENTATION_CODE:\\s*-1\\b", output):
+    if not re.search(r"INSTRUMENTATION_CODE:\s*-1\b", output):
         die("AndroidJUnitRunner log-only enumeration did not finish successfully")
     current_class = ""
     current_test = ""
