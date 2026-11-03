@@ -1,14 +1,15 @@
-name: Diagnostic - isolated API35 compact oscillator phased test
+name: Diagnostic - cold strict #149 reordered compact editor
 on:
   push:
     branches: [diagnostic/isolated-compact-osc-20261103]
 permissions:
   contents: read
+  actions: read
 jobs:
   isolated:
-    name: Fresh emulator phased compact 350dp debug test
+    name: Fresh emulator original strict 350dp toggle test after production reorder
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -18,17 +19,26 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
-      - name: Install API35 SDK and Gradle
+      - name: Install API 35 SDK before emulator allocation
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Download validated #149 EXACT app artifact (no build during QEMU)
+        uses: actions/download-artifact@v4
         with:
-          gradle-version: '8.11.1'
-      - name: Compile exact phase-logged app and Android test WITHOUT emulator
-        run: gradle :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon --console=plain
-      - name: Enable KVM
+          name: orbital-debug-apk
+          run-id: 41630528857
+          github-token: ${{ github.token }}
+          path: app/build/outputs/apk/debug
+      - name: Download validated #149 EXACT androidTest artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: orbital-debug-android-test-apk
+          run-id: 41630528857
+          github-token: ${{ github.token }}
+          path: app/build/outputs/apk/androidTest/debug
+      - name: Enable /dev/kvm
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
-      - name: Run isolated phase-logged real compact test on clean API35
+      - name: Run isolated real 360x350 Compose test on clean emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -42,21 +52,13 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           script: bash .github/workflows/diagnostic-compact-osc.sh
-      - name: Print bounded last phase and GPU/host watchdog on crash
-        if: always()
-        shell: bash
-        run: |
-          printf '\n=== ANDROID PHASES ===\n'
-          grep 'OrbitalCompactTest.*PHASE-' artifacts/isolated-compact-live-logcat.txt || true
-          printf '\n=== DEVICE / GLES / OOM LOG TAIL ===\n'
-          tail -n 160 artifacts/isolated-compact-live-logcat.txt || true
-          printf '\n=== HOST / CGROUP MEMORY WATCHDOG TAIL ===\n'
-          tail -n 110 artifacts/isolated-compact-host-watchdog.txt || true
-      - name: Retain exact provenance, phase, pre-crash Android and host state
+      - name: Retain bounded exact provenance/phase, output and pre-crash Android logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: isolated-compact-oscillator-phased-api35
-          path: artifacts/isolated-compact-*.txt
+          name: isolated-compact-oscillator-api35
+          path: |
+            artifacts/isolated-compact-*.txt
+            artifacts/isolated-compact-*.png
           if-no-files-found: warn
           retention-days: 7
