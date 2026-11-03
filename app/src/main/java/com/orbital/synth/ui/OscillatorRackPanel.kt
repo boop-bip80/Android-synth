@@ -4,8 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -491,25 +491,27 @@ private fun OscillatorWavePreview(
             .background(Color(0xFF030814), RoundedCornerShape(12.dp))
             .testTag("oscillatorWaveCanvas")
             .pointerInput(Unit) {
-                detectTapGestures { position ->
-                    touch(
-                        (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                        (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
-                    )
-                }
-            }
-            .pointerInput(Unit) {
-                detectDragGestures(onDragStart = { start ->
-                    touch(
-                        (start.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                        (1f - start.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
-                    )
-                }) { change, _ ->
-                    touch(
-                        (change.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                        (1f - change.position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
-                    )
-                    change.consume()
+                // A single recognizer owns DOWN and MOVE. Two independent
+                // tap/drag recognizers competed for the same pointer; real
+                // API35 XY tap injection never reached the noise callback.
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val id = down.id
+                    fun publish(position: Offset) {
+                        touch(
+                            (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                            (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        )
+                    }
+                    publish(down.position)
+                    down.consume()
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pointer = event.changes.firstOrNull { it.id == id } ?: break
+                        if (!pointer.pressed) break
+                        publish(pointer.position)
+                        pointer.consume()
+                    }
                 }
             },
     ) {
@@ -569,25 +571,27 @@ private fun NoiseSpectrumPad(
                     "Noise spectrum touch field. Horizontal changes white pink brown color; vertical changes mix."
             }
             .pointerInput(Unit) {
-                detectTapGestures { position ->
-                    touch(
-                        (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                        (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
-                    )
-                }
-            }
-            .pointerInput(Unit) {
-                detectDragGestures(onDragStart = { point ->
-                    touch(
-                        (point.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                        (1f - point.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
-                    )
-                }) { change, _ ->
-                    touch(
-                        (change.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
-                        (1f - change.position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
-                    )
-                    change.consume()
+                // A single recognizer owns DOWN and MOVE. Two independent
+                // tap/drag recognizers competed for the same pointer; real
+                // API35 XY tap injection never reached the noise callback.
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val id = down.id
+                    fun publish(position: Offset) {
+                        touch(
+                            (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                            (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        )
+                    }
+                    publish(down.position)
+                    down.consume()
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pointer = event.changes.firstOrNull { it.id == id } ?: break
+                        if (!pointer.pressed) break
+                        publish(pointer.position)
+                        pointer.consume()
+                    }
                 }
             },
     ) {
