@@ -63,9 +63,15 @@ class OrbitalCompactHeightTest {
         checkKeyboard("SOUND-initial")
         Log.i(COMPACT_DIAGNOSTIC_TAG, "360dp: clicking Tab FX")
         compose.onNodeWithContentDescription("Tab FX").performClick()
+        Log.i(COMPACT_DIAGNOSTIC_TAG, "360dp: before waitForIdle after FX switch")
+        compose.waitForIdle()
+        Log.i(COMPACT_DIAGNOSTIC_TAG, "360dp: waitForIdle after FX switch returned")
         checkKeyboard("FX")
         Log.i(COMPACT_DIAGNOSTIC_TAG, "360dp: clicking Tab SOUND")
         compose.onNodeWithContentDescription("Tab SOUND").performClick()
+        Log.i(COMPACT_DIAGNOSTIC_TAG, "360dp: before waitForIdle after SOUND switch")
+        compose.waitForIdle()
+        Log.i(COMPACT_DIAGNOSTIC_TAG, "360dp: waitForIdle after SOUND switch returned")
         checkKeyboard("SOUND-return")
     }
 }
