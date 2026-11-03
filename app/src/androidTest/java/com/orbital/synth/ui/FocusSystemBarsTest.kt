@@ -116,17 +116,39 @@ class FocusSystemBarsTest {
             val margin = (bitmap.height / 16).coerceAtMost(130)
             val strideX = (bitmap.width / 180).coerceAtLeast(3)
             val strideY = (margin / 12).coerceAtLeast(2)
-            var brightEdges = 0
+            var topBright = 0
+            var bottomBright = 0
             for (y in 0 until margin step strideY) {
                 for (x in 0 until bitmap.width step strideX) {
                     val top = bitmap.getPixel(x, y)
                     val bottom = bitmap.getPixel(x, bitmap.height - 1 - y)
-                    if (maxOf(Color.red(top), Color.green(top), Color.blue(top)) > 24) brightEdges++
-                    if (maxOf(Color.red(bottom), Color.green(bottom), Color.blue(bottom)) > 24) brightEdges++
+                    if (maxOf(Color.red(top), Color.green(top), Color.blue(top)) > 24) topBright++
+                    if (maxOf(Color.red(bottom), Color.green(bottom), Color.blue(bottom)) > 24) bottomBright++
                 }
             }
-            assertTrue("FOCUS framebuffer contains residual OS bar/overlay artwork at edges: $brightEdges",
-                brightEdges <= 3)
+            fun rgb(x: Int, y: Int): String {
+                val pixel = bitmap.getPixel(x, y)
+                return "${Color.red(pixel)},${Color.green(pixel)},${Color.blue(pixel)}"
+            }
+            val xMid = bitmap.width / 2
+            var hasActivityFocus = false
+            var statusColor = 0
+            var navigationColor = 0
+            compose.activityRule.scenario.onActivity { activity ->
+                hasActivityFocus = activity.window.decorView.hasWindowFocus()
+                statusColor = activity.window.statusBarColor
+                navigationColor = activity.window.navigationBarColor
+            }
+            val diagnostics =
+                "top=$topBright bottom=$bottomBright centerTopRGB=${rgb(xMid, margin / 2)} " +
+                    "centerBottomRGB=${rgb(xMid, bitmap.height - margin / 2)} " +
+                    "centerCanvasRGB=${rgb(xMid, bitmap.height / 2)} " +
+                    "focus=$hasActivityFocus statusBarColor=$statusColor " +
+                    "navigationBarColor=$navigationColor bars=${bars()} " +
+                    "dimensions=${bitmap.width}x${bitmap.height}"
+            println("ORBITAL_FOCUS_EDGE_EVIDENCE $diagnostics")
+            assertTrue("FOCUS framebuffer contains residual OS bar/overlay artwork: $diagnostics",
+                topBright + bottomBright <= 3)
         } finally {
             bitmap.recycle()
         }
