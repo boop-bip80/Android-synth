@@ -133,8 +133,8 @@ jobs:
             artifacts/orbital-landscape-emulator.png
             artifacts/orbital-immersive-emulator.png
             artifacts/orbital-oscillator-workbench.png
-            artifacts/orbital-stage-idle-proof.png
-            artifacts/orbital-stage-held-performance.png
+            artifacts/orbital-focus-idle-black.png
+            artifacts/orbital-focus-held-note.png
             artifacts/compact-350-sound.png
             artifacts/compact-350-fx.png
             artifacts/compact-350-sound-return.png
