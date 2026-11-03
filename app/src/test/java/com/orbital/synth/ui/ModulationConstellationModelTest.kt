@@ -47,7 +47,7 @@ class ModulationConstellationModelTest {
             ModDestination.CUTOFF, ModDestination.RESONANCE,
             ModDestination.AMP, ModDestination.PAN,
         )
-        assertEquals(supported, ModDestination.entries.filter(model::audibleTarget))
+        assertEquals(supported.toSet(), ModDestination.entries.filter(model::audibleTarget).toSet())
         assertEquals(supported, model.destinationChoices.take(supported.size))
         assertEquals(ModDestination.entries.size, model.destinationChoices.size)
         assertEquals(ModDestination.entries.toSet(), model.destinationChoices.toSet())
