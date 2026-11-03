@@ -116,7 +116,9 @@ class PatchGraphUiModelTest {
         assertEquals(1, global.patchCables.size)
         assertEquals("BUSPAN", global.patchCables.single().to.id)
         val osc2 = snapshot(
-            oscillators = List(8) { OscillatorSlot(enabled = it == 1) },
+            oscillators = List(8) {
+                OscillatorSlot(enabled = it == 1, level = if (it == 1) .55f else 0f)
+            },
             routes = routes,
             bank = PatchGraphTargetBank.OSC2,
         )
