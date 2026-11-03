@@ -61,6 +61,29 @@ class StageTouchSettingsPersistenceTest {
         ).legacy)
     }
 
+    @Test fun bomAndWindowsLineEndingsImportWithoutImplicitlyRewritingUserFile() = runBlocking {
+        withScratch { path ->
+            val legacy = "\uFEFF# saved on a desktop\r\nORBITAL-STAGE-TOUCH-V0\r\n" +
+                "tonic=10\r\nspan=2\r\naxis=X\r\nhold=false\r\n"
+            writeUtf8(path, legacy)
+            val repo = StageTouchSettingsRepository(path, Dispatchers.Unconfined)
+
+            val loaded = repo.load()
+            assertEquals(StageTouchLoadSource.LEGACY, loaded.source)
+            assertEquals(StageTouchSettings(
+                tonic = 10, octaveRange = 2,
+                pitchAxis = TouchPitchAxis.HORIZONTAL, glissando = true,
+            ), loaded.settings)
+            assertEquals(legacy, readUtf8(path)) // Loading never modifies a legacy file.
+
+            assertEquals(StageTouchSettingsSave.Saved, repo.save(loaded.settings))
+            assertEquals(StageTouchSettingsLoad(
+                loaded.settings, StageTouchLoadSource.SAVED,
+            ), repo.load())
+            assertTrue(readUtf8(path).startsWith(StageTouchSettingsCodec.V1_HEADER + "\n"))
+        }
+    }
+
     @Test fun unversionedEarlyKeyValueFilesRestoreDefaultsForMissingFields() {
         val decoded = StageTouchSettingsCodec.decode(
             "scale=DORIAN\naxis=X\nglide=false\noctave=5\n"
