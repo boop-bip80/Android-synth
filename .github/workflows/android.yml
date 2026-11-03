@@ -183,6 +183,7 @@ jobs:
             artifacts/immersive-emulator-logcat.txt
             artifacts/immersive-emulator-phase.txt
             artifacts/immersive-emulator-summary.txt
+            artifacts/immersive-gesture.txt
             artifacts/immersive-activity-launch.txt
             artifacts/immersive-window-state.txt
             artifacts/immersive-*-dump.txt
