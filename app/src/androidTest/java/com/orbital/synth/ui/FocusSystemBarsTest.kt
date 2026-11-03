@@ -2,7 +2,7 @@ package com.orbital.synth.ui
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import androidx.activity.ComponentActivity
+import com.orbital.synth.MainActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -27,7 +27,7 @@ import androidx.lifecycle.Lifecycle
  */
 @RunWith(AndroidJUnit4::class)
 class FocusSystemBarsTest {
-    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     private data class Bars(val status: Boolean, val navigation: Boolean)
 
@@ -76,17 +76,9 @@ class FocusSystemBarsTest {
     }
 
     private fun renderStage() {
-        compose.setContent {
-            OrbitalScreen(
-                state = OrbitalUiState(),
-                onNoteOn = {},
-                onNoteOff = {},
-                onParameterChange = { _, _ -> },
-                onModeChange = {},
-                onOctaveChange = {},
-            )
-        }
-        compose.onNodeWithTag("immersiveModeToggle").performClick()
+        // Exercise the actual app window, not a transient generic Compose test
+        // Activity that may never own SurfaceFlinger's display focus.
+        compose.onNodeWithTag("immersiveModeToggle").assertIsDisplayed().performClick()
         compose.onNodeWithTag("immersiveExit").assertIsDisplayed()
     }
 
