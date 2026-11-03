@@ -9,12 +9,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
@@ -137,7 +139,7 @@ class PatchGraphPanelTest {
             }
         }
         compose.onNodeWithTag("patchGraphCanvas").performTouchInput {
-            click(Offset(size.width * .125f, size.height * .145f))
+            click(Offset(center.x * .25f, center.y * .29f))
         }
         compose.runOnIdle {
             assertTrue(layers.value[0].enabled)
@@ -178,8 +180,8 @@ class PatchGraphPanelTest {
         // Three true FX stages are centered at 1/4, 2/4, 3/4 width, y=0.55.
         compose.onNodeWithTag("patchGraphCanvas").performTouchInput {
             swipe(
-                start = Offset(size.width * .25f, size.height * .55f),
-                end = Offset(size.width * .75f, size.height * .55f),
+                start = Offset(center.x * .5f, center.y * 1.1f),
+                end = Offset(center.x * 1.5f, center.y * 1.1f),
                 durationMillis = 520L,
             )
         }
@@ -187,6 +189,59 @@ class PatchGraphPanelTest {
             assertEquals(FxModuleType.DELAY, stages.value[0].type)
             assertEquals(FxModuleType.SATURATION, stages.value[1].type)
             assertEquals(FxModuleType.CHORUS, stages.value[2].type)
+        }
+    }
+
+    @Test fun existingCableSupportsTypedSourceDestinationAndCurveWithRealCallbacks() {
+        val routes = mutableStateOf(List(64) { index ->
+            if (index == 0) ModulationRouteConfig(
+                enabled = true,
+                source = ModSource.LFO1,
+                destination = ModDestination.MORPH,
+                depth = .6f,
+            ) else ModulationRouteConfig()
+        })
+        compose.setContent {
+            MaterialTheme {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    PatchGraphPanel(
+                        oscillators = emptyList(),
+                        lfos = List(8) { ModulationLfoConfig(enabled = true) },
+                        routes = routes.value,
+                        fxSlots = List(6) { FxModuleConfig() },
+                        onRouteChange = { index, edited ->
+                            routes.value = routes.value.toMutableList().apply {
+                                set(index, edited)
+                            }
+                        },
+                        onRouteClear = {},
+                        onMoveFxSlot = { _, _ -> },
+                    )
+                }
+            }
+        }
+        compose.onNodeWithTag("patchGraphRouteEditor").performScrollTo()
+        compose.onNodeWithTag("patchGraphRouteSource").performScrollTo().performClick()
+        compose.onNodeWithTag("patchGraphRouteSourceOptionENV1").performClick()
+        compose.runOnIdle {
+            assertEquals(ModSource.ENV1, routes.value[0].source)
+            assertTrue(routes.value[0].enabled)
+        }
+        compose.onNodeWithTag("patchGraphRouteDestination").performScrollTo().performClick()
+        compose.onNodeWithTag("patchGraphRouteDestinationOptionRESONANCE").performClick()
+        compose.runOnIdle {
+            assertEquals(ModDestination.RESONANCE, routes.value[0].destination)
+        }
+        compose.onNodeWithTag("patchGraphRouteCurve").performScrollTo().performClick()
+        compose.onNodeWithTag("patchGraphRouteCurveOption" +
+            com.orbital.synth.core.dsp.processing.ModCurve.entries.last().name).performClick()
+        compose.runOnIdle {
+            assertEquals(
+                com.orbital.synth.core.dsp.processing.ModCurve.entries.last(),
+                routes.value[0].curve,
+            )
+            assertEquals(.6f, routes.value[0].depth)
+            assertTrue(routes.value.drop(1).all { it == ModulationRouteConfig() })
         }
     }
 
