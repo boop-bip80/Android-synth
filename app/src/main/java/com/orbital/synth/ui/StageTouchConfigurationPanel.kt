@@ -107,7 +107,7 @@ internal fun StageTouchConfigurationPanel(
             }
             ConfigSection("03 / START OCTAVE", "Lowest register of the sound field.") {
                 ConfigChoiceRow {
-                    (1..7).forEach { octave ->
+                    (0..8).forEach { octave ->
                         ConfigChip("C$octave", settings.baseOctave == octave, "Starting octave $octave", "stageBaseOctave-$octave") {
                             onChange(settings.copy(baseOctave = octave))
                         }
