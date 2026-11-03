@@ -1,6 +1,8 @@
 package com.orbital.synth.core.preset
 
 import com.orbital.synth.core.OscillatorSlot
+import com.orbital.synth.core.ModulationRouteConfig
+import com.orbital.synth.core.ModulationLfoConfig
 
 /** Stable engine parameter keys, matching com.orbital.synth.core.ParameterId names. */
 object PatchParameters {
@@ -25,6 +27,12 @@ data class SynthPatch(
     val parameters: Map<String, Float>,
     /** Extra additive oscillators; empty means a legacy, single-engine patch. */
     val oscillatorSlots: List<OscillatorSlot> = emptyList(),
+    /** Ordered edit state for up to 64 modulation routes (including disabled lanes). */
+    val modulationRoutes: List<ModulationRouteConfig> = emptyList(),
+    /** Ordered LFO settings; empty means the legacy default, first LFO active. */
+    val modulationLfos: List<ModulationLfoConfig> = emptyList(),
+    /** Saved transport tempo for beat-synchronized modulation. */
+    val modulationTempoBpm: Float = 120f,
 ) {
     init {
         require(validId(id)) { "Invalid patch identifier" }
@@ -45,6 +53,19 @@ data class SynthPatch(
                 slot.coarseSemitones in -48..48 &&
                 slot.fineCents.isFinite() && slot.fineCents in -100f..100f
         }) { "Invalid oscillator slot settings" }
+        require(modulationRoutes.size <= 64) { "A patch supports at most 64 modulation routes" }
+        require(modulationRoutes.all { it.depth.isFinite() && it.depth in -4f..4f }) {
+            "Invalid modulation route depth"
+        }
+        require(modulationLfos.size <= 8) { "A patch supports at most eight LFOs" }
+        require(modulationLfos.all { lfo ->
+            lfo.rateHz.isFinite() && lfo.rateHz in 0.01f..40f &&
+                lfo.beatsPerCycle.isFinite() &&
+                (lfo.beatsPerCycle == 0f || lfo.beatsPerCycle in 0.0625f..64f)
+        }) { "Invalid LFO settings" }
+        require(modulationTempoBpm.isFinite() && modulationTempoBpm in 20f..400f) {
+            "Invalid modulation transport tempo"
+        }
     }
 
     fun parameter(key: String, fallback: Float = 0.5f): Float = parameters[key] ?: fallback
