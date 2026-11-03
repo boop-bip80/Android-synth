@@ -85,9 +85,18 @@ class ModulationSourceAvailabilityTest {
             route(ModSource.LFO1, Float.NaN), enabledLfos, null))
         assertFalse(ModulationSourceAvailability.showConfiguredPhoton(
             route(ModSource.LFO1, 1f), disabledLfos, null))
-        assertFalse(ModulationSourceAvailability.showConfiguredPhoton(
-            route(ModSource.LFO1, 1f, ModDestination.OSC1_GAIN),
-            enabledLfos, null))
+        assertTrue("OSC1 gain is now a real routed DSP layer",
+            ModulationSourceAvailability.showConfiguredPhoton(
+                route(ModSource.LFO1, 1f, ModDestination.OSC1_GAIN),
+                enabledLfos, null))
+        assertFalse("Reserved filter drive must still never fake a DSP photon",
+            ModulationSourceAvailability.showConfiguredPhoton(
+                route(ModSource.LFO1, 1f, ModDestination.FILTER_DRIVE),
+                enabledLfos, null))
+        assertFalse("Unwired source must not generate a decorative photon even on live OSC",
+            ModulationSourceAvailability.showConfiguredPhoton(
+                route(ModSource.ENV1, 1f, ModDestination.OSC1_GAIN),
+                enabledLfos, null))
         assertFalse(ModulationSourceAvailability.showConfiguredPhoton(
             route(ModSource.LFO1, 1f).copy(enabled = false), enabledLfos, null))
         assertTrue(ModulationSourceAvailability.showConfiguredPhoton(
@@ -155,7 +164,13 @@ class ModulationSourceAvailabilityTest {
             .contains("BYPASSED"))
         assertTrue(ModulationSourceAvailability.routeStatus(
             route(ModSource.LFO1, 1f, ModDestination.OSC1_GAIN),
+            enabledLfos, null).contains("SIGNAL DEPENDENT"))
+        assertTrue(ModulationSourceAvailability.routeStatus(
+            route(ModSource.LFO1, 1f, ModDestination.FILTER_DRIVE),
             enabledLfos, null).contains("RESERVED"))
+        assertTrue(ModulationSourceAvailability.routeStatus(
+            route(ModSource.ENV1, 1f, ModDestination.OSC1_GAIN),
+            enabledLfos, null).contains("UNWIRED SOURCE"))
     }
 
     @Test fun signedSavedRouteFieldsStayUntouchedAndUnwiredCableTalkBackCannotClaimAudio() {
