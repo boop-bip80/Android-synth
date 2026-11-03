@@ -327,11 +327,12 @@ class Compact350SoundInstrumentedTest {
             // Gesture starts in the editor's left gutter, away from parameter
             // bar drag recognizers, so it reaches the vertical scroll owner.
             compose.onNodeWithTag("soundEditorScroll").performTouchInput {
-                val x = size.width * .06f
-                down(Offset(x, size.height * .86f))
-                moveTo(Offset(x, size.height * .66f))
-                moveTo(Offset(x, size.height * .43f))
-                moveTo(Offset(x, size.height * .16f))
+                // TouchInjectionScope exposes center, not a size property.
+                val x = center.x * .12f
+                down(Offset(x, center.y * 1.72f))
+                moveTo(Offset(x, center.y * 1.32f))
+                moveTo(Offset(x, center.y * .86f))
+                moveTo(Offset(x, center.y * .32f))
                 up()
             }
         }
