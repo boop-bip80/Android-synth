@@ -8,9 +8,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -34,7 +37,7 @@ class OscillatorNoisePanelTest {
         var slots by mutableStateOf(List(8) { OscillatorSlot() })
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.verticalScroll(rememberScrollState()).testTag("noiseEditorScroll")) {
                     OscillatorRackPanel(
                         slots = slots,
                         onSlotChange = { index, next ->
@@ -67,7 +70,7 @@ class OscillatorNoisePanelTest {
         })
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.verticalScroll(rememberScrollState()).testTag("noiseEditorScroll")) {
                     OscillatorRackPanel(
                         slots = slots,
                         onSlotChange = { index, next ->
@@ -77,25 +80,43 @@ class OscillatorNoisePanelTest {
                 }
             }
         }
-        compose.onNodeWithTag("oscillatorNoiseCanvas").performScrollTo()
-        // Allow scroll positioning and pointer-input gesture recognizers to
-        // settle before asserting the real XY canvas touch response.
+        val canvas = compose.fullyRevealOscillatorCanvas(
+            "oscillatorNoiseCanvas", "noiseEditorScroll",
+        ).assertIsDisplayed()
+        val canvasBounds = canvas.fetchSemanticsNode().boundsInRoot
+        val rootBounds = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        val intended = Offset(
+            canvasBounds.left + canvasBounds.width * .8f,
+            canvasBounds.top + canvasBounds.height * .2f,
+        )
+        assertTrue("XY tap would be outside viewport; pad=$canvasBounds, root=$rootBounds, target=$intended",
+            intended.x in rootBounds.left..rootBounds.right &&
+                intended.y in rootBounds.top..rootBounds.bottom)
+
+        // Distinguish an inert hit target from an off-center clipped touch.
+        canvas.performTouchInput { click(center) }
         compose.waitForIdle()
-        compose.onNodeWithTag("oscillatorNoiseCanvas").performTouchInput {
+        compose.runOnIdle {
+            assertTrue("Even CENTER tap did not dispatch to noise pad; color=${slots[0].noiseColor}, pad=$canvasBounds, root=$rootBounds",
+                slots[0].noiseColor in 0.45f..0.55f)
+        }
+        canvas.performTouchInput {
             click(Offset(center.x * 1.6f, center.y * .4f))
         }
+        compose.waitForIdle()
         compose.runOnIdle {
-            assertEquals("XY pad X must publish 80% noise color",
-                .8f, slots[0].noiseColor, .07f)
-            assertEquals("XY pad Y must publish 80% noise blend",
-                .8f, slots[0].noiseLevel, .07f)
+            assertTrue("XY color should be 0.8, was ${slots[0].noiseColor}; pad=$canvasBounds, root=$rootBounds",
+                slots[0].noiseColor in 0.73f..0.87f)
+            assertTrue("XY mix should be 0.8, was ${slots[0].noiseLevel}; pad=$canvasBounds, root=$rootBounds",
+                slots[0].noiseLevel in 0.73f..0.87f)
         }
         compose.onNodeWithTag("oscillatorWave3").performScrollTo().performClick()
+        compose.waitForIdle()
         compose.runOnIdle {
             assertEquals(.75f, slots[0].waveform, 0f)
-            assertTrue("Wave chip lost noise blend: " + slots[0].noiseLevel,
+            assertTrue("Wave edit erased XY mix: ${slots[0].noiseLevel}",
                 slots[0].noiseLevel > .7f)
-            assertTrue("Wave chip lost noise color: " + slots[0].noiseColor,
+            assertTrue("Wave edit erased XY color: ${slots[0].noiseColor}",
                 slots[0].noiseColor > .7f)
         }
     }
@@ -107,7 +128,7 @@ class OscillatorNoisePanelTest {
         })
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.verticalScroll(rememberScrollState()).testTag("noiseEditorScroll")) {
                     OscillatorRackPanel(
                         slots = slots,
                         onSlotChange = { index, next ->
@@ -120,7 +141,7 @@ class OscillatorNoisePanelTest {
 
         // The pad must own DOWN and MOVE; the enclosing vertical scroller
         // must not steal finger sound-design gestures.
-        compose.onNodeWithTag("oscillatorNoiseCanvas").performScrollTo()
+        compose.fullyRevealOscillatorCanvas("oscillatorNoiseCanvas", "noiseEditorScroll")
             .performTouchInput {
                 swipe(
                     start = Offset(center.x * .2f, center.y * 1.6f),
@@ -136,7 +157,7 @@ class OscillatorNoisePanelTest {
                 slots[0].noiseLevel in 0.72f..0.89f)
         }
 
-        compose.onNodeWithTag("oscillatorWaveCanvas").performScrollTo()
+        compose.fullyRevealOscillatorCanvas("oscillatorWaveCanvas", "noiseEditorScroll", -1)
             .performTouchInput { click(center) }
         compose.waitForIdle()
         compose.runOnIdle {
@@ -153,7 +174,7 @@ class OscillatorNoisePanelTest {
         })
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.verticalScroll(rememberScrollState()).testTag("noiseEditorScroll")) {
                     OscillatorRackPanel(
                         slots = slots,
                         onSlotChange = { index, next ->

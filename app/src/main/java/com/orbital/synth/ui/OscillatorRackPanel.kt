@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -272,7 +273,7 @@ fun OscillatorRackPanel(
                 NoiseSpectrumPad(
                     slot = layer,
                     accent = tint,
-                    modifier = Modifier.fillMaxWidth().height(112.dp),
+                    modifier = Modifier.fillMaxWidth().height(118.dp),
                     onTouch = { color, blend ->
                         onSlotChange(selected, layer.copy(
                             noiseColor = color, noiseLevel = blend,
@@ -491,13 +492,14 @@ private fun OscillatorWavePreview(
             .background(Color(0xFF030814), RoundedCornerShape(12.dp))
             .testTag("oscillatorWaveCanvas")
             .pointerInput(Unit) {
-                // A single recognizer owns DOWN and MOVE. Two independent
-                // tap/drag recognizers competed for the same pointer; real
-                // API35 XY tap injection never reached the noise callback.
+                // One stable Compose gesture owner consumes pointer changes
+                // in the Main pass before the enclosing vertical scroller.
+                // The first finger controls XY; extra fingers cannot steal it.
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val id = down.id
                     fun publish(position: Offset) {
+                        if (!position.x.isFinite() || !position.y.isFinite()) return
                         touch(
                             (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
                             (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
@@ -505,12 +507,20 @@ private fun OscillatorWavePreview(
                     }
                     publish(down.position)
                     down.consume()
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val pointer = event.changes.firstOrNull { it.id == id } ?: break
-                        if (!pointer.pressed) break
-                        publish(pointer.position)
-                        pointer.consume()
+                    // Only the first finger owns X/Y expression, while all
+                    // pointers are consumed until every finger lifts so the
+                    // enclosing editor cannot steal a secondary-pointer drag.
+                    var ownerActive = true
+                    var anyPressed = true
+                    while (anyPressed) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        val pointer = event.changes.firstOrNull { it.id == id }
+                        if (ownerActive && pointer?.pressed == true) publish(pointer.position)
+                        if (pointer != null && !pointer.pressed) ownerActive = false
+                        event.changes.forEach { change ->
+                            if (change.pressed || change.previousPressed) change.consume()
+                        }
+                        anyPressed = event.changes.any { it.pressed }
                     }
                 }
             },
@@ -571,13 +581,14 @@ private fun NoiseSpectrumPad(
                     "Noise spectrum touch field. Horizontal changes white pink brown color; vertical changes mix."
             }
             .pointerInput(Unit) {
-                // A single recognizer owns DOWN and MOVE. Two independent
-                // tap/drag recognizers competed for the same pointer; real
-                // API35 XY tap injection never reached the noise callback.
+                // One stable Compose gesture owner consumes pointer changes
+                // in the Main pass before the enclosing vertical scroller.
+                // The first finger controls XY; extra fingers cannot steal it.
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val id = down.id
                     fun publish(position: Offset) {
+                        if (!position.x.isFinite() || !position.y.isFinite()) return
                         touch(
                             (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
                             (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
@@ -585,12 +596,20 @@ private fun NoiseSpectrumPad(
                     }
                     publish(down.position)
                     down.consume()
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val pointer = event.changes.firstOrNull { it.id == id } ?: break
-                        if (!pointer.pressed) break
-                        publish(pointer.position)
-                        pointer.consume()
+                    // Only the first finger owns X/Y expression, while all
+                    // pointers are consumed until every finger lifts so the
+                    // enclosing editor cannot steal a secondary-pointer drag.
+                    var ownerActive = true
+                    var anyPressed = true
+                    while (anyPressed) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        val pointer = event.changes.firstOrNull { it.id == id }
+                        if (ownerActive && pointer?.pressed == true) publish(pointer.position)
+                        if (pointer != null && !pointer.pressed) ownerActive = false
+                        event.changes.forEach { change ->
+                            if (change.pressed || change.previousPressed) change.consume()
+                        }
+                        anyPressed = event.changes.any { it.pressed }
                     }
                 }
             },
