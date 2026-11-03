@@ -58,7 +58,7 @@ jobs:
 
           # Require the actual full five-job matrix, not a stale three-job
           # historical pass or a successful but incomplete test workflow.
-          jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID/jobs?per_page=100")"
+          jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID/jobs?per_page=100&filter=latest")"
           jq -e '
             .total_count == 5 and
             (.jobs | length) == 5 and
@@ -138,11 +138,23 @@ jobs:
             exit 1
           fi
           tag="orbital-debug-$SOURCE_SHORT"
+          digest="$(sha256sum "$RUNNER_TEMP/ORBITAL-$SOURCE_SHORT-debug.apk" | cut -d' ' -f1)"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Immutable debug prerelease $tag already exists; no overwrite."
+            # Idempotence only when the existing immutable release still
+            # names exactly the expected source SHA and APK checksum.
+            tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha')"
+            release_body="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+            if [[ "$tag_sha" != "$SOURCE_SHA" || "$release_body" != *"$digest"* ]]; then
+              echo "Existing tag/release provenance disagrees with verified APK; refusing overwrite." >&2
+              exit 1
+            fi
+            echo "Matching immutable debug prerelease $tag already exists; no overwrite."
             exit 0
           fi
-          digest="$(sha256sum "$RUNNER_TEMP/ORBITAL-$SOURCE_SHORT-debug.apk" | cut -d' ' -f1)"
+          if git ls-remote origin "refs/tags/$tag" | grep -q .; then
+            echo "Tag exists without a verified matching release; refusing retag." >&2
+            exit 1
+          fi
           notes="$RUNNER_TEMP/orbital-debug-release-notes.md"
           {
             echo "ORBITAL developer debug snapshot (NOT production signed)."
