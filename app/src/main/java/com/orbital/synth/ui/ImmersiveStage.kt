@@ -65,6 +65,15 @@ import kotlin.math.abs
 
 private val StageFlickFadeEasing = Easing { StageFlickMotionMath.smoothProgress(it) }
 
+// One mutable sample per admitted DOWN; dragging mutates it in place. Recency
+// is assigned only to real sample changes, never stationary bystanders.
+private class StagePointerSample(
+    var x: Float,
+    var y: Float,
+    var pressure: Float,
+    var revision: Long,
+)
+
 /**
  * Keyboardless performance canvas. This is a real input surface: touches are routed
  * to the application's one audio engine through the same note and parameter
@@ -145,7 +154,7 @@ internal fun ImmersiveStage(
     // 420ms Animatable pauses completely once fingers stop and audio falls quiet.
     var flickKick by remember { mutableFloatStateOf(0f) }
     var flickRevision by remember { mutableLongStateOf(0L) }
-    var currentFlickSession by remember { mutableLongStateOf(0L) }
+    val touchSessions = remember { StageTouchSessionOwner() }
     val flickLight = remember { Animatable(0f) }
     LaunchedEffect(flickRevision) {
         if (flickRevision == 0L) return@LaunchedEffect
@@ -350,13 +359,15 @@ internal fun ImmersiveStage(
                     awaitPointerEventScope {
                         val activeIds = mutableSetOf<Long>()
                         val flickTracker = StageFlickVelocityTracker()
-                        // An old cancelled pointer recognizer must not darken a
-                        // newer physical gesture in its delayed finally block.
-                        val flickSession = ++currentFlickSession
+                        // A cancelled recognizer may finish after its successor.
+                        // Its entire shared-state cleanup must respect one lease.
+                        val touchSession = touchSessions.begin()
                         // Per-pointer, UI-thread-only last delivered samples. A frame from
                         // another finger's UP must never zero this contact's velocity FX.
-                        // Arrays allocate on fresh DOWN, not during high-rate drags.
-                        val deliveredSamples = mutableMapOf<Long, FloatArray>()
+                        // Samples allocate on fresh DOWN, not during high-rate drags.
+                        val deliveredSamples = mutableMapOf<Long, StagePointerSample>()
+                        var sampleRevision = 0L
+                        var expressionOwnerId: Long? = null
                         fun safePressure(raw: Float): Float =
                             if (raw.isFinite()) raw else 1f
                         fun normalizeX(x: Float): Float =
@@ -369,7 +380,10 @@ internal fun ImmersiveStage(
                             touchX = normalizeX(x)
                             touchY = normalizeY(y)
                             val contactPressure = safePressure(pressure)
-                            deliveredSamples[id] = floatArrayOf(touchX, touchY, contactPressure)
+                            deliveredSamples[id] = StagePointerSample(
+                                touchX, touchY, contactPressure, ++sampleRevision,
+                            )
+                            expressionOwnerId = id
                             flickTracker.down(id, touchX, touchY, time)
                             touchIntensity = contactPressure.coerceIn(.15f, 1f)
                             pulse += 1L
@@ -432,19 +446,21 @@ internal fun ImmersiveStage(
                                             val nextY = normalizeY(change.position.y)
                                             val nextPressure = safePressure(change.pressure)
                                             val sample = deliveredSamples[id]
-                                            if (sample == null || sample[0] != nextX ||
-                                                sample[1] != nextY ||
-                                                abs(sample[2] - nextPressure) >= .01f
+                                            if (sample == null || sample.x != nextX ||
+                                                sample.y != nextY ||
+                                                abs(sample.pressure - nextPressure) >= .01f
                                             ) {
                                                 if (sample == null) {
-                                                    deliveredSamples[id] = floatArrayOf(
-                                                        nextX, nextY, nextPressure,
+                                                    deliveredSamples[id] = StagePointerSample(
+                                                        nextX, nextY, nextPressure, ++sampleRevision,
                                                     )
                                                 } else {
-                                                    sample[0] = nextX
-                                                    sample[1] = nextY
-                                                    sample[2] = nextPressure
+                                                    sample.x = nextX
+                                                    sample.y = nextY
+                                                    sample.pressure = nextPressure
+                                                    sample.revision = ++sampleRevision
                                                 }
+                                                expressionOwnerId = id
                                                 val swipeSpeed = flickTracker.move(
                                                     id, nextX, nextY, change.uptimeMillis,
                                                 )
@@ -469,11 +485,31 @@ internal fun ImmersiveStage(
                                             deliveredSamples.remove(id)
                                             flickTracker.up(id)
                                             deliver(mapper.touchUp(id))
-                                            if (mapper.activePointerCount == 0) {
-                                                touchIntensity = 0f
-                                                reportTouchModulation(
-                                                    .5f, .5f, .5f, force = true
-                                                )
+                                            if (id == expressionOwnerId) {
+                                                // Return the global touch buses/visual origin to
+                                                // the most recently delivered surviving contact.
+                                                // Do NOT call mapper.touchMove: a handoff is not a
+                                                // new physical move and must not invent speed=0.
+                                                val successor = deliveredSamples.maxByOrNull {
+                                                    it.value.revision
+                                                }
+                                                expressionOwnerId = successor?.key
+                                                val heldSample = successor?.value
+                                                if (heldSample != null) {
+                                                    touchX = heldSample.x
+                                                    touchY = heldSample.y
+                                                    touchIntensity =
+                                                        heldSample.pressure.coerceIn(.15f, 1f)
+                                                    reportTouchModulation(
+                                                        touchX, touchY, heldSample.pressure,
+                                                        force = true,
+                                                    )
+                                                } else {
+                                                    touchIntensity = 0f
+                                                    reportTouchModulation(
+                                                        .5f, .5f, .5f, force = true,
+                                                    )
+                                                }
                                             }
                                             handled = true
                                         }
@@ -491,12 +527,17 @@ internal fun ImmersiveStage(
                             activeIds.clear()
                             deliveredSamples.clear()
                             flickTracker.cancelAll()
-                            if (currentFlickSession == flickSession) {
+                            // Local note bookkeeping above remains separate.
+                            // Shared visual and global DSP source state belongs to
+                            // the newest recognizer, so guard every reset together.
+                            touchSessions.finish(touchSession) {
                                 flickKick = 0f
                                 flickRevision++
+                                touchIntensity = 0f
+                                touchX = .5f
+                                touchY = .5f
+                                reportTouchModulation(.5f, .5f, .5f, force = true)
                             }
-                            touchIntensity = 0f
-                            reportTouchModulation(.5f, .5f, .5f, force = true)
                         }
                     }
                 },
