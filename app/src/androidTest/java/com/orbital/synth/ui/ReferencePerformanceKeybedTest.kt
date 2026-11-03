@@ -193,6 +193,44 @@ class ReferencePerformanceKeybedTest {
         assertEquals(1, panicCalls)
     }
 
+    @Test fun delayedTalkBackReleaseAfterPanicCannotStopNewHeldFinger() {
+        val on = mutableListOf<Int>()
+        val off = mutableListOf<Int>()
+        compose.setContent {
+            ReferencePerformanceKeybed(
+                octave = 4,
+                onNoteOn = { on.add(it) },
+                onNoteOff = { off.add(it) },
+                onAllNotesOff = {},
+            )
+        }
+        val node = compose.onNodeWithTag("referencePerformanceKeybed")
+        val actions = node.fetchSemanticsNode().config[SemanticsActions.CustomActions]
+        compose.runOnIdle {
+            assertTrue(actions.first { it.label == "Play C4" }.action())
+            assertTrue(actions.first { it.label == "Panic: all notes off" }.action())
+        }
+        // A NEW physical owner arrives on C4 before the old TalkBack
+        // coroutine wakes. Its lifecycle must be independent of the old token.
+        node.performTouchInput {
+            down(Offset(center.x * .08f, center.y))
+        }
+        // Delay is in an Android coroutine, not the synthetic Compose frame
+        // clock. Wait outside the UI thread for >260ms to exercise expiry.
+        Thread.sleep(480L)
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(listOf(60, 60), on)
+            assertEquals(
+                "Old TalkBack finally must not release new finger", listOf(60), off,
+            )
+        }
+        node.performTouchInput { up() }
+        compose.runOnIdle {
+            assertEquals(listOf(60, 60), off)
+        }
+    }
+
     @Test fun actual360DpCanvasChangesPixelsForRealHeldFinger() {
         compose.setContent {
             Box(Modifier.width(360.dp)) {
