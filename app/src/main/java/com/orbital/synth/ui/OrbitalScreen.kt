@@ -79,6 +79,7 @@ import com.orbital.synth.audio.AudioVisualSnapshot
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
+import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.music.SequencerNote
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -105,6 +106,8 @@ data class OrbitalUiState(
     /** Immutable 8-LFO and 64-cable snapshots from the actual audio engine. */
     val modulationLfos: List<ModulationLfoConfig> = emptyList(),
     val modulationRoutes: List<ModulationRouteConfig> = emptyList(),
+    /** Six ordered user FX stages from the same live synth as keyboard and MIDI. */
+    val fxSlots: List<FxModuleConfig> = emptyList(),
     /** User-adjusted performance layout, reused when the keyboardless stage reopens. */
     val stageTouchSettings: StageTouchSettings? = null,
     val octave: Int = 4,
@@ -180,6 +183,9 @@ fun OrbitalScreen(
     onModulationRouteChange: ((Int, ModulationRouteConfig) -> Unit)? = null,
     onModulationRouteClear: ((Int) -> Unit)? = null,
     onModulationTempoChange: ((Float) -> Unit)? = null,
+    /** Edit/render FX snapshots on the single audio engine; UI owns no DSP. */
+    onFxSlotChange: ((Int, FxModuleConfig) -> Unit)? = null,
+    onFxMoveSlot: ((Int, Int) -> Unit)? = null,
     /** Sends stage X/Y/pressure to actual expressive modulation sources. */
     onStageModulationTouch: ((Float, Float, Float) -> Unit)? = null,
     /** Real output PCM telemetry; read only while the immersive stage is visible. */
@@ -645,6 +651,15 @@ fun OrbitalScreen(
             )
             Tab.FX -> {
                 FxPanel(parameter, onParameterChange, compactHeight)
+                if (state.fxSlots.isNotEmpty() &&
+                    onFxSlotChange != null && onFxMoveSlot != null
+                ) {
+                    ModularFxWorkbenchPanel(
+                        slots = state.fxSlots,
+                        onSlotChange = onFxSlotChange,
+                        onMoveSlot = onFxMoveSlot,
+                    )
+                }
                 if (state.modulationLfos.isNotEmpty() &&
                     state.modulationRoutes.isNotEmpty() &&
                     onModulationLfoChange != null &&
