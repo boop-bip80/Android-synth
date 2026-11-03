@@ -29,7 +29,7 @@ jobs:
     # launch no Android jobs. Real GitHub cancellation must still be observed;
     # static policy tests alone do not prove scheduler behavior.
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
@@ -93,7 +93,7 @@ jobs:
   emulator:
     name: API 35 ${{ matrix.suite }} tests and emulator screenshots
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 50
     strategy:
       fail-fast: false
@@ -279,7 +279,7 @@ jobs:
   verify_sharded_coverage:
     name: Verify exact two-shard AndroidX test method union
     needs: [build, emulator]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
