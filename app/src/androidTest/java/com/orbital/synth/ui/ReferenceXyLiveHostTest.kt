@@ -2,18 +2,23 @@ package com.orbital.synth.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ParameterId
@@ -190,6 +195,77 @@ class ReferenceXyLiveHostTest {
                 beforeARelease, edits.size)
         }
         hero.performTouchInput { up(3) }
+    }
+
+
+    @Test fun portrait411And360AtLargeFontKeepAllFourMiniPlotsAndAnchoredGlassKeys() {
+        var screenWidth by mutableStateOf(411)
+        var parameters by mutableStateOf(initialParameters())
+        compose.setContent {
+            CompositionLocalProvider(
+                LocalDensity provides Density(density = 2.56875f, fontScale = 1.3f),
+            ) {
+                Box(Modifier.width(screenWidth.dp).height(820.dp)) {
+                    OrbitalScreen(
+                        state = OrbitalUiState(parameters = parameters),
+                        onNoteOn = {},
+                        onNoteOff = {},
+                        onParameterChange = { id, value ->
+                            parameters = parameters + (id to value)
+                        },
+                        onModeChange = {},
+                        onOctaveChange = {},
+                    )
+                }
+            }
+        }
+        listOf(411, 360).forEach { width ->
+            compose.runOnIdle { screenWidth = width }
+            compose.waitForIdle()
+            val hero = compose.onNodeWithTag("referenceSoundHero")
+                .fetchSemanticsNode().boundsInRoot
+            val orb = compose.onNodeWithTag("referenceSoundHeroOrb")
+                .fetchSemanticsNode().boundsInRoot
+            val rail = compose.onNodeWithTag("referenceXyModeButton")
+                .fetchSemanticsNode().boundsInRoot
+            val keybed = compose.onNodeWithTag("referencePerformanceKeybed")
+                .fetchSemanticsNode().boundsInRoot
+            val pixelsPerDp = 2.56875f
+            assertTrue("Compact portrait orb must keep 230dp at width $width",
+                abs(orb.height - 230f * pixelsPerDp) < 3.5f)
+            assertTrue("XY rail must be physically inside existing orb, width $width",
+                rail.left >= orb.left && rail.right <= orb.right &&
+                    rail.top >= orb.top && rail.bottom <= orb.bottom)
+            assertTrue("XY rail may not extend/push the hero or playable glass",
+                orb.bottom <= hero.bottom && hero.bottom <= keybed.top)
+            assertTrue("Anchored 12-strip piano must retain >=100dp vertical play area",
+                keybed.height >= 100f * pixelsPerDp)
+            for (tag in listOf(
+                "referenceKnobWAVE", "referenceKnobCUTOFF",
+                "referenceKnobRESONANCE", "referenceKnobMOVEMENT",
+                "referenceKnobFX_AMOUNT", "referenceMiniEnv",
+                "referenceMiniLfo", "referenceMiniExpr", "referenceMiniMod",
+            )) {
+                compose.onNodeWithTag(tag).assertIsDisplayed()
+            }
+            // This is the genuine Compose-rendered artwork bitmap, not
+            // prerecorded fixture pixels and not fake spectrum telemetry.
+            val image = compose.onNodeWithTag(
+                "orbitalPlasmaField", useUnmergedTree = true,
+            ).captureToImage().toPixelMap()
+            var visiblyColorful = 0
+            val stride = (image.width / 22).coerceAtLeast(1)
+            for (y in 20 until image.height - 20 step stride) {
+                for (x in 30 until image.width - 30 step stride) {
+                    val pixel = image[x, y]
+                    val high = maxOf(pixel.red, pixel.green, pixel.blue)
+                    val low = minOf(pixel.red, pixel.green, pixel.blue)
+                    if (high > .16f && high - low > .04f) visiblyColorful++
+                }
+            }
+            assertTrue("SOUND plasma became dark/unrendered at width $width",
+                visiblyColorful > 12)
+        }
     }
 
     @Test fun selectedLiveFilterParametersChangeActualPlasmaPixelsWithoutFakePcm() {
