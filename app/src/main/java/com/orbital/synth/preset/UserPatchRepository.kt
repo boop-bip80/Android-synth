@@ -5,6 +5,7 @@ import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
+import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.preset.FactoryPresets
 import com.orbital.synth.core.preset.PatchCodec
@@ -51,6 +52,7 @@ class UserPatchRepository internal constructor(
     private val snapshotModulationRoutes: () -> List<ModulationRouteConfig> = { emptyList() },
     private val snapshotModulationLfos: () -> List<ModulationLfoConfig> = { emptyList() },
     private val snapshotModulationTempo: () -> Float = { 120f },
+    private val snapshotFxSlots: () -> List<FxModuleConfig> = { emptyList() },
 ) {
     constructor(context: Context, synth: OrbitalSynth) : this(
         PatchDirectoryStore(
@@ -68,6 +70,9 @@ class UserPatchRepository internal constructor(
             List(synth.modulationLfoCount) { index -> synth.modulationLfo(index) }
         },
         snapshotModulationTempo = { synth.modulationTempoBpm },
+        snapshotFxSlots = {
+            List(synth.fxSlotCount) { index -> synth.fxSlot(index) }
+        },
     )
 
     private val mutex = Mutex()
@@ -114,6 +119,7 @@ class UserPatchRepository internal constructor(
                 modulationRoutes = snapshotModulationRoutes().toList(),
                 modulationLfos = snapshotModulationLfos().toList(),
                 modulationTempoBpm = snapshotModulationTempo(),
+                fxSlots = snapshotFxSlots().toList(),
             )
             store.save(patch)
             PatchOutcome.Success(SavedUserPatch(patch, id != base))
@@ -140,6 +146,7 @@ class UserPatchRepository internal constructor(
                 modulationRoutes = snapshotModulationRoutes().toList(),
                 modulationLfos = snapshotModulationLfos().toList(),
                 modulationTempoBpm = snapshotModulationTempo(),
+                fxSlots = snapshotFxSlots().toList(),
             )
             store.save(patch)
             PatchOutcome.Success(patch)
@@ -163,7 +170,7 @@ class UserPatchRepository internal constructor(
         }
     }
 
-    /** Export V1/V2 legacy or V3 modular patches, preserving the loaded format's data. */
+    /** Export V1/V2/V3 legacy or V4 FX patches, preserving all validated edit state. */
     suspend fun exportPatchText(id: String): PatchOutcome<String> = onIo {
         safe(PatchFailureKind.INVALID_FORMAT) {
             when (val resolved = resolve(id)) {
