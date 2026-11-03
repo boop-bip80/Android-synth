@@ -1,12 +1,5 @@
 package com.orbital.synth.ui
 
-import android.animation.ValueAnimator
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,8 +11,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
@@ -92,21 +87,9 @@ fun ModularFxWorkbenchPanel(
     val currentIndex = selectedSlot.coerceIn(0, (total - 1).coerceAtLeast(0))
     val current = ordered.getOrNull(currentIndex)
     val configured = current?.let(ModularFxUiModel::configured) == true
-    val canMove = remember { ValueAnimator.areAnimatorsEnabled() }
-    var phase = 0f
-    if (canMove && audible > 0) {
-        val clock = rememberInfiniteTransition(label = "modular-fx-topology")
-        val currentPhase by clock.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 6500, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart,
-            ),
-            label = "configured-fx-routing",
-        )
-        phase = currentPhase
-    }
+    // A topology diagram is not a measured signal: remove the unrelated
+    // infinite animation clock. Actual user parameter edits drive all visuals.
+    val phase = 0f
 
     Column(
         modifier
@@ -354,6 +337,15 @@ fun ModularFxWorkbenchPanel(
                         }
                     }
 
+                    // Selected processor's physical parameter geometry; this is a
+                    // schematic, never a fabricated audio waveform or FFT.
+                    FxParameterSignature(
+                        config = current,
+                        modifier = Modifier.fillMaxWidth().height(168.dp),
+                        compact = false,
+                        tag = "fxSelectedSignature",
+                    )
+
                     FxParameterSlider(
                         title = "DRY / WET",
                         detail = ModularFxUiModel.wetDisplay(current.wet),
@@ -430,9 +422,9 @@ private fun FxModuleCard(
             )
             .clickable(role = Role.Button, onClick = onClick)
             .semantics {
-                contentDescription = "Effect slot " + (index + 1) +
-                    if (!exists) ", empty" else ", " + ModularFxUiModel.shortName(slot.type) +
-                    if (slot.enabled) ", enabled" else ", bypassed"
+                contentDescription = if (!exists) "Effect slot " + (index + 1) + ", empty"
+                else "Effect slot " + (index + 1) + ", " +
+                    FxParameterSignatureModel.accessibleDescription(slot)
             }
             .testTag("fxSlot" + index)
             .padding(10.dp),
@@ -461,6 +453,14 @@ private fun FxModuleCard(
             fontSize = if (exists) 17.sp else 25.sp,
             fontWeight = FontWeight.Bold,
         )
+        if (exists) {
+            FxParameterSignature(
+                config = slot,
+                modifier = Modifier.fillMaxWidth().height(34.dp),
+                compact = true,
+                tag = "fxMiniSignature" + index,
+            )
+        }
         Column {
             Text(
                 if (exists) "MIX  " + ModularFxUiModel.wetDisplay(slot.wet) else "FREE SLOT",
@@ -497,6 +497,8 @@ private fun FxActionButton(
         onClick = onClick,
         enabled = enabled,
         modifier = Modifier
+            .heightIn(min = 48.dp)
+            .widthIn(min = 48.dp)
             .border(.8.dp, tint.copy(alpha = if (enabled) .55f else .20f), RoundedCornerShape(9.dp))
             .background(tint.copy(alpha = if (enabled) .11f else .03f), RoundedCornerShape(9.dp))
             .semantics { contentDescription = description }
