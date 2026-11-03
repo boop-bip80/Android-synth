@@ -9,7 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
@@ -52,10 +52,12 @@ class OscillatorNoiseHitTestDiagnosticTest {
         }
 
         val pad = compose.onNodeWithTag("oscillatorNoiseCanvas").performScrollTo()
-        pad.assertIsDisplayed()
         compose.waitForIdle()
         val nodeBounds = pad.fetchSemanticsNode().boundsInRoot
         val rootBounds = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        val visible = pad.isDisplayed()
+        assertTrue("Pad clipped after performScrollTo: pad=$nodeBounds root=$rootBounds, " +
+            "visible=$visible", visible)
         val pre = callbackCount
         pad.performTouchInput {
             click(Offset(center.x * 1.6f, center.y * .4f))
