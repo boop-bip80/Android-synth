@@ -2,6 +2,7 @@ package com.orbital.synth.ui
 
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -16,6 +17,26 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class StageTouchConfigurationPanelTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test fun tactileFeedbackIsDefaultOffAndRequiresExplicitSelection() {
+        val settings = mutableStateOf(StageTouchSettings())
+        compose.setContent {
+            StageTouchConfigurationPanel(
+                settings = settings.value,
+                onChange = { settings.value = it },
+                onDismiss = {},
+                onReset = { settings.value = StageTouchSettings() },
+            )
+        }
+        compose.onNodeWithTag("stageHapticsOff").assertIsSelected()
+        compose.runOnIdle { assertTrue(!settings.value.hapticsEnabled) }
+        compose.onNodeWithTag("stageHapticsOn").performScrollTo().performClick()
+        compose.onNodeWithTag("stageHapticsOn").assertIsSelected()
+        compose.runOnIdle { assertTrue(settings.value.hapticsEnabled) }
+        compose.onNodeWithTag("stageHapticsOff").performClick()
+        compose.onNodeWithTag("stageHapticsOff").assertIsSelected()
+        compose.runOnIdle { assertTrue(!settings.value.hapticsEnabled) }
+    }
 
     @Test fun settingsDialogSelectsMusicalScaleAndClosesWithoutNotes() {
         val state = mutableStateOf(StageTouchSettings())
