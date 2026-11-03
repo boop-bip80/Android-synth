@@ -9,9 +9,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import kotlin.math.roundToInt
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -236,28 +234,80 @@ class ReferenceSoundHostIntegrationTest {
             // The chromatic reference keybed really drives the one AudioTrack
             // engine: a held note must register in post-write PCM telemetry.
             compose.waitUntil(8_000L) { audio.audioVisualSnapshot.rms > .0005f }
-            val pixels = compose.onNodeWithTag("referenceSoundHeroOrb")
-                .captureToImage().toPixelMap()
-            var saturated = 0
-            // Validate the orb's interior, excluding the cyan HUD text at the
-            // top and XY ribbon at the bottom. A black/broken shader cannot
-            // pass simply because the interface's labels are colorful.
-            val left = (pixels.width * .25f).toInt()
-            val right = (pixels.width * .75f).toInt()
-            val top = (pixels.height * .29f).toInt()
-            val bottom = (pixels.height * .54f).toInt()
-            for (y in top until bottom step 7) {
-                for (x in left until right step 7) {
-                    val color = pixels[x, y]
-                    val spread = maxOf(color.red, color.green, color.blue) -
-                        minOf(color.red, color.green, color.blue)
-                    if (spread > .12f && maxOf(color.red, color.green, color.blue) > .25f) {
-                        saturated++
+            // Compose captureToImage() uses PixelCopy, which timed out while
+            // the actual Android emulator and AudioTrack were still healthy.
+            // Read a genuine SurfaceFlinger DISPLAY frame instead. Translate
+            // the *same* Compose orb's exact in-root bounds to screen pixels
+            // using the production Activity's content root; do not accept
+            // bright pixels elsewhere in the app or a synthetic bitmap.
+            val orbBounds = compose.onNodeWithTag("referenceSoundHeroOrb")
+                .fetchSemanticsNode().boundsInRoot
+            val composeRootScreen = IntArray(2)
+            compose.activityRule.scenario.onActivity { activity ->
+                val contentRoot = activity.findViewById<View>(android.R.id.content)
+                    ?: error("Production MainActivity has no content root")
+                contentRoot.getLocationOnScreen(composeRootScreen)
+            }
+            var saturated = -1
+            var plasmaSampleRegion = ""
+            for (attempt in 0 until 3) {
+                val frame: Bitmap? = foregroundAutomation.takeScreenshot()
+                if (frame != null) {
+                    try {
+                        // Retain the exact middle-50%-width / 29%-54%-height
+                        // orb-interior gate from the old Compose PixelCopy
+                        // assertion: cyan HUD and XY ribbon are excluded.
+                        val left = maxOf(
+                            0,
+                            (composeRootScreen[0] + orbBounds.left +
+                                orbBounds.width * .25f).roundToInt(),
+                        )
+                        val right = minOf(
+                            frame.width,
+                            (composeRootScreen[0] + orbBounds.left +
+                                orbBounds.width * .75f).roundToInt(),
+                        )
+                        val top = maxOf(
+                            0,
+                            (composeRootScreen[1] + orbBounds.top +
+                                orbBounds.height * .29f).roundToInt(),
+                        )
+                        val bottom = minOf(
+                            frame.height,
+                            (composeRootScreen[1] + orbBounds.top +
+                                orbBounds.height * .54f).roundToInt(),
+                        )
+                        plasmaSampleRegion = "[$left,$top][$right,$bottom] " +
+                            "frame=${frame.width}x${frame.height}"
+                        assertTrue(
+                            "Real UiAutomation framebuffer has no usable " +
+                                "interior for the actual Compose orb " +
+                                plasmaSampleRegion,
+                            right - left >= 28 && bottom - top >= 28,
+                        )
+                        saturated = 0
+                        for (y in top until bottom step 7) {
+                            for (x in left until right step 7) {
+                                val pixel = frame.getPixel(x, y)
+                                val red = PixelColor.red(pixel)
+                                val green = PixelColor.green(pixel)
+                                val blue = PixelColor.blue(pixel)
+                                val max = maxOf(red, green, blue)
+                                val min = minOf(red, green, blue)
+                                if (max - min >= 31 && max >= 64) saturated++
+                            }
+                        }
+                    } finally {
+                        frame.recycle()
                     }
+                    if (saturated >= 24) break
                 }
+                Thread.sleep(120L)
             }
             assertTrue(
-                "Actual running Android hero framebuffer lost its colorful plasma",
+                "Actual running Android SurfaceFlinger orb interior lost " +
+                    "its colorful plasma: saturated=$saturated " +
+                    plasmaSampleRegion,
                 saturated >= 24,
             )
         } finally {
