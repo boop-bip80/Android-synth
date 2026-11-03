@@ -90,6 +90,14 @@ internal class LiveModulationHost(sampleRate: Int) {
         routeRevision.incrementAndGet()
     }
 
+    /** Restore a complete immutable route, including disabled editor metadata. */
+    fun setRouteConfig(slot: Int, config: ModulationRouteConfig) {
+        if (slot !in 0 until ROUTE_COUNT || !config.depth.isFinite() ||
+            config.depth !in -4f..4f) return
+        publishedRoutes.set(slot, config)
+        routeRevision.incrementAndGet()
+    }
+
     fun clearRoute(slot: Int) {
         if (slot !in 0 until ROUTE_COUNT) return
         publishedRoutes.set(slot, ModulationRouteConfig())
@@ -126,6 +134,8 @@ internal class LiveModulationHost(sampleRate: Int) {
             bpmBits.set(java.lang.Float.floatToRawIntBits(bpm.coerceIn(20f, 400f)))
         }
     }
+
+    fun tempoBpm(): Float = java.lang.Float.intBitsToFloat(bpmBits.get())
 
     /** Input is normalized bipolar -1..1 (including touch, velocity, macros). */
     fun setSource(source: ModSource, value: Float) {
