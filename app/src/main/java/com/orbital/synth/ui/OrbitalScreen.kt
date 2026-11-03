@@ -75,6 +75,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.music.SequencerNote
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -96,6 +97,8 @@ data class OrbitalUiState(
     val patchName: String = "AURORA",
     val playMode: PlayMode = PlayMode.POLY,
     val parameters: Map<ParameterId, Float> = emptyMap(),
+    /** Live per-voice oscillator layers; Compose only holds immutable audio snapshots. */
+    val oscillatorSlots: List<OscillatorSlot> = emptyList(),
     val octave: Int = 4,
     val sequencerRunning: Boolean = false,
     val enabledSteps: Set<Int> = emptySet(),
@@ -163,6 +166,8 @@ fun OrbitalScreen(
     onArpSwingChange: ((Float) -> Unit)? = null,
     /** Optional pressure-aware stage note-on; old integer-note callers remain compatible. */
     onExpressiveNoteOn: ((Int, Float) -> Unit)? = null,
+    /** Passes a selected layer to the host's single live audio engine. */
+    onOscillatorSlotChange: ((Int, OscillatorSlot) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var immersiveMode by remember { mutableStateOf(false) }
@@ -568,6 +573,12 @@ fun OrbitalScreen(
                         SignalTile("MOD", move, OrbitalPalette.Violet, Modifier.fillMaxWidth())
                     }
                 }
+                }
+                if (state.oscillatorSlots.isNotEmpty() && onOscillatorSlotChange != null) {
+                    OscillatorRackPanel(
+                        slots = state.oscillatorSlots,
+                        onSlotChange = onOscillatorSlotChange,
+                    )
                 }
             }
             Tab.PLAY -> PlayPanel(
