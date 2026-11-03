@@ -136,4 +136,34 @@ print("Compact 350dp SOUND: exactly two real-device JUnit PASS cases")
 PY
 printf '%s\n' 'PASS: exactly 2 isolated real API35 JUnit cases; oscillator scroll, five ENGINE choices, piano notes' \
   > artifacts/compact350-junit-summary.txt
+
+# Test #1 saves TWO genuine UiAutomation framebuffers: selected OSC8
+# chip + anchored piano on the first screen, then physically swiped/sculpted
+# OSC8 glowing waveform. Neither image may be absent/blank/invalid.
+printf '%s\n' 'extract-two-physical-compact-oscillator-screenshots' > artifacts/emulator-phase.txt
+for shot in orbital-compact350-osc8-selector.png orbital-compact350-luminous.png; do
+  timeout 20s adb exec-out run-as com.orbital.synth \
+    cat "files/$shot" > "artifacts/$shot"
+done
+python3 - <<'PY'
+from pathlib import Path
+import struct
+
+names = ("orbital-compact350-osc8-selector.png", "orbital-compact350-luminous.png")
+evidence = ["source=android.uiAutomation.takeScreenshot", "exact_test_cases=2",
+            "test=OSC8-selected-pinned-piano-then-physical-wave-XY"]
+for name in names:
+    path = Path("artifacts") / name
+    raw = path.read_bytes()
+    if len(raw) < 4096 or raw[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit(f"Missing/invalid actual API35 framebuffer PNG: {name}")
+    width, height = struct.unpack(">II", raw[16:24])
+    if width < 360 or height < 350:
+        raise SystemExit(f"Real emulator framebuffer too small: {name} {width}x{height}")
+    evidence.append(f"{name}={width}x{height};{len(raw)}bytes")
+    print(f"Physical OSC8 screenshot PASS: {name}, {width}x{height}, {len(raw)} bytes")
+Path("artifacts/compact350-native-framebuffer.txt").write_text(
+    "\n".join(evidence) + "\n", encoding="utf8"
+)
+PY
 printf '%s\n' 'complete' > artifacts/emulator-phase.txt
