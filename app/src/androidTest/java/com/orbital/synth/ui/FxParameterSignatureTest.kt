@@ -113,8 +113,14 @@ class FxParameterSignatureTest {
             }
         }
         compose.waitForIdle()
-        compose.onNodeWithTag("fxMiniSignature0", useUnmergedTree = true)
-            .fetchSemanticsNode()
+        // The tiny waveform miniature is deliberately non-focusable: the
+        // full effect-slot button speaks its real parameters once to TalkBack.
+        // Capture that actual glass card's pixels instead of requiring a
+        // separate accessibility node for its decorative internal Canvas.
+        val moduleCard = compose.onNodeWithTag("fxSlot0")
+        val modulePixels = moduleCard.captureToImage().toPixelMap()
+        assertTrue("Small configured slot was not actually drawn",
+            modulePixels.width > 64 && modulePixels.height > 64)
         compose.onNodeWithTag("fxSelectedSignature").fetchSemanticsNode()
         ensureVisible("fxSelectedSignature")
         val darkGlassCapture = compose.onNodeWithTag("fxSelectedSignature")
