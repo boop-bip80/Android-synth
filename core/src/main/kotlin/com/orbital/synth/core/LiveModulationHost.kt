@@ -323,11 +323,11 @@ internal class LiveModulationHost(sampleRate: Int) {
         // atomic route revision did not change since the preceding block.
         val tailActive = liveRouteCount == 0 && residualFrames > 0
         active = liveRouteCount > 0 || tailActive
-        pitchRouteActive = livePitch || (tailActive && residualMask and RESIDUAL_PITCH != 0)
+        pitchRouteActive = livePitch || (tailActive && (residualMask and RESIDUAL_PITCH) != 0)
         filterRouteActive = liveFilter ||
-            (tailActive && residualMask and (RESIDUAL_CUTOFF or RESIDUAL_RESONANCE) != 0)
-        ampRouteActive = liveAmp || (tailActive && residualMask and RESIDUAL_AMP != 0)
-        panRouteActive = livePan || (tailActive && residualMask and RESIDUAL_PAN != 0)
+            (tailActive && (residualMask and (RESIDUAL_CUTOFF or RESIDUAL_RESONANCE)) != 0)
+        ampRouteActive = liveAmp || (tailActive && (residualMask and RESIDUAL_AMP) != 0)
+        panRouteActive = livePan || (tailActive && (residualMask and RESIDUAL_PAN) != 0)
         if (!active && (wasActive || changedRoutes)) {
             touchedGlobalMask = 0
             residualMask = 0
