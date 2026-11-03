@@ -121,7 +121,8 @@ fun ReferencePerformanceKeybed(
     val label = "Twelve live chromatic liquid-glass keys, octave " +
         chromaticOctave + ", " + activeNotes.size +
         " currently held. Slide fingers between strips; higher touch position " +
-        "gives a brighter initial strike velocity. Light rivers preview synth settings, not PCM"
+        "gives a brighter initial strike velocity. Light shapes preview synth settings; " +
+        "brightness responds to output level."
 
     val corner = RoundedCornerShape(12.dp)
     Canvas(
