@@ -465,12 +465,6 @@ fun OrbitalScreen(
                         onNextPatch = onNextPatch,
                         engineName = engineChoice.name,
                     )
-                    CompactSoundPanel(
-                        parameter = parameter,
-                        engineId = engineId,
-                        engineValue = engineValue,
-                        onParameterChange = onParameterChange,
-                    )
                     // Preserve the compact landscape piano, yet expose the
                     // full real eight-layer editor behind a 48dp touch toggle.
                     if (state.oscillatorSlots.isNotEmpty() &&
@@ -507,6 +501,15 @@ fun OrbitalScreen(
                             )
                         }
                     }
+                    // Keep the full five-engine compact sound controls in the
+                    // same scrollable editor, immediately below the always
+                    // reachable eight-layer oscillator entry point.
+                    CompactSoundPanel(
+                        parameter = parameter,
+                        engineId = engineId,
+                        engineValue = engineValue,
+                        onParameterChange = onParameterChange,
+                    )
                 } else {
                     // First viewport: the genuine procedural reference hero,
                     // one overlaid interactive XY, five real macros and four
