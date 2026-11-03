@@ -71,11 +71,13 @@ class StageTouchActivityRestartTest {
             compose.onNodeWithTag("stageOctaveRange-3").assertIsSelected()
             compose.onNodeWithTag("stageAxisVertical").assertIsSelected()
             compose.onNodeWithTag("stageMotionHold").assertIsSelected()
+            compose.onNodeWithTag("stageHapticsOff").assertIsSelected()
 
             val prior = store.requestedRevision()
             compose.onNodeWithTag("stageScale-MAJOR").performScrollTo().performClick()
+            compose.onNodeWithTag("stageHapticsOn").performScrollTo().performClick()
             waitForHostSave(prior)
-            val expected = saved.copy(scale = TouchScale.MAJOR)
+            val expected = saved.copy(scale = TouchScale.MAJOR, hapticsEnabled = true)
             val repo = StageTouchSettingsRepository(
                 ApplicationProvider.getApplicationContext<Context>()
             )
@@ -87,11 +89,13 @@ class StageTouchActivityRestartTest {
             scenario.recreate()
             enterConfiguration()
             awaitSelected("stageScale-MAJOR")
+            compose.onNodeWithTag("stageHapticsOn").assertIsSelected()
             compose.onNodeWithTag("stageTonic-9").assertIsSelected()
             compose.onNodeWithTag("stageBaseOctave-5").assertIsSelected()
             compose.onNodeWithTag("stageOctaveRange-3").assertIsSelected()
             compose.onNodeWithTag("stageAxisVertical").assertIsSelected()
             compose.onNodeWithTag("stageMotionHold").assertIsSelected()
+            compose.onNodeWithTag("stageHapticsOn").assertIsSelected()
             assertEquals(expected, runBlocking { repo.load().settings })
         }
     }
