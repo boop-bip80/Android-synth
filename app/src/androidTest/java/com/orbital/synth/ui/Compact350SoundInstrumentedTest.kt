@@ -60,10 +60,15 @@ class Compact350SoundInstrumentedTest {
         ).assertIsDisplayed()
         Log.i(TAG, "phase=before-legacy-keybed-absence")
         compose.onNodeWithTag("referencePerformanceKeybed").assertDoesNotExist()
-        Log.i(TAG, "phase=before-scroll-into-view")
+        // The first child of the compact editor is a 48dp touch action.
+        // Assert actual first-screen visibility and inject a physical click.
+        // Compose performScrollTo() on this weighted editor repeatedly
+        // hung fresh API35 emulators. No synthetic scroll is needed here:
+        // the first real action must be visible without scrolling.
+        Log.i(TAG, "phase=before-visible-toggle-click")
         compose.onNodeWithTag("compactOscillatorToggle")
-            .performScrollTo().assertIsDisplayed().performClick()
-        Log.i(TAG, "phase=after-scroll-and-click")
+            .assertIsDisplayed().performClick()
+        Log.i(TAG, "phase=after-visible-toggle-click")
         compose.onNodeWithTag("oscillatorRack").assertExists()
         // Physically scroll the narrow editor, then reach and select the
         // far-right (eighth) oscillator inside a horizontally scrolling row.
