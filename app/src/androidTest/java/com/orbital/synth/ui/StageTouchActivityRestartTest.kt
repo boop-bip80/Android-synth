@@ -75,8 +75,9 @@ class StageTouchActivityRestartTest {
 
             val prior = store.requestedRevision()
             compose.onNodeWithTag("stageScale-MAJOR").performScrollTo().performClick()
-            compose.onNodeWithTag("stageHapticsOn").performScrollTo().performClick()
-            waitForHostSave(prior)
+            compose.onNodeWithTag("stageHapticsOn").performClick()
+            compose.onNodeWithTag("stageHapticsOn").assertIsSelected()
+            waitForHostSave(prior, expectedEdits = 2)
             val expected = saved.copy(scale = TouchScale.MAJOR, hapticsEnabled = true)
             val repo = StageTouchSettingsRepository(
                 ApplicationProvider.getApplicationContext<Context>()
@@ -133,9 +134,9 @@ class StageTouchActivityRestartTest {
         }
     }
 
-    private fun waitForHostSave(previousRevision: Long) {
+    private fun waitForHostSave(previousRevision: Long, expectedEdits: Int = 1) {
         compose.waitUntil(15_000L) {
-            store.requestedRevision() > previousRevision
+            store.requestedRevision() >= previousRevision + expectedEdits
         }
         runBlocking { withTimeout(15_000L) { store.awaitPendingWrites() } }
     }
