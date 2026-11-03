@@ -92,9 +92,15 @@ fun ImmersiveVisualField(
     // on every 30 Hz meter update (which would leave a stuck transient ring).
     val transientHit = pcm.transient > .30f
     LaunchedEffect(transientHit, animationsEnabled) {
-        if (transientHit && animationsEnabled) {
+        if (!animationsEnabled) {
+            audioImpact.snapTo(1f)
+        } else if (transientHit) {
             audioImpact.snapTo(0f)
             audioImpact.animateTo(1f, tween(durationMillis = 620, easing = LinearEasing))
+        } else if (audioImpact.value < 1f) {
+            // A metered spike may decay sooner than the ripple. Complete its
+            // fade rather than leaving the previous animation cancelled in place.
+            audioImpact.animateTo(1f, tween(durationMillis = 320, easing = LinearEasing))
         }
     }
 
