@@ -45,7 +45,7 @@ import org.junit.runner.RunWith
 class OrbitalScreenTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
-    @Test fun immersiveFieldPollsRealAudioTelemetryOnlyWhileVisible() {
+    @Test fun soundAndImmersiveFieldsPollOnlyTheirVisibleLivePcmSurfaces() {
         val reads = AtomicInteger(0)
         compose.setContent {
             OrbitalScreen(
@@ -62,10 +62,16 @@ class OrbitalScreenTest {
             )
         }
 
-        // The renderer stays disconnected from AudioTrack until STAGE is entered.
-        compose.runOnIdle { assertEquals(0, reads.get()) }
-        compose.onNodeWithTag("immersiveModeToggle").performClick()
+        // SOUND now deliberately renders the same real PCM telemetry as STAGE.
+        compose.onNodeWithTag("referenceSoundHero").assertExists()
         compose.waitUntil(4_000L) { reads.get() >= 2 }
+        compose.onNodeWithContentDescription("Tab PLAY").performClick()
+        compose.waitForIdle()
+        val paused = reads.get()
+        compose.mainClock.advanceTimeBy(250L)
+        compose.runOnIdle { assertEquals(paused, reads.get()) }
+        compose.onNodeWithTag("immersiveModeToggle").performClick()
+        compose.waitUntil(4_000L) { reads.get() > paused + 1 }
         compose.onNodeWithTag("immersiveStage").assertExists()
         compose.onNodeWithTag("immersiveVisualField").assertExists()
         compose.onNodeWithTag("immersiveExit").performClick()
@@ -173,7 +179,7 @@ class OrbitalScreenTest {
             )
         }
         compose.onNodeWithText("O R B I T A L").assertExists()
-        compose.onNodeWithContentDescription("CUTOFF").assertExists()
+        compose.onNodeWithTag("referenceKnobCUTOFF").assertExists()
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
         compose.onNodeWithText("16-STEP ORBIT").assertExists()
         compose.onNodeWithContentDescription("Tab FX").performClick()
@@ -182,7 +188,7 @@ class OrbitalScreenTest {
         compose.onNodeWithText("PERFORMANCE").assertExists()
     }
 
-    @Test fun performanceKeyboardStaysVisibleAcrossTabs() {
+    @Test fun conceptKeybedOnSoundAndPianoOnPerformanceTabsAreBothReal() {
         compose.setContent {
             OrbitalScreen(
                 state = OrbitalUiState(),
@@ -193,15 +199,20 @@ class OrbitalScreenTest {
                 onOctaveChange = {},
             )
         }
-        val keyboard = compose.onNodeWithContentDescription(
-            "Multitouch piano keyboard",
-            substring = true,
+        val conceptKeys = compose.onNodeWithTag("referencePerformanceKeybed")
+        val piano = compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
         )
-        keyboard.assertIsDisplayed()
-        listOf("Tab FX", "Tab SEQ", "Tab PLAY", "Tab SOUND").forEach { tab ->
+        conceptKeys.assertIsDisplayed()
+        piano.assertDoesNotExist()
+        listOf("Tab FX", "Tab SEQ", "Tab PLAY").forEach { tab ->
             compose.onNodeWithContentDescription(tab).performClick()
-            keyboard.assertIsDisplayed()
+            piano.assertIsDisplayed()
+            conceptKeys.assertDoesNotExist()
         }
+        compose.onNodeWithContentDescription("Tab SOUND").performClick()
+        conceptKeys.assertIsDisplayed()
+        piano.assertDoesNotExist()
     }
 
     @Test fun presetArrowsAreAccessibleAndCallNavigation() {
@@ -247,7 +258,7 @@ class OrbitalScreenTest {
         compose.onNodeWithContentDescription("Next factory preset").assertIsNotEnabled()
     }
 
-    @Test fun soundOrbitIsAnInteractiveExpressionSurface() {
+    @Test fun livePlasmaHeroIsAnInteractiveExpressionSurface() {
         val updates = mutableMapOf<ParameterId, Float>()
         compose.setContent {
             OrbitalScreen(
@@ -257,7 +268,7 @@ class OrbitalScreenTest {
                 onModeChange = {}, onOctaveChange = {},
             )
         }
-        compose.onNodeWithTag("orbitalExpression").assertIsDisplayed().performTouchInput {
+        compose.onNodeWithTag("referenceSoundHero").assertIsDisplayed().performTouchInput {
             down(center)
             up()
         }
@@ -269,7 +280,7 @@ class OrbitalScreenTest {
         }
     }
 
-    @Test fun soundOrbitDragTracksBothAxesAndAdvertisesAccessibleAdjustments() {
+    @Test fun livePlasmaHeroDragTracksBothRealParametersAndIsAccessible() {
         val updates = mutableListOf<Pair<ParameterId, Float>>()
         compose.setContent {
             OrbitalScreen(
@@ -279,8 +290,9 @@ class OrbitalScreenTest {
                 onModeChange = {}, onOctaveChange = {},
             )
         }
-        val orbit = compose.onNodeWithTag("orbitalExpression")
-        val actions = orbit.fetchSemanticsNode().config[SemanticsActions.CustomActions].map { it.label }
+        val orbit = compose.onNodeWithTag("referenceSoundHero")
+        val actions = orbit.fetchSemanticsNode().config[SemanticsActions.CustomActions]
+            .map { it.label }
         assertTrue("Increase morph" in actions)
         assertTrue("Decrease movement" in actions)
         orbit.performTouchInput {
@@ -299,7 +311,7 @@ class OrbitalScreenTest {
         }
     }
 
-    @Test fun compactSoundLayoutKeepsLabelsOutsideOrbitAndKeyboard() {
+    @Test fun compactReferenceLandingSeparatesArtControlsAndPlayableKeybed() {
         val density = compose.activity.resources.displayMetrics.density
         var previousPatchRequests = 0
         compose.setContent {
@@ -320,28 +332,18 @@ class OrbitalScreenTest {
         val bank = compose.onNodeWithTag("compactBankLabel").fetchSemanticsNode().boundsInRoot
         val engine = compose.onNodeWithTag("compactEngineLabel").fetchSemanticsNode().boundsInRoot
         val patch = compose.onNodeWithTag("compactPatchControls").fetchSemanticsNode().boundsInRoot
-        val orbit = compose.onNodeWithTag("compactOrbitViewport").fetchSemanticsNode().boundsInRoot
-        val hint = compose.onNodeWithTag("compactOrbitHint").fetchSemanticsNode().boundsInRoot
-        val graphToggle = compose.onNodeWithTag("compactModulationToggle").fetchSemanticsNode().boundsInRoot
-        val keyboard = compose.onNodeWithContentDescription(
-            "Multitouch piano keyboard", substring = true,
-        ).fetchSemanticsNode().boundsInRoot
-
+        val hero = compose.onNodeWithTag("referenceSoundHero").fetchSemanticsNode().boundsInRoot
+        val keyboard = compose.onNodeWithTag("referencePerformanceKeybed")
+            .fetchSemanticsNode().boundsInRoot
         assertTrue("Bank and engine captions overlap", bank.right <= engine.left)
-        assertTrue("Patch controls intersect the orbit", patch.bottom <= orbit.top)
-        assertTrue("Orbital instruction overlaps artwork", orbit.bottom <= hint.top)
-        assertTrue("Modulation control overlaps instruction", hint.bottom <= graphToggle.top)
-        assertTrue("Compact modulation control is hidden behind keyboard",
-            graphToggle.bottom <= keyboard.top)
-        assertTrue("Compact modulation control is partially clipped by the editor",
-            graphToggle.height >= 47f * density)
-        compose.onNodeWithText("MODULATION GRAPH").assertIsDisplayed()
-
-        compose.onNodeWithTag("compactModulationGraph").assertDoesNotExist()
+        assertTrue("Patch controls intersect reference artwork", patch.bottom <= hero.top)
+        assertTrue("Reference artwork collides with anchored keys", hero.bottom <= keyboard.top)
+        assertTrue("Liquid keys are too short for performance", keyboard.height >= 90f * density)
+        compose.onNodeWithTag("referenceSoundControls").assertExists()
+        compose.onNodeWithTag("referenceKnobRack").assertExists()
+        compose.onNodeWithTag("referenceMiniSignals").assertExists()
         compose.onNodeWithContentDescription("Previous factory preset").performClick()
         compose.runOnIdle { assertEquals(1, previousPatchRequests) }
-        compose.onNodeWithContentDescription("Show modulation graph").performClick()
-        compose.onNodeWithTag("compactModulationGraph").assertExists()
     }
 
     @Test fun keyboardExposesChromaticAccessibleActions() {
@@ -353,6 +355,8 @@ class OrbitalScreenTest {
                 onModeChange = {}, onOctaveChange = {},
             )
         }
+        // PLAY retains the traditional 25-note keyboard and its custom actions.
+        compose.onNodeWithContentDescription("Tab PLAY").performClick()
         val actions = compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
         ).fetchSemanticsNode().config[SemanticsActions.CustomActions].map { it.label }

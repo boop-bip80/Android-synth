@@ -194,7 +194,6 @@ fun OrbitalScreen(
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var immersiveMode by remember { mutableStateOf(false) }
-    var compactGraphExpanded by remember { mutableStateOf(false) }
     var showPatchLibrary by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
     var newPatchName by remember { mutableStateOf("") }
@@ -208,6 +207,24 @@ fun OrbitalScreen(
     }
     val morph = parameter(ParameterId.MORPH)
     val move = parameter(ParameterId.MOVEMENT)
+    val soundParameters = remember(state.parameters) {
+        ParameterId.entries.associateWith { id ->
+            (state.parameters[id] ?: defaultValue(id)).coerceIn(0f, 1f)
+        }
+    }
+    var soundVisual by remember { mutableStateOf(AudioVisualSnapshot()) }
+    LaunchedEffect(selectedTab, immersiveMode, onReadAudioVisual) {
+        if (selectedTab == Tab.SOUND && !immersiveMode && onReadAudioVisual != null) {
+            // UI-thread snapshots of actual AudioTrack PCM; zero when stopped.
+            // The poll is disposed as soon as SOUND disappears.
+            while (isActive) {
+                soundVisual = onReadAudioVisual()
+                delay(50L)
+            }
+        } else {
+            soundVisual = AudioVisualSnapshot()
+        }
+    }
     // The optional engine IDs are linked by the host synthesis engine. Dynamic lookup
     // keeps this layout independently buildable while its audio implementation lands.
     val engineId = remember { ParameterId.entries.firstOrNull { it.name == "ENGINE" } }
@@ -422,6 +439,8 @@ fun OrbitalScreen(
                     engineName = engineChoice.name,
                 )
                 if (compactHeight) {
+                    // Landscape's tiny viewport must retain a useful live editor
+                    // and the full-size performance keyboard below the scroller.
                     CompactSoundPanel(
                         parameter = parameter,
                         engineId = engineId,
@@ -429,177 +448,53 @@ fun OrbitalScreen(
                         onParameterChange = onParameterChange,
                     )
                 } else {
-                if (compactOrbitLayout) {
-                    Box(Modifier.fillMaxWidth().height(148.dp).testTag("compactOrbitViewport")) {
-                        OrbitalDisplay(
-                            morph = morph,
-                            movement = move,
-                            modifier = Modifier.fillMaxSize(),
-                            onExpressionChange = { nextMorph, nextMovement ->
-                                onParameterChange(ParameterId.MORPH, nextMorph)
-                                onParameterChange(ParameterId.MOVEMENT, nextMovement)
-                            },
-                        )
-                    }
-                    Box(Modifier.fillMaxWidth().testTag("compactOrbitHint")) {
-                        Label("DRAG ORBIT: X = MORPH  /  Y = MOTION")
-                    }
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .testTag("compactModulationToggle")
-                            .border(1.dp, OrbitalPalette.PanelEdge, RoundedCornerShape(12.dp))
-                            .background(OrbitalPalette.Panel.copy(alpha = .55f), RoundedCornerShape(12.dp))
-                            .clickable(role = Role.Button) { compactGraphExpanded = !compactGraphExpanded }
-                            .semantics {
-                                contentDescription = if (compactGraphExpanded)
-                                    "Hide modulation graph" else "Show modulation graph"
+                    // Actual original-concept-inspired plasma, XY ribbon, knobs
+                    // and configured signal tiles. All inputs reach the one
+                    // synthesis host; only real post-AudioTrack PCM drives glow.
+                    ReferenceSoundLanding(
+                        parameters = soundParameters,
+                        lfos = state.modulationLfos,
+                        routes = state.modulationRoutes,
+                        onParameterChange = onParameterChange,
+                        audio = soundVisual,
+                        compact = compactOrbitLayout,
+                    )
+                    EngineArchitecturePanel(
+                        value = engineValue,
+                        enabled = engineId != null,
+                        onChoose = { value ->
+                            engineId?.let { onParameterChange(it, value) }
+                        },
+                    )
+                    // Keep three genuine voice controls accessible below the
+                    // new hero, rather than losing synthesis features for art.
+                    val voiceParameters =
+                        listOf("UNISON", "DETUNE", "CHARACTER").mapNotNull { name ->
+                            ParameterId.entries.firstOrNull { it.name == name }
+                                ?.let { id -> name to id }
+                        }
+                    if (voiceParameters.isNotEmpty()) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            voiceParameters.forEach { (name, id) ->
+                                NeonKnob(
+                                    name,
+                                    parameter(id),
+                                    percent(parameter(id)),
+                                    when (name) {
+                                        "UNISON" -> OrbitalPalette.Gold
+                                        "CHARACTER" -> OrbitalPalette.Teal
+                                        else -> OrbitalPalette.Violet
+                                    },
+                                    { onParameterChange(id, it) },
+                                    Modifier.weight(1f),
+                                    62.dp,
+                                )
                             }
-                            .heightIn(min = 48.dp)
-                            .padding(horizontal = 12.dp, vertical = 7.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("MODULATION GRAPH", color = OrbitalPalette.Text,
-                            fontSize = 10.sp, letterSpacing = 1.1.sp)
-                        Text(if (compactGraphExpanded) "−" else "+",
-                            color = OrbitalPalette.Cyan, fontSize = 18.sp)
-                    }
-                    if (compactGraphExpanded) {
-                        Box(Modifier.fillMaxWidth().testTag("compactModulationGraph")) {
-                            ModulationGraph(morph, move, Modifier.fillMaxWidth())
                         }
                     }
-                    EngineArchitecturePanel(
-                        value = engineValue,
-                        enabled = engineId != null,
-                        onChoose = { value -> engineId?.let { onParameterChange(it, value) } },
-                    )
-                } else {
-                    EngineArchitecturePanel(
-                        value = engineValue,
-                        enabled = engineId != null,
-                        onChoose = { value -> engineId?.let { onParameterChange(it, value) } },
-                    )
-                    // Patch controls live above the orbit so no caption competes with
-                    // the luminous visual field or intercepts XY expression touches.
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(244.dp)
-                            .border(
-                                1.dp, OrbitalPalette.Cyan.copy(alpha = .30f),
-                                RoundedCornerShape(18.dp),
-                            ),
-                    ) {
-                        OrbitalDisplay(
-                            morph = morph,
-                            movement = move,
-                            modifier = Modifier.fillMaxSize(),
-                            onExpressionChange = { nextMorph, nextMovement ->
-                                onParameterChange(ParameterId.MORPH, nextMorph)
-                                onParameterChange(ParameterId.MOVEMENT, nextMovement)
-                            },
-                        )
-                    }
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 5.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Label("TOUCH ORBIT / X: MORPH / Y: MOTION")
-                        Text(
-                            percent(morph) + "  /  " + percent(move),
-                            color = OrbitalPalette.Cyan,
-                            fontSize = 10.sp,
-                            letterSpacing = .7.sp,
-                        )
-                    }
-                    ModulationGraph(morph, move, Modifier.fillMaxWidth())
-                }
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .border(
-                            1.dp, OrbitalPalette.PanelEdge.copy(alpha = .48f),
-                            RoundedCornerShape(17.dp),
-                        )
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(OrbitalPalette.DeepBlue.copy(alpha = .45f), OrbitalPalette.Panel.copy(alpha = .80f)),
-                            ),
-                            RoundedCornerShape(17.dp),
-                        )
-                        .padding(horizontal = 5.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 5.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Label("TONE SHAPING  /  LIVE MACROS")
-                        Label("01 — 05")
-                    }
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                    val knobSize = 55.dp
-                    NeonKnob("WAVE", parameter(ParameterId.WAVE), percent(parameter(ParameterId.WAVE)), OrbitalPalette.Violet,
-                        { onParameterChange(ParameterId.WAVE, it) }, Modifier.weight(1f), knobSize)
-                    NeonKnob("CUTOFF", parameter(ParameterId.CUTOFF), cutoffLabel(parameter(ParameterId.CUTOFF)), OrbitalPalette.Cyan,
-                        { onParameterChange(ParameterId.CUTOFF, it) }, Modifier.weight(1f), knobSize)
-                    NeonKnob("RESO", parameter(ParameterId.RESONANCE), percent(parameter(ParameterId.RESONANCE)), OrbitalPalette.Gold,
-                        { onParameterChange(ParameterId.RESONANCE, it) }, Modifier.weight(1f), knobSize)
-                    NeonKnob("MOTION", move, percent(move), OrbitalPalette.Violet,
-                        { onParameterChange(ParameterId.MOVEMENT, it) }, Modifier.weight(1f), knobSize)
-                    NeonKnob("FX", parameter(ParameterId.FX_AMOUNT), percent(parameter(ParameterId.FX_AMOUNT)), OrbitalPalette.Cyan,
-                        { onParameterChange(ParameterId.FX_AMOUNT, it) }, Modifier.weight(1f), knobSize)
-                    }
-                }
-                // Voice engine parameters appear as luminous knobs when present.
-                val voiceParameters = listOf("UNISON", "DETUNE", "CHARACTER").mapNotNull { name ->
-                    ParameterId.entries.firstOrNull { it.name == name }?.let { id -> name to id }
-                }
-                if (voiceParameters.isNotEmpty()) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        voiceParameters.forEach { (name, id) ->
-                            NeonKnob(
-                                name, parameter(id), percent(parameter(id)),
-                                when (name) {
-                                    "UNISON" -> OrbitalPalette.Gold
-                                    "CHARACTER" -> OrbitalPalette.Teal
-                                    else -> OrbitalPalette.Violet
-                                },
-                                { onParameterChange(id, it) }, Modifier.weight(1f), 62.dp,
-                            )
-                        }
-                    }
-                }
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.FX }
-                        .semantics { contentDescription = "Edit envelope" }) {
-                        SignalTile("ENV", parameter(ParameterId.ATTACK), OrbitalPalette.Violet, Modifier.fillMaxWidth())
-                    }
-                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.FX }
-                        .semantics { contentDescription = "Edit LFO" }) {
-                        SignalTile("LFO", parameter(ParameterId.LFO_RATE), OrbitalPalette.Cyan, Modifier.fillMaxWidth())
-                    }
-                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.PLAY }
-                        .semantics { contentDescription = "Edit glide" }) {
-                        SignalTile("GLIDE", parameter(ParameterId.GLIDE), OrbitalPalette.Gold, Modifier.fillMaxWidth())
-                    }
-                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.SEQ }
-                        .semantics { contentDescription = "Edit sequencer" }) {
-                        SignalTile("MOD", move, OrbitalPalette.Violet, Modifier.fillMaxWidth())
-                    }
-                }
                 }
                 if (state.oscillatorSlots.isNotEmpty() && onOscillatorSlotChange != null) {
                     OscillatorRackPanel(
@@ -712,13 +607,30 @@ fun OrbitalScreen(
         }
 
         // Editor content scrolls independently; keyboard never becomes scrollable.
-        OrbitalKeyboard(
-            octave = state.octave.coerceIn(0, 8),
-            onNoteOn = onNoteOn,
-            onNoteOff = onNoteOff,
-            modifier = Modifier.fillMaxWidth(),
-            preferredHeight = if (compactHeight) 82.dp else if (compactOrbitLayout) 110.dp else null,
-        )
+        if (selectedTab == Tab.SOUND && !compactHeight) {
+            // The original design's equal-width liquid-glass chromatic strips
+            // own real note-on/off, including balanced multitouch teardown.
+            ReferencePerformanceKeybed(
+                octave = state.octave.coerceIn(0, 8),
+                onNoteOn = onNoteOn,
+                onNoteOff = onNoteOff,
+                onExpressiveNoteOn = onExpressiveNoteOn,
+                onOctaveChange = onOctaveChange,
+                morph = morph,
+                movement = move,
+                audioRms = soundVisual.rms,
+                modifier = Modifier.fillMaxWidth(),
+                preferredHeight = if (compactOrbitLayout) 108.dp else 124.dp,
+            )
+        } else {
+            OrbitalKeyboard(
+                octave = state.octave.coerceIn(0, 8),
+                onNoteOn = onNoteOn,
+                onNoteOff = onNoteOff,
+                modifier = Modifier.fillMaxWidth(),
+                preferredHeight = if (compactHeight) 82.dp else if (compactOrbitLayout) 110.dp else null,
+            )
+        }
         if (!compactHeight) {
             Row(
                 Modifier.fillMaxWidth(),
