@@ -6,9 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -18,9 +16,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * On-device Canvas coverage: compares actual rendered pixels so an accidental
- * disconnect between measured PCM telemetry and the visual field is detected.
- * This verifies visual reactivity, not photographic parity with design art.
+ * On-device Canvas coverage: compares REAL Android foreground compositor pixels
+ * so accidental disconnect between measured PCM telemetry and the visual field
+ * is detected. This verifies visual reactivity, not design-reference parity.
  */
 @RunWith(AndroidJUnit4::class)
 class ImmersiveVisualFieldTest {
@@ -44,26 +42,33 @@ class ImmersiveVisualFieldTest {
         }
         val field = compose.onNodeWithTag("immersiveVisualField")
         field.assertIsDisplayed()
-        val silent = field.captureToImage().toPixelMap()
-
-        compose.runOnIdle {
-            actualRms = .8f
-            actualPeak = .93f
-        }
-        field.assertIsDisplayed()
-        val active = field.captureToImage().toPixelMap()
-        var changed = 0
-        val stepX = (active.width / 48).coerceAtLeast(1)
-        val stepY = (active.height / 48).coerceAtLeast(1)
-        for (y in 0 until active.height step stepY) {
-            for (x in 0 until active.width step stepX) {
-                if (active[x, y] != silent[x, y]) changed++
+        val actualFrame = RealAndroidFrameCapture(compose, compose.activity)
+        actualFrame.capture(field, "immersive-silent").use { silent ->
+            compose.runOnIdle {
+                actualRms = .8f
+                actualPeak = .93f
+            }
+            field.assertIsDisplayed()
+            actualFrame.capture(field, "immersive-measured-pcm").use { active ->
+                assertTrue(
+                    "Real Android canvas geometry must be stable across PCM updates",
+                    active.width == silent.width && active.height == silent.height,
+                )
+                var changed = 0
+                val stepX = (active.width / 48).coerceAtLeast(1)
+                val stepY = (active.height / 48).coerceAtLeast(1)
+                for (y in 0 until active.height step stepY) {
+                    for (x in 0 until active.width step stepX) {
+                        if (active.argbAt(x, y) != silent.argbAt(x, y)) changed++
+                    }
+                }
+                assertTrue(
+                    "Measured PCM should visibly change multiple pixels in the tactile light field; " +
+                        "actual SurfaceFlinger changed=" + changed,
+                    changed >= 24,
+                )
             }
         }
-        assertTrue(
-            "Measured PCM should visibly change multiple pixels in the tactile light field",
-            changed >= 24,
-        )
     }
 
     @Test fun invalidTelemetryAndGestureValuesDoNotCrashCanvas() {
@@ -85,6 +90,9 @@ class ImmersiveVisualFieldTest {
         }
         val field = compose.onNodeWithTag("immersiveVisualField")
         field.assertIsDisplayed()
-        assertTrue(field.captureToImage().width > 1)
+        RealAndroidFrameCapture(compose, compose.activity)
+            .capture(field, "immersive-invalid-input").use { real ->
+                assertTrue(real.width > 1)
+            }
     }
 }
