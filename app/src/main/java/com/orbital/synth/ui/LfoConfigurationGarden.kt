@@ -215,8 +215,8 @@ internal fun LfoConfigurationGarden(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                "PATCH VOLTAGE  /  " + lane.connectedCount +
-                    " ACTIVE CABLES  ·  " + lane.liveCables.size + " LIVE" +
+                "CONNECTED ROUTES  /  " + lane.connectedCount +
+                    " CONFIGURED  ·  " + lane.liveCables.size + " DSP TARGETS" +
                     if (lane.reservedCount > 0) "  ·  " + lane.reservedCount + " RESERVED" else "",
                 color = OrbitalPalette.Gold, fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
@@ -224,7 +224,7 @@ internal fun LfoConfigurationGarden(
             )
             if (cable == null || actualCable == null) {
                 Text(
-                    "NO LIVE CABLE FROM THIS LFO. Route it to PITCH, MORPH, FILTER, AMP OR PAN in the 64-cord patch bay before editing destination depth.",
+                    "NO CONNECTED DSP ROUTE FROM THIS LFO. Connect an enabled cable to PITCH, MORPH, CUTOFF, RESONANCE, AMP OR PAN in the 64-cord patch bay to edit its depth.",
                     color = OrbitalPalette.Muted, fontSize = 10.sp,
                     modifier = Modifier.testTag("lfoGardenNoLiveCable"),
                 )
@@ -241,7 +241,7 @@ internal fun LfoConfigurationGarden(
                         modifier = Modifier.testTag("lfoGardenEditingCable"),
                     )
                     if (lane.liveCables.size > 1) {
-                        GardenAction("NEXT", "Select next live cable for LFO " + (selected + 1),
+                        GardenAction("NEXT", "Select next configured DSP-target cable for LFO " + (selected + 1),
                             OrbitalPalette.Gold, "lfoGardenNextCable") {
                             routeCursor = (cursor + 1) % lane.liveCables.size
                         }
@@ -269,6 +269,20 @@ internal fun LfoConfigurationGarden(
                 )
                 Text("BIPOLAR ROUTE DEPTH ±4× · NOT AN LFO AMPLITUDE CONTROL.",
                     color = OrbitalPalette.Muted, fontSize = 9.sp)
+                if (!config.enabled || cable.depth == 0f) {
+                    Text(
+                        when {
+                            !config.enabled && cable.depth == 0f ->
+                                "CONFIGURED ONLY · LFO PAUSED AND CABLE DEPTH ZERO."
+                            !config.enabled ->
+                                "CONFIGURED ONLY · LFO SOURCE PAUSED, NO CURRENT MODULATION."
+                            else -> "CONFIGURED ONLY · CABLE DEPTH ZERO, NO MODULATION."
+                        },
+                        color = OrbitalPalette.Muted,
+                        fontSize = 9.sp,
+                        modifier = Modifier.testTag("lfoGardenCableAudibility"),
+                    )
+                }
             }
         }
     }
@@ -305,7 +319,7 @@ private fun LfoGardenNode(
                     lane.config.shape.name.replace('_', ' ') + ", " +
                     (if (lane.config.enabled) "enabled" else "paused") +
                     ", " + formatRate(lane.rateHz) + " hertz, " +
-                    lane.liveCables.size + " live outgoing cables"
+                    lane.liveCables.size + " configured DSP-target outgoing cables"
             }
             .testTag("lfoGardenNode" + lane.slot)
             .padding(5.dp),
