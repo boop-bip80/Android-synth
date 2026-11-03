@@ -7,6 +7,7 @@ import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.dsp.processing.FxModuleType
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -20,7 +21,8 @@ class PatchGraphUiModelTest {
         lfos: List<ModulationLfoConfig> = List(8) { ModulationLfoConfig(enabled = true) },
         routes: List<ModulationRouteConfig> = emptyList(),
         fx: List<FxModuleConfig> = List(6) { FxModuleConfig() },
-    ): PatchGraphSnapshot = PatchGraphUiModel.build(oscillators, lfos, routes, fx)
+        steps: ModulationStepConfig? = null,
+    ): PatchGraphSnapshot = PatchGraphUiModel.build(oscillators, lfos, routes, fx, steps)
 
     @Test fun physicalBackboneContainsOnlyRealFixedAudioEdges() {
         val graph = snapshot()
@@ -195,4 +197,60 @@ class PatchGraphUiModelTest {
         assertEquals(64, graph.liveRouteCount)
         assertEquals(64, graph.patchCables.size)
     }
+    @Test fun audioClockedStepNodeIsVisibleOnlyWithConfigAndHonestEnabledGate() {
+        val routes = listOf(
+            ModulationRouteConfig(true, ModSource.STEP, ModDestination.AMP, .7f),
+            ModulationRouteConfig(true, ModSource.STEP, ModDestination.PAN, -.5f),
+        )
+        val config = ModulationStepConfig(enabled = true)
+        val live = snapshot(routes = routes, steps = config)
+        assertEquals("STEP", live.nodes.single { it.kind == PatchNodeKind.STEP }.id)
+        assertEquals(2, live.stepRouteCount)
+        assertEquals(0, live.dormantStepRouteCount)
+        assertEquals(2, live.liveRouteCount)
+        assertEquals(0, live.externalSourceRouteCount)
+        assertEquals(
+            setOf("BUSAMP", "BUSPAN"),
+            live.patchCables.map { it.to.id }.toSet(),
+        )
+        assertTrue(live.patchCables.all { it.from.id == "STEP" && it.active })
+
+        val disabled = snapshot(routes = routes, steps = config.copy(enabled = false))
+        assertEquals(1, disabled.nodes.count { it.kind == PatchNodeKind.STEP })
+        assertFalse(disabled.nodes.single { it.kind == PatchNodeKind.STEP }.active)
+        assertEquals(2, disabled.dormantStepRouteCount)
+        assertEquals(2, disabled.patchCables.size)
+        assertTrue(disabled.patchCables.none { it.active })
+
+        val missingHostState = snapshot(routes = routes)
+        assertEquals(0, missingHostState.nodes.count { it.kind == PatchNodeKind.STEP })
+        assertEquals(2, missingHostState.dormantStepRouteCount)
+        assertEquals(0, missingHostState.patchCables.size)
+        assertEquals(0, missingHostState.reservedRouteCount)
+    }
+
+    @Test fun stepCanPatchOnlyLivePcmTargetsAndLatestFxModelsRemainVisible() {
+        val bank = listOf(ModulationRouteConfig(), ModulationRouteConfig())
+        val patch = PatchGraphUiModel.findOrCreateLiveRoute(
+            bank, ModSource.STEP, ModDestination.RESONANCE,
+        )
+        assertNotNull(patch)
+        assertEquals(0, patch!!.first)
+        assertEquals(ModSource.STEP, patch.second.source)
+        assertTrue(patch.second.enabled)
+        assertNull(PatchGraphUiModel.findOrCreateLiveRoute(
+            bank, ModSource.STEP, ModDestination.DRIVE,
+        ))
+
+        val types = listOf(FxModuleType.REVERB, FxModuleType.PHASER, FxModuleType.BITCRUSH)
+        val graph = snapshot(fx = types.map {
+            FxModuleConfig(type = it, enabled = true, wet = .7f)
+        })
+        assertEquals(types, graph.nodes.filter {
+            it.kind == PatchNodeKind.FX_SLOT
+        }.map { it.fxType })
+        assertEquals(listOf("REVERB", "PHASE", "CRUSH"), types.map(PatchGraphUiModel::slotName))
+        assertTrue(graph.fixedAudio.any { it.from.id == "FX2" && it.to.id == "OUT" })
+    }
+
 }
