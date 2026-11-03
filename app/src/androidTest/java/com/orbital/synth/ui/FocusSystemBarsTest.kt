@@ -54,16 +54,49 @@ class FocusSystemBarsTest {
     }
 
     private fun focusedWindowSummary(): String = runCatching {
-        val pipe = InstrumentationRegistry.getInstrumentation().uiAutomation
-            .executeShellCommand("dumpsys window windows")
-        android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe).bufferedReader().use { stream ->
-            stream.lineSequence()
-                .filter { "mCurrentFocus" in it || "mFocusedApp" in it || "mTopFocused" in it }
-                .take(6)
-                .joinToString(" | ")
-                .take(550)
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        fun shellSummary(command: String, selector: Regex, limit: Int): String {
+            val descriptor = automation.executeShellCommand(command)
+            return android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor)
+                .bufferedReader().use { stream ->
+                    stream.lineSequence()
+                        .filter { selector.containsMatchIn(it) }
+                        .take(limit)
+                        .joinToString(" | ") { it.trim().take(140) }
+                }
         }
-    }.getOrDefault("window focus dump unavailable")
+        val window = shellSummary(
+            "dumpsys window",
+            Regex("focus|resumed|overlay|immersive|nexuslauncher|orbital|status_bar", RegexOption.IGNORE_CASE),
+            16,
+        )
+        val activity = shellSummary(
+            "dumpsys activity activities",
+            Regex("resumed|focused|mCurrentActivity|nexuslauncher|orbital|immersive", RegexOption.IGNORE_CASE),
+            12,
+        )
+        val input = shellSummary(
+            "dumpsys input",
+            Regex("FocusedApplication|FocusedWindow|FocusEvent|focus", RegexOption.IGNORE_CASE),
+            9,
+        )
+        val root = automation.rootInActiveWindow
+        val activeRoot = if (root == null) "none" else buildString {
+            append("package=").append(root.packageName)
+            append(",class=").append(root.className)
+            append(",children=").append(root.childCount)
+            for (index in 0 until root.childCount.coerceAtMost(8)) {
+                val child = root.getChild(index) ?: continue
+                append(" [")
+                    .append(child.packageName).append(" ")
+                    .append(child.className).append(" ")
+                    .append(child.text?.toString()?.take(70)).append(" ")
+                    .append(child.contentDescription?.toString()?.take(70))
+                    .append("]")
+            }
+        }
+        "window={$window} activity={$activity} input={$input} accessibility={$activeRoot}"
+    }.getOrElse { "window focus dump unavailable: ${it.javaClass.simpleName}: ${it.message}" }
 
     private fun behavior(): Int {
         var value = Int.MIN_VALUE
