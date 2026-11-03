@@ -40,6 +40,7 @@ import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orbital.synth.core.ModulationLfoConfig
@@ -72,6 +73,8 @@ fun ReferenceSoundControls(
     onParameterChange: (ParameterId, Float) -> Unit,
     modifier: Modifier = Modifier,
     audioRms: Float = 0f,
+    compact: Boolean = false,
+    showExpressionRibbon: Boolean = true,
 ) {
     fun param(id: ParameterId): Float =
         ReferenceSoundUiModel.normalized(parameters[id] ?: .5f)
@@ -90,15 +93,18 @@ fun ReferenceSoundControls(
             .background(ReferenceBlack),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ReferenceExpressionRibbon(
-            morph = morph,
-            movement = movement,
-            audioRms = audioRms,
-            onChange = { nextMorph, nextMove ->
-                onParameterChange(ParameterId.MORPH, nextMorph)
-                onParameterChange(ParameterId.MOVEMENT, nextMove)
-            },
-        )
+        if (showExpressionRibbon) {
+            ReferenceExpressionRibbon(
+                morph = morph,
+                movement = movement,
+                audioRms = audioRms,
+                height = if (compact) 88.dp else 112.dp,
+                onChange = { nextMorph, nextMove ->
+                    onParameterChange(ParameterId.MORPH, nextMorph)
+                    onParameterChange(ParameterId.MOVEMENT, nextMove)
+                },
+            )
+        }
         Row(
             Modifier.fillMaxWidth().testTag("referenceKnobRack"),
             horizontalArrangement = Arrangement.spacedBy(3.dp),
@@ -118,6 +124,7 @@ fun ReferenceSoundControls(
                     tag = "referenceKnob" + id.name,
                     onValueChange = { onParameterChange(id, it) },
                     modifier = Modifier.weight(1f),
+                    diameter = if (compact) 48.dp else 51.dp,
                 )
             }
         }
@@ -170,6 +177,7 @@ fun ReferenceSoundControls(
                 tint = OrbitalPalette.Violet,
                 tag = "referenceMiniEnv",
                 modifier = Modifier.weight(1f),
+                height = if (compact) 64.dp else 80.dp,
             )
             ReferenceMiniSignal(
                 title = "LFO",
@@ -178,6 +186,7 @@ fun ReferenceSoundControls(
                 tint = OrbitalPalette.Cyan,
                 tag = "referenceMiniLfo",
                 modifier = Modifier.weight(1f),
+                height = if (compact) 64.dp else 80.dp,
             )
             ReferenceMiniSignal(
                 title = "EXPR",
@@ -186,6 +195,7 @@ fun ReferenceSoundControls(
                 tint = OrbitalPalette.Gold,
                 tag = "referenceMiniExpr",
                 modifier = Modifier.weight(1f),
+                height = if (compact) 64.dp else 80.dp,
             )
             ReferenceMiniSignal(
                 title = "MOD",
@@ -194,6 +204,7 @@ fun ReferenceSoundControls(
                 tint = OrbitalPalette.Violet,
                 tag = "referenceMiniMod",
                 modifier = Modifier.weight(1f),
+                height = if (compact) 64.dp else 80.dp,
             )
         }
     }
@@ -211,6 +222,8 @@ fun ReferenceExpressionRibbon(
     onChange: (Float, Float) -> Unit,
     modifier: Modifier = Modifier,
     audioRms: Float = 0f,
+    height: Dp = 112.dp,
+    transparentBackground: Boolean = false,
 ) {
     val x = ReferenceSoundUiModel.normalized(morph)
     val y = ReferenceSoundUiModel.normalized(movement)
@@ -223,9 +236,13 @@ fun ReferenceExpressionRibbon(
     Canvas(
         modifier
             .fillMaxWidth()
-            .height(112.dp)
+            .height(height)
             .background(
-                Brush.verticalGradient(listOf(Color(0xFF09182F), ReferenceBlack)),
+                Brush.verticalGradient(
+                    if (transparentBackground) listOf(
+                        Color(0xC509182F), Color(0xDD010713),
+                    ) else listOf(Color(0xFF09182F), ReferenceBlack),
+                ),
                 shape,
             )
             .border(1.dp, OrbitalPalette.Blue.copy(alpha = .64f), shape)
@@ -355,6 +372,7 @@ fun ReferenceNeonKnob(
     tag: String,
     onValueChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    diameter: Dp = 51.dp,
 ) {
     val safe = ReferenceSoundUiModel.normalized(value)
     val update by rememberUpdatedState(onValueChange)
@@ -367,7 +385,7 @@ fun ReferenceNeonKnob(
     ) {
         Canvas(
             Modifier
-                .size(51.dp)
+                .size(diameter)
                 .testTag(tag)
                 .semantics {
                     contentDescription = label + ", normalized " +
@@ -461,10 +479,11 @@ private fun ReferenceMiniSignal(
     tint: Color,
     tag: String,
     modifier: Modifier,
+    height: Dp,
 ) {
     Column(
         modifier
-            .height(80.dp)
+            .height(height)
             .border(1.dp, tint.copy(alpha = .42f), RoundedCornerShape(8.dp))
             .background(
                 Brush.verticalGradient(listOf(ReferenceGlass, ReferenceBlack)),
@@ -483,7 +502,7 @@ private fun ReferenceMiniSignal(
             Text(caption, color = tint, fontSize = 7.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         }
-        Canvas(Modifier.fillMaxWidth().height(45.dp)) {
+        Canvas(Modifier.fillMaxWidth().height(if (height <= 64.dp) 29.dp else 45.dp)) {
             if (values.size < 2) return@Canvas
             val path = Path()
             values.forEachIndexed { index, raw ->
