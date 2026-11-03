@@ -121,7 +121,8 @@ fun ReferencePerformanceKeybed(
     val label = "Twelve live chromatic liquid-glass keys, octave " +
         chromaticOctave + ", " + activeNotes.size +
         " currently held. Slide fingers between strips; higher touch position " +
-        "gives a brighter initial strike velocity. Light rivers preview synth settings, not PCM"
+        "gives a brighter initial strike velocity. Light shapes preview synth settings; " +
+        "brightness responds to output level."
 
     val corner = RoundedCornerShape(12.dp)
     Canvas(
@@ -292,6 +293,62 @@ fun ReferencePerformanceKeybed(
                 Offset(left + padWidth - 5f * gap, h - 3f * gap),
                 strokeWidth = if (active) 2.dp.toPx() else .8.dp.toPx(),
                 cap = StrokeCap.Round,
+            )
+        }
+
+
+        // Two translucent light sheets refract beneath the existing crisp
+        // wave traces and genuine finger blooms. Unlike a synthetic FFT, the
+        // geometry is only a preview of stored MORPH/MOVEMENT; brightness
+        // additionally follows accepted AudioTrack RMS and live pointer count.
+        // Exactly 2 x 65 sampled centers and 2 bounded Canvas paths, with no
+        // animation clock, background job, audio callback, or new note owner.
+        val heldEnergy = (touchPoints.size.coerceAtMost(3) / 3f)
+        val glassEnergy = (0.50f + energy * .30f + heldEnergy * .16f)
+            .coerceIn(0f, .96f)
+        val glassSamples = 64
+        for (sheet in 0..1) {
+            val soundLayer = if (sheet == 0) 0 else 2
+            val radius = (if (sheet == 0) 19.dp else 14.dp).toPx() *
+                (1f + .20f * energy + .10f * heldEnergy)
+            val centers = FloatArray(glassSamples + 1) { sample ->
+                val u = sample / glassSamples.toFloat()
+                ReferenceKeybedUiModel.lightRiverAt(
+                    u, soundLayer, morph, movement,
+                ) * h
+            }
+            val glass = Path()
+            for (sample in 0..glassSamples) {
+                val u = sample / glassSamples.toFloat()
+                val taper = .55f + 1.80f * u * (1f - u)
+                val x = u * w
+                val y = centers[sample] - radius * taper
+                if (sample == 0) glass.moveTo(x, y) else glass.lineTo(x, y)
+            }
+            for (sample in glassSamples downTo 0) {
+                val u = sample / glassSamples.toFloat()
+                val taper = .55f + 1.80f * u * (1f - u)
+                glass.lineTo(u * w, centers[sample] + radius * taper)
+            }
+            glass.close()
+            drawPath(
+                path = glass,
+                brush = Brush.horizontalGradient(
+                    if (sheet == 0) listOf(
+                        OrbitalPalette.Cyan.copy(alpha = .15f),
+                        OrbitalPalette.Violet.copy(alpha = .57f),
+                        OrbitalPalette.Gold.copy(alpha = .48f),
+                        OrbitalPalette.Cyan.copy(alpha = .64f),
+                        OrbitalPalette.Violet.copy(alpha = .18f),
+                    ) else listOf(
+                        OrbitalPalette.Violet.copy(alpha = .13f),
+                        OrbitalPalette.Cyan.copy(alpha = .55f),
+                        OrbitalPalette.Gold.copy(alpha = .60f),
+                        OrbitalPalette.Violet.copy(alpha = .49f),
+                        OrbitalPalette.Cyan.copy(alpha = .15f),
+                    ),
+                ),
+                alpha = glassEnergy,
             )
         }
 

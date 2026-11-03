@@ -2,6 +2,7 @@ package com.orbital.synth.audio
 
 import com.orbital.synth.core.music.NoteEventKind
 import com.orbital.synth.core.music.TimedNoteEvent
+import com.orbital.synth.core.music.TimedNoteSink
 import com.orbital.synth.core.performance.ArpeggiatorDirection
 import com.orbital.synth.core.performance.ArpeggiatorSettings
 import com.orbital.synth.core.performance.PerformanceArpeggiator
@@ -65,6 +66,31 @@ internal class PerformanceArpTransport(
     @Volatile private var requestedSettings = ArpeggiatorSettings()
     private val arpeggiator = PerformanceArpeggiator(sampleRate)
     private val directKeys = LinkedHashMap<Key, Int>()
+
+    // Reusable event callback. AudioTrack may split one write at STEP boundaries,
+    // so never create event Lists or captured lambdas in those nested fragments.
+    // Only the render worker mutates these fields; no synchronization is needed.
+    private var eventOutput = FloatArray(0)
+    private var eventScratch = FloatArray(0)
+    private var eventStart = 0L
+    private var eventFrames = 0
+    private var eventRendered = 0
+    private val generatedSink = TimedNoteSink { atSample, kind, midiNote, velocity ->
+        val offset = (atSample - eventStart).toInt()
+        require(offset in eventRendered until eventFrames) {
+            "Arpeggiator must emit sorted events inside the current block"
+        }
+        if (offset > eventRendered) {
+            renderSegment(eventOutput, eventScratch, eventRendered,
+                offset - eventRendered, eventFrames)
+            eventRendered = offset
+        }
+        when (kind) {
+            NoteEventKind.NOTE_ON ->
+                noteOn(ARP_SOURCE_ID, 0, midiNote, velocity.coerceIn(1, 127) / 127f)
+            NoteEventKind.NOTE_OFF -> noteOff(ARP_SOURCE_ID, 0, midiNote)
+        }
+    }
 
     // All variables below are confined to the audio worker.
     private var workerEnabled = false
@@ -305,22 +331,14 @@ internal class PerformanceArpTransport(
             return
         }
 
-        val blockStart = arpeggiator.cursorSample
-        val events = arpeggiator.advance(frames)
-        var rendered = 0
-        for (event in events) {
-            val offset = (event.sampleTime - blockStart).toInt()
-            require(offset in rendered until frames) {
-                "Arpeggiator must emit sorted events inside the current block"
-            }
-            if (offset > rendered) {
-                renderSegment(output, scratch, rendered, offset - rendered, frames)
-                rendered = offset
-            }
-            dispatchGenerated(event)
-        }
-        if (rendered < frames) {
-            renderSegment(output, scratch, rendered, frames - rendered, frames)
+        eventOutput = output
+        eventScratch = scratch
+        eventStart = arpeggiator.cursorSample
+        eventFrames = frames
+        eventRendered = 0
+        arpeggiator.advanceInto(frames, generatedSink)
+        if (eventRendered < frames) {
+            renderSegment(output, scratch, eventRendered, frames - eventRendered, frames)
         }
     }
 
@@ -403,15 +421,6 @@ internal class PerformanceArpTransport(
                     if (workerEnabled) arpeggiator.start()
                 }
             }
-        }
-    }
-
-    private fun dispatchGenerated(event: TimedNoteEvent) {
-        when (event.kind) {
-            NoteEventKind.NOTE_ON ->
-                noteOn(ARP_SOURCE_ID, 0, event.midiNote, event.velocity.coerceIn(1, 127) / 127f)
-            NoteEventKind.NOTE_OFF ->
-                noteOff(ARP_SOURCE_ID, 0, event.midiNote)
         }
     }
 
