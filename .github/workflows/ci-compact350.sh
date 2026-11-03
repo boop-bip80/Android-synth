@@ -160,6 +160,8 @@ for name in names:
     width, height = struct.unpack(">II", raw[16:24])
     if width < 360 or height < 350:
         raise SystemExit(f"Real emulator framebuffer too small: {name} {width}x{height}")
+    if raw[-12:] != b"\x00\x00\x00\x00IEND\xaeB\x60\x82":
+        raise SystemExit(f"Truncated native screenshot with no PNG IEND: {name}")
     evidence.append(f"{name}={width}x{height};{len(raw)}bytes")
     print(f"Physical OSC8 screenshot PASS: {name}, {width}x{height}, {len(raw)} bytes")
 Path("artifacts/compact350-native-framebuffer.txt").write_text(
