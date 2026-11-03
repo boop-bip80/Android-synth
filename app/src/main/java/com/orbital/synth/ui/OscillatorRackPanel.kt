@@ -239,6 +239,116 @@ fun OscillatorRackPanel(
                 layer.morph.coerceIn(0f, 1f), 0f..1f, OrbitalPalette.Violet,
                 { onSlotChange(selected, layer.copy(morph = it)) },
             )
+            // A real per-layer noise oscillator, blended before the selected
+            // voice filter. Touch the spectrum directly or use accessible
+            // white/pink/brown presets and precision sliders.
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, tint.copy(alpha = .27f), RoundedCornerShape(13.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF07152C), Color(0xFF0C0920), Color(0xFF040B19)),
+                        ),
+                        RoundedCornerShape(13.dp),
+                    )
+                    .padding(9.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "NOISE FABRIC  /  SPECTRAL MORPH",
+                        color = OrbitalPalette.Cyan,
+                        fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp, modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        if (layer.noiseLevel == 0f) "OFF" else "LIVE",
+                        color = if (layer.noiseLevel == 0f) OrbitalPalette.Muted
+                            else OrbitalPalette.Gold,
+                        fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                NoiseSpectrumPad(
+                    slot = layer,
+                    accent = tint,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 86.dp),
+                    onTouch = { color, blend ->
+                        onSlotChange(selected, layer.copy(
+                            noiseColor = color, noiseLevel = blend,
+                        ))
+                    },
+                )
+                Text(
+                    "ILLUSTRATIVE SPECTRUM  /  TOUCH X: COLOR   Y: NOISE MIX",
+                    color = OrbitalPalette.Muted,
+                    fontSize = 8.sp, letterSpacing = .35.sp,
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    listOf("WHITE", "PINK", "BROWN").forEachIndexed { index, name ->
+                        val colorTarget = index * .5f
+                        val selectedColor = abs(layer.noiseColor - colorTarget) < .11f
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .border(
+                                    1.dp,
+                                    tint.copy(alpha = if (selectedColor) .88f else .22f),
+                                    RoundedCornerShape(9.dp),
+                                )
+                                .background(
+                                    tint.copy(alpha = if (selectedColor) .17f else .035f),
+                                    RoundedCornerShape(9.dp),
+                                )
+                                .clickable(role = Role.Button) {
+                                    onSlotChange(selected, layer.copy(
+                                        noiseColor = colorTarget,
+                                        noiseLevel = if (layer.noiseLevel == 0f)
+                                            .55f else layer.noiseLevel,
+                                    ))
+                                }
+                                .testTag("oscillatorNoise" + name)
+                                .semantics {
+                                    contentDescription = "$name noise color"
+                                }
+                                .padding(horizontal = 7.dp, vertical = 11.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                name,
+                                color = if (selectedColor) tint else OrbitalPalette.Muted,
+                                fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
+                RackParameterSlider(
+                    "NOISE MIX",
+                    (layer.noiseLevel * 100f).roundToInt().toString() + "%",
+                    layer.noiseLevel.coerceIn(0f, 1f), 0f..1f,
+                    OrbitalPalette.Cyan,
+                    { onSlotChange(selected, layer.copy(noiseLevel = it)) },
+                    testTag = "oscillatorNoiseLevel",
+                )
+                RackParameterSlider(
+                    "NOISE COLOR",
+                    when {
+                        layer.noiseColor < .17f -> "WHITE"
+                        layer.noiseColor < .39f -> "WHITE ↔ PINK"
+                        layer.noiseColor < .61f -> "PINK"
+                        layer.noiseColor < .83f -> "PINK ↔ BROWN"
+                        else -> "BROWN"
+                    },
+                    layer.noiseColor.coerceIn(0f, 1f), 0f..1f,
+                    OrbitalPalette.Violet,
+                    { onSlotChange(selected, layer.copy(noiseColor = it)) },
+                    testTag = "oscillatorNoiseColor",
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "COARSE TUNE",
@@ -339,6 +449,7 @@ private fun RackParameterSlider(
     bounds: ClosedFloatingPointRange<Float>,
     tint: Color,
     onValueChange: (Float) -> Unit,
+    testTag: String? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -356,7 +467,10 @@ private fun RackParameterSlider(
                 activeTrackColor = tint,
                 inactiveTrackColor = OrbitalPalette.PanelEdge,
             ),
-            modifier = Modifier.semantics { contentDescription = name + ": " + display },
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .semantics { contentDescription = name + ": " + display }
+                .then(if (testTag == null) Modifier else Modifier.testTag(testTag)),
         )
     }
 }
@@ -429,5 +543,94 @@ private fun OscillatorWavePreview(
         drawPath(path, accent.copy(alpha = .09f), style = Stroke(width = 15f))
         drawPath(path, accent.copy(alpha = .26f), style = Stroke(width = 6f))
         drawPath(path, accent, style = Stroke(width = 2.6f, cap = StrokeCap.Round))
+    }
+}
+
+/**
+ * A touch-programmable visual color field. Bars are a deliberately illustrative
+ * spectrum whose tilt and density reflect the selected noise color and blend;
+ * they are not mislabeled as a live microphone/FFT analysis.
+ */
+@Composable
+private fun NoiseSpectrumPad(
+    slot: OscillatorSlot,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    onTouch: (color: Float, blend: Float) -> Unit,
+) {
+    val touch by rememberUpdatedState(onTouch)
+    Canvas(
+        modifier
+            .border(1.dp, accent.copy(alpha = .28f), RoundedCornerShape(10.dp))
+            .background(Color(0xFF020711), RoundedCornerShape(10.dp))
+            .testTag("oscillatorNoiseCanvas")
+            .semantics {
+                contentDescription =
+                    "Noise spectrum touch field. Horizontal changes white pink brown color; vertical changes mix."
+            }
+            .pointerInput(Unit) {
+                detectTapGestures { position ->
+                    touch(
+                        (position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        (1f - position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
+                    )
+                }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(onDragStart = { point ->
+                    touch(
+                        (point.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        (1f - point.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
+                    )
+                }) { change, _ ->
+                    touch(
+                        (change.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        (1f - change.position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f),
+                    )
+                    change.consume()
+                }
+            },
+    ) {
+        val mix = slot.noiseLevel.coerceIn(0f, 1f)
+        val color = slot.noiseColor.coerceIn(0f, 1f)
+        val mid = size.height * .73f
+        drawLine(
+            accent.copy(alpha = .13f),
+            Offset(0f, mid), Offset(size.width, mid), 1f,
+        )
+        for (band in 0 until 48) {
+            val x = size.width * (band + .5f) / 48f
+            val position = band / 47f
+            // Increasing brownness rolls off upper bands; selected noise mix
+            // increases visual energy without ever implying microphone input.
+            val tilt = (1f - position * color * .92f).coerceAtLeast(.06f)
+            val sparkle = abs(sin(
+                (position * 11.0 + color * 3.7 + mix * 1.9) * PI
+            )).toFloat()
+            val intensity = .09f + mix * .77f * tilt * (.48f + .52f * sparkle)
+            val height = size.height * intensity
+            val top = mid - height
+            val bottom = mid + height * .15f
+            drawLine(
+                accent.copy(alpha = .10f + mix * .13f),
+                Offset(x, top), Offset(x, bottom), 7f,
+                cap = StrokeCap.Round,
+            )
+            drawLine(
+                if (position > .65f) OrbitalPalette.Violet.copy(alpha = .38f + mix * .5f)
+                else accent.copy(alpha = .4f + mix * .53f),
+                Offset(x, top), Offset(x, bottom),
+                size.width / 85f, cap = StrokeCap.Round,
+            )
+        }
+        val cursor = Offset(size.width * color, size.height * (1f - mix))
+        drawCircle(
+            OrbitalPalette.Cyan.copy(alpha = .16f),
+            radius = 17f, center = cursor,
+        )
+        drawCircle(
+            OrbitalPalette.Cyan.copy(alpha = .88f),
+            radius = 3.2f, center = cursor,
+        )
     }
 }
