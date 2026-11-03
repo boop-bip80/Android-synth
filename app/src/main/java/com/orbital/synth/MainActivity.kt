@@ -223,6 +223,10 @@ class MainActivity : ComponentActivity() {
                     onModulationTempoChange = { bpm ->
                         if (bpm.isFinite()) updateMusicTempo(bpm.roundToInt())
                     },
+                    onReadAudioVisual = { audioOutput.audioVisualSnapshot },
+                    onStageTouchSettingsChange = { settings ->
+                        screenState = screenState.copy(stageTouchSettings = settings)
+                    },
                     onStageModulationTouch = { x, y, pressure ->
                         if (x.isFinite() && y.isFinite() && pressure.isFinite()) {
                             synth.setModulationSource(ModSource.TOUCH_X, x * 2f - 1f)
@@ -310,6 +314,10 @@ class MainActivity : ComponentActivity() {
         val patch = patches[patchIndex]
         synth.allNotesOff()
         synth.loadPatch(patch)
+        // A patch owns its modulation BPM; route it through the one master transport.
+        if (::audioOutput.isInitialized) {
+            updateMusicTempo(synth.modulationTempoBpm.roundToInt())
+        }
         screenState = screenState.copy(
             patchName = patch.name,
             parameters = ParameterId.entries.associateWith { synth.parameter(it) },
@@ -510,6 +518,7 @@ class MainActivity : ComponentActivity() {
                     val patch = result.value
                     audioOutput.arpeggiatorPanic()
                     synth.allNotesOff()
+                    updateMusicTempo(synth.modulationTempoBpm.roundToInt())
                     val factoryIndex = FactoryPresets.ALL.indexOfFirst { it.id == patch.id }
                     if (factoryIndex >= 0) patchIndex = factoryIndex
                     screenState = screenState.copy(
@@ -573,11 +582,8 @@ class MainActivity : ComponentActivity() {
 
     private fun updateModulationRoute(index: Int, next: ModulationRouteConfig) {
         if (index !in 0 until synth.modulationRouteCount || !next.depth.isFinite()) return
-        if (next.enabled) {
-            synth.setModulationRoute(index, next.source, next.destination, next.depth, next.curve)
-        } else {
-            synth.clearModulationRoute(index)
-        }
+        // Disabled routes keep their source/curve/depth for later re-enable and V3 patch save.
+        synth.setModulationRouteConfig(index, next)
         screenState = screenState.copy(modulationRoutes = modulationRouteSnapshot())
     }
 
