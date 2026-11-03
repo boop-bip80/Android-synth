@@ -24,6 +24,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.OscillatorSlot
@@ -42,6 +43,19 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class PatchGraphPanelTest {
     @get:Rule val compose = createComposeRule()
+
+    private fun assertVisible48Dp(tag: String) {
+        val visible = compose.onNodeWithTag(tag)
+            .performScrollTo().assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val density = InstrumentationRegistry.getInstrumentation()
+            .targetContext.resources.displayMetrics.density
+        assertTrue(
+            "$tag must expose a fully visible 48dp × 48dp physical tap corridor " +
+                "at the real device density $density: $visible",
+            visible.width >= 48f * density - 1f &&
+                visible.height >= 48f * density - 1f,
+        )
+    }
 
     @Test fun talkBackAccessibleLfoButtonsPatchActualTypedLiveRouteCallbacks() {
         val routes = mutableStateOf(List(64) { ModulationRouteConfig() })
@@ -372,21 +386,22 @@ class PatchGraphPanelTest {
         }
         // These controls have physical >=48dp semantic touch corridors in
         // a real 350dp-wide screen, no 22-node overlapping atlas fiction.
+        assertVisible48Dp("patchLfo7")
         compose.onNodeWithTag("patchLfo7")
-            .performScrollTo().assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
+        assertVisible48Dp("patchGraphBankOSC8")
         compose.onNodeWithTag("patchGraphBankOSC8")
-            .performScrollTo().assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
         compose.onNodeWithTag("patchGraphTargetBankStatus")
             .assertTextContains("OSC 8", substring = true)
         compose.onNodeWithTag("patchBusOSC7_GAIN").assertDoesNotExist()
-        compose.onNodeWithTag("patchBusOSC8_GAIN")
-            .performScrollTo().assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        assertVisible48Dp("patchBusOSC8_GAIN")
+        compose.onNodeWithTag("patchBusOSC8_GAIN").assertHeightIsAtLeast(48.dp)
+        assertVisible48Dp("patchBusOSC8_PITCH")
         compose.onNodeWithTag("patchBusOSC8_PITCH")
-            .performScrollTo().assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
         compose.runOnIdle {
             assertEquals(ModSource.LFO8, routes.value[0].source)
@@ -400,13 +415,13 @@ class PatchGraphPanelTest {
 
         // Switching banks never changes/erases the saved OSC8 cable. A global
         // tap creates a second real, different route through the SAME host API.
+        assertVisible48Dp("patchGraphBankGLOBAL")
         compose.onNodeWithTag("patchGraphBankGLOBAL")
-            .performScrollTo().assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
         compose.onNodeWithTag("patchBusOSC8_PITCH").assertDoesNotExist()
+        assertVisible48Dp("patchBusCUTOFF")
         compose.onNodeWithTag("patchBusCUTOFF")
-            .performScrollTo().assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
         compose.runOnIdle {
@@ -415,7 +430,7 @@ class PatchGraphPanelTest {
             assertEquals(ModDestination.CUTOFF, routes.value[1].destination)
         }
         compose.onNodeWithTag("patchGraphTruthStatus")
-            .assertTextContains("1 LIVE ROUTES IN OTHER BANKS", substring = true)
+            .assertTextContains("1 CONFIGURED DSP ROUTES IN OTHER BANKS", substring = true)
     }
 
 }
