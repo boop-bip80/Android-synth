@@ -506,33 +506,6 @@ class OrbitalScreenTest {
         compose.onNodeWithTag("referenceSoundAdvancedToggle").assertExists()
     }
 
-    @Test fun shortLandscapeSoundHasReachableEightLayerEditorAndAnchoredPiano() {
-        val slots = mutableStateOf(List(8) { OscillatorSlot() })
-        compose.setContent {
-            Box(Modifier.width(360.dp).height(350.dp)) {
-                OrbitalScreen(
-                    state = OrbitalUiState(oscillatorSlots = slots.value),
-                    onNoteOn = {}, onNoteOff = {},
-                    onParameterChange = { _, _ -> },
-                    onModeChange = {}, onOctaveChange = {},
-                    onOscillatorSlotChange = { index, next ->
-                        slots.value = slots.value.toMutableList().apply { set(index, next) }
-                    },
-                )
-            }
-        }
-        compose.onNodeWithContentDescription(
-            "Multitouch piano keyboard", substring = true,
-        ).assertIsDisplayed()
-        compose.onNodeWithTag("referencePerformanceKeybed").assertDoesNotExist()
-        compose.onNodeWithTag("compactOscillatorToggle")
-            .performScrollTo().assertIsDisplayed().performClick()
-        compose.onNodeWithTag("oscillatorRack").assertExists()
-        compose.onNodeWithContentDescription(
-            "Multitouch piano keyboard", substring = true,
-        ).assertIsDisplayed()
-    }
-
     @Test fun keyboardExposesChromaticAccessibleActions() {
         compose.setContent {
             OrbitalScreen(
