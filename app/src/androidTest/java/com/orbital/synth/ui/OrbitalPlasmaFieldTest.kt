@@ -2,10 +2,12 @@ package com.orbital.synth.ui
 
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
@@ -89,5 +91,48 @@ class OrbitalPlasmaFieldTest {
         val orb = compose.onNodeWithTag("orbitalPlasmaField")
         orb.assertIsDisplayed()
         assertTrue(orb.captureToImage().width > 1)
+    }
+
+    @Test fun morphMovementAndTouchCoordinatesActuallyAlterVolumetricArtwork() {
+        var morph by mutableFloatStateOf(.14f)
+        var movement by mutableFloatStateOf(.17f)
+        var x by mutableFloatStateOf(.10f)
+        var y by mutableFloatStateOf(.11f)
+        compose.setContent {
+            OrbitalPlasmaField(
+                morph = morph, movement = movement,
+                touchX = x, touchY = y,
+                audioRms = 0f, audioPeak = 0f, pressed = false,
+                modifier = Modifier.size(300.dp),
+            )
+        }
+        val orb = compose.onNodeWithTag("orbitalPlasmaField")
+        orb.assertIsDisplayed()
+        val before = orb.captureToImage().toPixelMap()
+        compose.runOnIdle {
+            morph = .87f
+            movement = .91f
+            x = .92f
+            y = .86f
+        }
+        val after = orb.captureToImage().toPixelMap()
+        var changed = 0
+        val stepX = (after.width / 44).coerceAtLeast(1)
+        val stepY = (after.height / 44).coerceAtLeast(1)
+        for (row in 0 until after.height step stepY) {
+            for (column in 0 until after.width step stepX) {
+                val a = before[column, row]
+                val b = after[column, row]
+                val d = kotlin.math.abs(a.red - b.red) +
+                    kotlin.math.abs(a.green - b.green) +
+                    kotlin.math.abs(a.blue - b.blue)
+                if (d > .055f) changed++
+            }
+        }
+        assertTrue(
+            "Without any PCM or animation, editing real MORPH/MOVEMENT and touch" +
+                " must visibly reconfigure the procedural liquid field",
+            changed > 25,
+        )
     }
 }
