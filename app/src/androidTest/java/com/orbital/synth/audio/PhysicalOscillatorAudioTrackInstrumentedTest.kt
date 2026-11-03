@@ -8,6 +8,7 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -281,6 +282,11 @@ class PhysicalOscillatorAudioTrackInstrumentedTest {
             assertTrue("Both noise colors must still produce actual sound",
                 white.second > .003f && brown.second > .003f)
             assertTrue("Real AudioTrack must have no fatal error", output.fatalErrorMessage == null)
+            // The original performance keyboard must remain anchored while
+            // oscillator sound design and audio telemetry are both live.
+            compose.onNodeWithContentDescription(
+                "Multitouch piano keyboard", substring = true,
+            ).assertIsDisplayed()
             assertRealForegroundAndroidPixels()
             Log.i(TAG, "phase=physical-finger-to-audiotrack-success")
         } finally {
