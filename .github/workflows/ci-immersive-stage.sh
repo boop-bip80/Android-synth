@@ -123,25 +123,56 @@ if len(nodes) == 1:
             print(l+(r-l)//3, t+(b-t)//3, l+2*(r-l)//3, t+2*(b-t)//3)
 PY
 )"
-gesture_pid=
+# Serialize ADB commands. Concurrent input-swipe + screencap intermittently
+# stalls the API35 emulator's ADB/graphics pipe under instrumented test load.
+# The screenshot is taken immediately after genuine touch input; never synthesize
+# or render a replacement image. A short-lived residual shockwave may remain.
 if [[ -n "$gesture" ]]; then
   read -r x1 y1 x2 y2 <<< "$gesture"
-  # Screenshot WHILE a finger is held; otherwise the effect fades to its idle glow.
-  timeout 10s adb shell input swipe "$x1" "$y1" "$x2" "$y2" 1800 > artifacts/immersive-gesture.txt 2>&1 &
-  gesture_pid=$!
-  sleep 0.35
-  printf 'gesture=live_accessible_canvas_swipe\n' >> "$summary"
+  printf 'gesture\n' > "$phase"
+  timeout 12s adb shell input swipe "$x1" "$y1" "$x2" "$y2" 550 \
+    > artifacts/immersive-gesture.txt 2>&1
+  printf 'gesture=completed_android_input_swipe\n' >> "$summary"
 else
   printf 'gesture=skipped_canvas_semantics_merged\n' >> "$summary"
 fi
 
 printf 'capture\n' > "$phase"
-timeout 15s adb exec-out screencap -p > artifacts/orbital-immersive-emulator.png
-if [[ -n "$gesture_pid" ]]; then
-  wait "$gesture_pid"
+captured=0
+for capture_attempt in 1 2; do
+  printf 'capture_attempt=%s\n' "$capture_attempt" >> "$summary"
+  # A failed/partial capture is discarded on each iteration. No stale artwork
+  # or previous frame is accepted as evidence of a newly opened stage.
+  if timeout 25s adb exec-out screencap -p > artifacts/orbital-immersive-emulator.png &&
+     test -s artifacts/orbital-immersive-emulator.png &&
+     test "$(file -b --mime-type artifacts/orbital-immersive-emulator.png)" = image/png &&
+     python3 - artifacts/orbital-immersive-emulator.png <<'PY'
+import struct
+import sys
+path = sys.argv[1]
+with open(path, "rb") as stream:
+    header = stream.read(24)
+    stream.seek(0, 2)
+    length = stream.tell()
+if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
+    raise SystemExit("ADB screencap did not return a PNG header")
+width, height = struct.unpack(">II", header[16:24])
+if length < 4096 or width < 600 or height < 1000 or width >= height:
+    raise SystemExit(f"ADB screencap is truncated/nonportrait: {width}x{height}, {length} bytes")
+PY
+  then
+    captured=1
+    break
+  fi
+  printf 'capture_attempt_%s=failed\n' "$capture_attempt" >> "$summary"
+  timeout 8s adb devices -l >> "$summary" 2>&1 || true
+  sleep 2
+done
+if [[ "$captured" != 1 ]]; then
+  printf '%s\n' 'No valid live emulator screenshot after two bounded ADB attempts.' >&2
+  exit 1
 fi
-test -s artifacts/orbital-immersive-emulator.png
-test "$(file -b --mime-type artifacts/orbital-immersive-emulator.png)" = image/png
+printf 'capture_attempt_success=%s\n' "$capture_attempt" >> "$summary"
 python3 - artifacts/orbital-immersive-emulator.png artifacts/orbital-emulator.png <<'PY'
 import hashlib
 import struct
