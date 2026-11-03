@@ -14,6 +14,7 @@ import com.orbital.synth.audio.AndroidAudioOutput
 import com.orbital.synth.audio.AndroidMidiManager
 import com.orbital.synth.audio.SourceAwareMidiMessageListener
 import com.orbital.synth.core.OrbitalSynth
+import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.performance.ArpeggiatorDirection
 import com.orbital.synth.core.VoiceMode
@@ -208,6 +209,7 @@ class MainActivity : ComponentActivity() {
                         if (note in 0..127) audioOutput.noteOff(TOUCH_SOURCE_ID, 0, note)
                     },
                     onParameterChange = ::updateParameter,
+                    onOscillatorSlotChange = ::updateOscillatorSlot,
                     onModeChange = ::updatePlayMode,
                     onOctaveChange = { octave ->
                         audioOutput.allNotesOff(TOUCH_SOURCE_ID)
@@ -297,6 +299,7 @@ class MainActivity : ComponentActivity() {
         screenState = screenState.copy(
             patchName = patch.name,
             parameters = ParameterId.entries.associateWith { synth.parameter(it) },
+            oscillatorSlots = oscillatorSnapshot(),
             presetIndex = patchIndex,
             presetCount = patches.size,
             activePatchId = patch.id,
@@ -496,6 +499,7 @@ class MainActivity : ComponentActivity() {
                     screenState = screenState.copy(
                         patchName = patch.name,
                         parameters = ParameterId.entries.associateWith { synth.parameter(it) },
+                        oscillatorSlots = oscillatorSnapshot(),
                         presetIndex = patchIndex,
                         presetCount = FactoryPresets.ALL.size,
                         activePatchId = patch.id,
@@ -507,6 +511,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /** The engine publishes immutable slot snapshots to its audio worker on block boundaries. */
+    private fun oscillatorSnapshot(): List<OscillatorSlot> =
+        List(synth.oscillatorSlotCount) { index -> synth.oscillatorSlot(index) }
+
+    private fun updateOscillatorSlot(index: Int, next: OscillatorSlot) {
+        if (index !in 0 until synth.oscillatorSlotCount) return
+        if (!next.waveform.isFinite() || !next.morph.isFinite() ||
+            !next.level.isFinite() || !next.fineCents.isFinite()) return
+        synth.setOscillatorSlot(
+            index = index,
+            enabled = next.enabled,
+            waveform = next.waveform,
+            level = next.level,
+            coarseSemitones = next.coarseSemitones,
+            fineCents = next.fineCents,
+            morph = next.morph,
+        )
+        screenState = screenState.copy(oscillatorSlots = oscillatorSnapshot())
     }
 
     private fun updateParameter(parameter: ParameterId, value: Float) {

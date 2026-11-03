@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
@@ -27,6 +28,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.music.SequencerNote
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -38,6 +40,57 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class OrbitalScreenTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test fun oscillatorWorkbenchEditsLiveLayersWithoutTouchingOtherVoices() {
+        val liveSlots = mutableStateOf(List(8) { OscillatorSlot() })
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(oscillatorSlots = liveSlots.value),
+                onNoteOn = {},
+                onNoteOff = {},
+                onParameterChange = { _, _ -> },
+                onModeChange = {},
+                onOctaveChange = {},
+                onOscillatorSlotChange = { index, next ->
+                    liveSlots.value = liveSlots.value.toMutableList().apply { set(index, next) }
+                },
+            )
+        }
+
+        compose.onNodeWithTag("oscillatorRack").assertExists()
+        compose.onNodeWithTag("oscillatorEnable").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertTrue(liveSlots.value[0].enabled)
+            assertTrue(liveSlots.value[0].level > 0f)
+        }
+
+        compose.onNodeWithTag("oscillatorWave2").performScrollTo().assertIsDisplayed().performClick()
+        // A new immutable slot revision must be observed before another control
+        // is edited; otherwise a delayed Compose frame can overwrite the wave.
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(.5f, liveSlots.value[0].waveform)
+        }
+        compose.onNodeWithTag("oscillatorCoarseUp").performScrollTo().assertIsDisplayed().performClick()
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(.5f, liveSlots.value[0].waveform)
+            assertEquals(1, liveSlots.value[0].coarseSemitones)
+        }
+
+        compose.onNodeWithTag("oscillatorAdd").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(2, liveSlots.value.count { it.enabled })
+            assertTrue(liveSlots.value[1].enabled)
+            assertEquals(.5f, liveSlots.value[0].waveform)
+        }
+
+        compose.onNodeWithTag("oscillatorRemove").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(1, liveSlots.value.count { it.enabled })
+            assertTrue(liveSlots.value[0].enabled)
+        }
+    }
 
     @Test fun tabsAndKnobsAreRealSemanticsNodes() {
         compose.setContent {
