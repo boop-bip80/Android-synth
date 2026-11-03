@@ -115,6 +115,36 @@ class OscillatorPerLayerModulationTest {
         }
     }
 
+    @Test fun allFiveSynthesisEnginesHearBothPerLayerBuses() {
+        for (engine in 0..4) {
+            val untouched = clean()
+            val modded = clean()
+            val layer = OscillatorSlot(
+                enabled = true, waveform = 0.63f, morph = 1f,
+                level = 0.85f, coarseSemitones = 12,
+            )
+            for (machine in arrayOf(untouched, modded)) {
+                machine.setParameter(ParameterId.ENGINE, engine / 4f)
+                machine.setOscillatorSlot(2, layer)
+                machine.noteOn(64)
+            }
+            modded.setModulationRoute(
+                0, ModSource.TOUCH_X, ModDestination.OSC3_GAIN, -0.3f,
+            )
+            modded.setModulationRoute(
+                1, ModSource.TOUCH_X, ModDestination.OSC3_PITCH, 0.4f,
+            )
+            modded.setModulationSource(ModSource.TOUCH_X, 1f)
+            val baseline = FloatArray(4_096 * 2)
+            val routed = FloatArray(baseline.size)
+            untouched.renderStereo(baseline, 4_096)
+            modded.renderStereo(routed, 4_096)
+            assertTrue("Engine $engine must audibly render OSC3 gain/pitch cables",
+                meanDifference(baseline, routed) > 0.002)
+            assertBounded(routed)
+        }
+    }
+
     @Test fun oscillatorBusesStartAndReturnThroughFiniteEightMillisecondSlew() {
         val bus = OscillatorLayerModulation(48_000)
         val frame = FloatArray(ModDestination.entries.size) { 0.5f }
@@ -165,6 +195,14 @@ class OscillatorPerLayerModulationTest {
             ), levels[1],
         )
         assertTrue("Only routed layer should use a safer mip", levels[1] < levels[0])
+        val fadesField = LayeredOscillatorRack::class.java.getDeclaredField("mipFade")
+        fadesField.isAccessible = true
+        val fades = fadesField.get(rack) as FloatArray
+        assertEquals(WavetableBank.fadeToLowerLevel(5_000.0, 48_000, levels[0]),
+            fades[0], 0f)
+        assertEquals(WavetableBank.fadeToLowerLevel(
+            5_000.0 * OscillatorLayerModulation.MAX_UPWARD_PITCH_RATIO, 48_000,
+            levels[1]), fades[1], 0f)
     }
 
     @Test fun routedLfoIsBufferSizeIndependentAt192And512Frames() {
