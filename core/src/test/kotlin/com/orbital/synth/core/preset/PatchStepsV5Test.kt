@@ -59,7 +59,7 @@ class PatchStepsV5Test {
                 fxSlots = listOf(FxModuleConfig(type = type, enabled = true, wet = .4f)),
             )
             val encoded = PatchCodec.encode(fxOnly)
-            assertTrue("Missing FX type ${type.name}", encoded.contains("fx.0=${type.name},"))
+            assertTrue("Missing FX type ${type.name}", encoded.contains("fx.0=1,${type.name},"))
             assertEquals("V5 corrupted FX type ${type.name}", fxOnly, PatchCodec.decode(encoded))
         }
     }
