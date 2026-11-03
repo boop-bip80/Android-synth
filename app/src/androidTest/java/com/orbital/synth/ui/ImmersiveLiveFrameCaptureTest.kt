@@ -166,6 +166,7 @@ class ImmersiveLiveFrameCaptureTest {
         compose.onNodeWithTag("stageConfigOpen").assertDoesNotExist()
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(0)
+        compose.onNodeWithTag("referencePerformanceKeybed").assertDoesNotExist()
         mark("focus-stage-controls-hidden")
 
         // Compose semantics update before SurfaceFlinger presents the next frame.
@@ -280,8 +281,7 @@ class ImmersiveLiveFrameCaptureTest {
         compose.onNodeWithTag("immersiveStage").assertIsDisplayed()
         compose.onNodeWithTag("immersiveExit").assertIsDisplayed().performClick()
         compose.onNodeWithTag("immersiveStage").assertDoesNotExist()
-        compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
-            .assertCountEquals(1)
+        compose.onNodeWithTag("referencePerformanceKeybed").assertIsDisplayed()
         assertTrue("Exiting stage must leave the real audio worker alive", audio.isRunning)
         mark("exit-keyboard-audio-worker-confirmed")
     }

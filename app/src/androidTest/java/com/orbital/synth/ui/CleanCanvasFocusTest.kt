@@ -58,6 +58,7 @@ class CleanCanvasFocusTest {
         compose.onNodeWithTag("stageFocusEnter").assertDoesNotExist()
         compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
             .assertCountEquals(0)
+        compose.onNodeWithTag("referencePerformanceKeybed").assertDoesNotExist()
         // A HUD-free stage still exposes a TalkBack action to reveal controls.
         val revealActions = compose.onNodeWithTag("immersiveCanvas")
             .fetchSemanticsNode().config[SemanticsActions.CustomActions]
@@ -74,8 +75,7 @@ class CleanCanvasFocusTest {
 
         systemBack() // A second Back returns to the normal playable synth.
         compose.onNodeWithTag("immersiveStage").assertDoesNotExist()
-        compose.onAllNodesWithContentDescription("Multitouch piano keyboard", substring = true)
-            .assertCountEquals(1)
+        compose.onNodeWithTag("referencePerformanceKeybed").assertIsDisplayed()
     }
 
     @Test fun cleanCanvasKeepsSoundGesturesAndCancellationsBalanced() {

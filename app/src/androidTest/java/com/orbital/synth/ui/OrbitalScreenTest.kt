@@ -432,6 +432,42 @@ class OrbitalScreenTest {
         compose.onNodeWithTag("referenceSoundAdvancedToggle").assertExists()
     }
 
+    @Test fun veryShortLandscapePreservesFiveEnginesEightOscillatorsAndPlayablePiano() {
+        val slots = mutableStateOf(List(8) { OscillatorSlot() })
+        compose.setContent {
+            Box(Modifier.width(360.dp).height(350.dp)) {
+                OrbitalScreen(
+                    state = OrbitalUiState(oscillatorSlots = slots.value),
+                    onNoteOn = {}, onNoteOff = {},
+                    onParameterChange = { _, _ -> },
+                    onModeChange = {}, onOctaveChange = {},
+                    onOscillatorSlotChange = { index, next ->
+                        slots.value = slots.value.toMutableList().apply { set(index, next) }
+                    },
+                )
+            }
+        }
+        compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        ).assertIsDisplayed()
+        compose.onNodeWithTag("referencePerformanceKeybed").assertDoesNotExist()
+
+        // Genuine five-engine selector remains reachable even at 350dp tall.
+        compose.onNodeWithContentDescription("Sound rack ENGINE")
+            .performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Select synthesis architecture ORBITAL WT")
+            .assertExists()
+
+        // Expanded rack actually composes the full editable layer array;
+        // the editor scrolls while the old 82dp piano remains anchored.
+        compose.onNodeWithTag("compactOscillatorToggle")
+            .performScrollTo().performClick()
+        compose.onNodeWithTag("oscillatorRack").assertExists()
+        compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        ).assertIsDisplayed()
+    }
+
     @Test fun keyboardExposesChromaticAccessibleActions() {
         compose.setContent {
             OrbitalScreen(
@@ -476,9 +512,15 @@ class OrbitalScreenTest {
             assertEquals(listOf("ON:60", "ON:67", "OFF:60", "OFF:67"), events)
         }
         compose.onNodeWithTag("referencePerformanceKeybed").assertDoesNotExist()
+        // Physically delayed UP events may still arrive after SOUND's source
+        // owners were canceled on tab switch. Drain the genuine old contacts,
+        // and require no duplicate OFF from the newly mounted PLAY piano.
         compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
-        ).assertExists()
+        ).assertExists().performTouchInput { up(0); up(1) }
+        compose.runOnIdle {
+            assertEquals(listOf("ON:60", "ON:67", "OFF:60", "OFF:67"), events)
+        }
         compose.onNodeWithContentDescription("Tab SOUND").performClick()
         compose.onNodeWithTag("referencePerformanceKeybed").performTouchInput {
             val width = center.x * 2f

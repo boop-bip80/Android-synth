@@ -59,15 +59,28 @@ import sys
 import xml.etree.ElementTree as ET
 path, mode = sys.argv[1:]
 names = [n.attrib.get("content-desc", "") for n in ET.parse(path).iter("node")]
-keyboard = sum("multitouch piano keyboard" in n.lower() for n in names)
+legacy_piano = sum("multitouch piano keyboard" in n.lower() for n in names)
+liquid_keybed = sum(
+    n.lower().startswith("twelve live chromatic liquid-glass keys, octave ")
+    for n in names
+)
+keyboard = legacy_piano + liquid_keybed
 enter = names.count("Enter immersive performance")
 exit = names.count("Exit immersive performance")
 if mode == "normal":
-    if keyboard != 1 or enter != 1 or exit:
-        raise SystemExit(f"Normal screen must have keyboard+enter, no exit: {keyboard}/{enter}/{exit}")
+    # Exactly ONE actually drawn, actionable keyboard is valid on SOUND:
+    # legacy for old/compact, chromatic strips for reference portrait.
+    if (legacy_piano, liquid_keybed) not in ((1, 0), (0, 1)) or enter != 1 or exit:
+        raise SystemExit(
+            f"Normal screen requires exactly one genuine keybed+entry: "
+            f"legacy={legacy_piano} liquid={liquid_keybed} enter={enter} exit={exit}"
+        )
 elif mode == "stage":
-    if keyboard or enter or exit != 1:
-        raise SystemExit(f"Stage must hide keyboard+enter and expose exit: {keyboard}/{enter}/{exit}")
+    if legacy_piano or liquid_keybed or enter or exit != 1:
+        raise SystemExit(
+            f"Stage must hide BOTH keyboards+entry and expose one exit: "
+            f"legacy={legacy_piano} liquid={liquid_keybed} enter={enter} exit={exit}"
+        )
 else:
     raise SystemExit(f"Unknown screen {mode}")
 print(f"PASS {mode}: keyboard={keyboard} enter={enter} exit={exit}")
