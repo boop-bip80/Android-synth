@@ -206,6 +206,63 @@ class UserPatchRepositoryTest {
         failure(repository.load(saved.patch.id), PatchFailureKind.NOT_FOUND)
     }
 
+    @Test fun corruptPatchReservesItsFilenameWithoutBlockingNewSavesOrRestart() = runBlocking {
+        val folder = temp.newFolder("corrupt-id-reservation").toPath()
+        val store = PatchDirectoryStore(folder)
+        val original = "ORBITAL-PATCH/99\nkeep this exact user data".toByteArray(StandardCharsets.UTF_8)
+        val damagedPath = folder.resolve("user-echo.orbital")
+        Files.write(damagedPath, original)
+        val repository = UserPatchRepository(
+            store, { mapOf("CUTOFF" to .4f) }, {}, Dispatchers.Unconfined,
+        )
+        assertEquals(setOf("user-echo"), store.storedIds())
+        failure(repository.listUser(), PatchFailureKind.INVALID_FORMAT)
+
+        val first = success(repository.saveCurrentAs("Echo"))
+        assertEquals("user-echo-2", first.patch.id)
+        assertTrue(first.renamedOnCollision)
+        assertArrayEquals(original, Files.readAllBytes(damagedPath))
+        assertEquals(first.patch, success(repository.load(first.patch.id)))
+
+        // New process/repository must still reserve both IDs, including corrupt data.
+        val restarted = UserPatchRepository(
+            PatchDirectoryStore(folder), { mapOf("CUTOFF" to .8f) }, {},
+            Dispatchers.Unconfined,
+        )
+        val second = success(restarted.saveCurrentAs("Echo"))
+        assertEquals("user-echo-3", second.patch.id)
+        assertEquals(first.patch, success(restarted.load(first.patch.id)))
+        assertArrayEquals(original, Files.readAllBytes(damagedPath))
+        failure(restarted.load("user-echo"), PatchFailureKind.INVALID_FORMAT)
+        failure(restarted.listUser(), PatchFailureKind.INVALID_FORMAT)
+    }
+
+    @Test fun importReservesFutureVersionAndExistingIdsWithoutChangingTheirBytes() = runBlocking {
+        val folder = temp.newFolder("future-version-reservation").toPath()
+        val store = PatchDirectoryStore(folder)
+        val futurePath = folder.resolve("user-aurora.orbital")
+        val futureBytes = "ORBITAL-PATCH/999\nreserved future patch".toByteArray(StandardCharsets.UTF_8)
+        Files.write(futurePath, futureBytes)
+        val existing = FactoryPresets.AURORA.copy(id = "user-aurora-2")
+        store.save(existing)
+        val existingBytes = Files.readAllBytes(folder.resolve("user-aurora-2.orbital"))
+        val repository = UserPatchRepository(
+            store, { mapOf("CUTOFF" to .4f) }, {}, Dispatchers.Unconfined,
+        )
+        assertEquals(setOf("user-aurora", "user-aurora-2"), store.storedIds())
+        failure(repository.listAll(), PatchFailureKind.INVALID_FORMAT)
+
+        val imported = success(repository.importPatchText(PatchCodec.encode(FactoryPresets.AURORA)))
+        assertEquals("user-aurora-3", imported.patch.id)
+        assertTrue(imported.renamedOnCollision)
+        assertEquals(FactoryPresets.AURORA, success(repository.load("aurora")))
+        assertEquals(existing, success(repository.load(existing.id)))
+        assertEquals(imported.patch, success(repository.load(imported.patch.id)))
+        assertArrayEquals(existingBytes, Files.readAllBytes(folder.resolve("user-aurora-2.orbital")))
+        assertArrayEquals(futureBytes, Files.readAllBytes(futurePath))
+        failure(repository.listUser(), PatchFailureKind.INVALID_FORMAT)
+    }
+
     @Test fun corruptUserPatchIsReportedRatherThanSilentlyHidden() = runBlocking {
         val folder = temp.newFolder("corrupt-bank").toPath()
         val repository = UserPatchRepository(
