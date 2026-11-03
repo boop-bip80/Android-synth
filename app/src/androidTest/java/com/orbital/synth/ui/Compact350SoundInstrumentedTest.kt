@@ -220,4 +220,112 @@ class Compact350SoundInstrumentedTest {
         compose.runOnIdle { assertTrue("Pinned piano lost note ingress", noteOns.isNotEmpty()) }
         Log.i(TAG, "phase=engine-finished")
     }
+    /** Changing the visible panel must not reset the selected SOUND page. */
+    @Test fun compactSoundPageRetainsSelectionAcrossOscillatorRoundTrips() {
+        val slots = mutableStateOf(List(8) { OscillatorSlot() })
+        compose.setContent {
+            Box(Modifier.width(360.dp).height(350.dp)) {
+                OrbitalScreen(
+                    state = OrbitalUiState(oscillatorSlots = slots.value),
+                    onNoteOn = {}, onNoteOff = {},
+                    onParameterChange = { _, _ -> },
+                    onModeChange = {}, onOctaveChange = {},
+                    onOscillatorSlotChange = { index, next ->
+                        slots.value = slots.value.toMutableList().apply { set(index, next) }
+                    },
+                )
+            }
+        }
+        val toggle = compose.onNodeWithTag("compactOscillatorToggle")
+        toggle.assertIsDisplayed()
+        listOf("ENGINE", "VOICE", "TONE").forEach { page ->
+            val tab = compose.onNodeWithContentDescription("Sound rack $page")
+            tab.assertIsDisplayed().performClick()
+            tab.assertIsSelected()
+            when (page) {
+                "ENGINE" -> compose.onNodeWithTag("compactEngineOptionsRow").assertExists()
+                "VOICE" -> compose.onNodeWithTag("compactFxBar_UNISON").assertExists()
+                "TONE" -> compose.onNodeWithTag("compactFxBar_CUTOFF").assertExists()
+            }
+            toggle.assertIsDisplayed().performClick()
+            compose.onNodeWithTag("oscillatorRack").assertExists()
+            tab.assertDoesNotExist()
+            toggle.assertIsDisplayed().performClick()
+            compose.onNodeWithTag("oscillatorRack").assertDoesNotExist()
+            // The same RadioButton selection and actual page controls must survive.
+            tab.assertIsSelected()
+            when (page) {
+                "ENGINE" -> compose.onNodeWithTag("compactEngineOptionsRow").assertExists()
+                "VOICE" -> compose.onNodeWithTag("compactFxBar_UNISON").assertExists()
+                "TONE" -> compose.onNodeWithTag("compactFxBar_CUTOFF").assertExists()
+            }
+            compose.onNodeWithContentDescription(
+                "Multitouch piano keyboard", substring = true,
+            ).assertIsDisplayed()
+        }
+    }
+
+    /**
+     * The patch card is below the compact control rail. Verify that a finger
+     * can reach both genuine preset arrows without unpinning the real piano.
+     * No semantics performScrollTo() shortcut or offscreen assertExists proof.
+     */
+    @Test fun compactPatchArrowsReachableByRealVerticalScrollAndPianoRemainsPlayable() {
+        val slots = mutableStateOf(List(8) { OscillatorSlot() })
+        var previous = 0
+        var next = 0
+        val attacks = mutableListOf<Int>()
+        val releases = mutableListOf<Int>()
+        compose.setContent {
+            Box(Modifier.width(360.dp).height(350.dp)) {
+                OrbitalScreen(
+                    state = OrbitalUiState(
+                        patchName = "AURORA",
+                        oscillatorSlots = slots.value,
+                    ),
+                    onNoteOn = { attacks += it },
+                    onNoteOff = { releases += it },
+                    onParameterChange = { _, _ -> },
+                    onModeChange = {}, onOctaveChange = {},
+                    onPreviousPatch = { previous++ },
+                    onNextPatch = { next++ },
+                    onOscillatorSlotChange = { index, replacement ->
+                        slots.value = slots.value.toMutableList().apply { set(index, replacement) }
+                    },
+                )
+            }
+        }
+        val previousArrow = compose.onNodeWithContentDescription("Previous factory preset")
+        val nextArrow = compose.onNodeWithContentDescription("Next factory preset")
+        compose.onNodeWithTag("compactPatchHeader").assertExists()
+        repeat(12) { attempt ->
+            if (visible(previousArrow) && visible(nextArrow)) return@repeat
+            Log.i(TAG, "phase=patch-physical-scroll-$attempt")
+            // Gesture starts in the editor's left gutter, away from parameter
+            // bar drag recognizers, so it reaches the vertical scroll owner.
+            compose.onNodeWithTag("soundEditorScroll").performTouchInput {
+                val x = size.width * .06f
+                down(Offset(x, size.height * .86f))
+                moveTo(Offset(x, size.height * .66f))
+                moveTo(Offset(x, size.height * .43f))
+                moveTo(Offset(x, size.height * .16f))
+                up()
+            }
+        }
+        previousArrow.assertIsDisplayed().performTouchInput { down(center); up() }
+        nextArrow.assertIsDisplayed().performTouchInput { down(center); up() }
+        compose.runOnIdle {
+            assertEquals("Previous preset callback", 1, previous)
+            assertEquals("Next preset callback", 1, next)
+        }
+        val keyboard = compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        )
+        keyboard.assertIsDisplayed().performTouchInput { down(center); up() }
+        compose.runOnIdle {
+            assertEquals("One physical note-on after patch navigation", 1, attacks.size)
+            assertEquals("Physical note-off must balance the note-on", attacks, releases)
+        }
+    }
+
 }
