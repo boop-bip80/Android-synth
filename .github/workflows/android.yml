@@ -11,8 +11,10 @@ permissions:
 
 concurrency:
   group: android-ci-${{ github.workflow }}-${{ github.ref }}
-  # Keep main push/dispatch validations running; cancel only stale PR attempts.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Latest main push wins: obsolete validations must not indefinitely block
+  # the exact head SHA needed for the gated APK release. PRs continue to cancel
+  # only stale runs of their own pull-request ref. Manual dispatch is noncancelling.
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   build:
