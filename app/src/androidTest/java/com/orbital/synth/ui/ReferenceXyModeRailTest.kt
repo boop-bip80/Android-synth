@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -159,9 +160,22 @@ class ReferenceXyModeRailTest {
         }
         val chipCenter = compose.onNodeWithTag("referenceXyModeFILTER")
             .fetchSemanticsNode().boundsInRoot.center
-        compose.onNodeWithTag("referenceXyModeBackdrop").performClick()
+        // The FULL-SCREEN backdrop's CENTER overlaps the top-left
+        // PERFORMANCE chip: performClick() there is NOT a backdrop test.
+        // Inject a real touch at a measured backdrop-only point instead.
+        val backdropBounds = compose.onNodeWithTag("referenceXyModeBackdrop")
+            .fetchSemanticsNode().boundsInRoot
+        val paletteBounds = compose.onNodeWithTag("referenceXyModePalette")
+            .fetchSemanticsNode().boundsInRoot
+        val dismissPoint = Offset(backdropBounds.width * .90f, backdropBounds.height * .04f)
+        assertTrue("Dismiss point must be outside all live menu chips",
+            !paletteBounds.contains(backdropBounds.topLeft + dismissPoint))
+        compose.onNodeWithTag("referenceXyModeBackdrop").performTouchInput {
+            click(dismissPoint)
+        }
+        compose.onNodeWithTag("referenceXyModePalette").assertDoesNotExist()
         compose.runOnIdle {
-            assertEquals("Initial setup backdrop dismissal must NOT select a mode",
+            assertEquals("Genuine backdrop-only touch must NOT select a mode",
                 emptyList<ReferenceXyMode>(), changes)
         }
 
