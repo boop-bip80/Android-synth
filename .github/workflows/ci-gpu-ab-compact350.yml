@@ -1,0 +1,109 @@
+name: Diagnostic — Android API35 350dp GPU backend A/B
+
+# DIAGNOSTIC ONLY. This PR's frozen base is production commit 7d11e83.
+# Never replace or weaken android.yml's mandatory emulator/test gates.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ci-gpu-ab-compact350.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orbital-gpu-ab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compact350_gpu:
+    name: Strict compact350 ${{ matrix.gpu }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        gpu: [swiftshader, swangle]
+    env:
+      ORBITAL_TEST_SUITE: compact350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 3
+      - name: Prove exact frozen 7d11 source, diagnostic workflow only
+        run: |
+          changes="$(git diff --name-only 7d11e83b94067d7613b609306572d2e035d91907 HEAD)"
+          test "$changes" = ".github/workflows/ci-gpu-ab-compact350.yml" || {
+            echo "GPU A/B must not contain production or test-code changes: $changes" >&2
+            exit 1
+          }
+          test -s .github/workflows/ci-compact350.sh
+          test -s app/src/androidTest/java/com/orbital/synth/ui/Compact350SoundInstrumentedTest.kt
+          bash -n .github/workflows/ci-compact350.sh
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Install Android SDK platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile identical app and instrumented APKs before QEMU
+        run: gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --console=plain --stacktrace
+      - name: Enable KVM for real API35 emulator
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Run BOTH unchanged compact350 Compose tests on requested GPU
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 2
+          ram-size: 3072M
+          heap-size: 512M
+          disk-size: 6000M
+          disable-animations: true
+          emulator-options: -no-window -gpu ${{ matrix.gpu }} -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
+          # Exact required repo test harness enforces 2 named, non-skipped real
+          # connectedDebugAndroidTest JUnit XML cases and returns true failure.
+          script: bash .github/workflows/ci-compact350.sh
+      - name: Record requested GPU, full emulator runtime and commit provenance
+        if: always()
+        run: |
+          mkdir -p artifacts
+          printf 'diagnostic_only=true\nsource_frozen=7d11e83b94067d7613b609306572d2e035d91907\ngpu_requested=%s\nrun=%s\ncheckout=%s\n' '${{ matrix.gpu }}' "$GITHUB_RUN_ID" "$GITHUB_SHA" > artifacts/gpu-ab-provenance.txt
+          "$ANDROID_HOME/emulator/emulator" -version > artifacts/gpu-ab-version.txt 2>&1 || true
+      - name: Upload strict QEMU, renderer, phase and memory diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-gpu-ab-${{ matrix.gpu }}-diagnostics
+          path: |
+            artifacts/gpu-ab-provenance.txt
+            artifacts/gpu-ab-version.txt
+            artifacts/compact350-*.txt
+            artifacts/emulator-phase.txt
+            artifacts/emulator-provenance.txt
+            artifacts/emulator-exit-status.txt
+            artifacts/emulator-logcat.txt
+            artifacts/emulator-full-logcat.txt
+            artifacts/emulator-host-memory.txt
+            artifacts/app-memory.txt
+            artifacts/activity-state.txt
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
+          retention-days: 14
+      - name: Upload actual 2-method Android connected JUnit XML and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-gpu-ab-${{ matrix.gpu }}-junit
+          path: |
+            app/build/outputs/androidTest-results/
+            app/build/reports/androidTests/
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
+          retention-days: 14
