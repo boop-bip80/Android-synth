@@ -25,6 +25,7 @@ import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.dsp.processing.FxModuleType
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -243,6 +244,43 @@ class PatchGraphPanelTest {
             assertEquals(.6f, routes.value[0].depth)
             assertTrue(routes.value.drop(1).all { it == ModulationRouteConfig() })
         }
+    }
+
+    @Test fun audioClockedStepSourceCreatesAudibleRouteOnlyWhileSourceEnabled() {
+        val step = mutableStateOf(ModulationStepConfig(enabled = true))
+        val routes = mutableStateOf(List(64) { ModulationRouteConfig() })
+        compose.setContent {
+            MaterialTheme {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    PatchGraphPanel(
+                        oscillators = emptyList(),
+                        lfos = List(8) { ModulationLfoConfig() },
+                        routes = routes.value,
+                        fxSlots = List(6) { FxModuleConfig() },
+                        onRouteChange = { index, config ->
+                            routes.value = routes.value.toMutableList().apply { set(index, config) }
+                        },
+                        onRouteClear = {},
+                        onMoveFxSlot = { _, _ -> },
+                        stepConfig = step.value,
+                    )
+                }
+            }
+        }
+        compose.onNodeWithTag("patchStepSource").performScrollTo().performClick()
+        compose.onNodeWithTag("patchBusAMP").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(ModSource.STEP, routes.value[0].source)
+            assertEquals(ModDestination.AMP, routes.value[0].destination)
+            assertTrue(routes.value[0].enabled)
+        }
+        compose.onNodeWithTag("patchGraphTruthStatus")
+            .assertTextContains("1 STEP ROUTES (0 DORMANT)", substring = true)
+        compose.runOnIdle { step.value = step.value.copy(enabled = false) }
+        compose.onNodeWithTag("patchStepSourceStatus")
+            .assertTextContains("DISABLED", substring = true)
+        compose.onNodeWithTag("patchGraphTruthStatus")
+            .assertTextContains("1 STEP ROUTES (1 DORMANT)", substring = true)
     }
 
 }
