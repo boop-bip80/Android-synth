@@ -51,6 +51,22 @@ class AudioVisualResponseTest {
         assertTrue(AudioVisualResponse.from(0f, 0f, .14f, 0f).shouldAnimate(0f, true))
     }
 
+
+    @Test fun silentTouchReleaseAllowsVisualClockToPauseImmediately() {
+        val silence = AudioVisualResponse.from(0f, 0f, 0f, 0f)
+        assertTrue(silence.shouldAnimate(.011f, true))
+        assertFalse(silence.shouldAnimate(.01f, true))
+        assertFalse(silence.shouldAnimate(0f, true))
+    }
+
+    @Test fun brightnessProxyAloneDoesNotImplyAudibleAnimationOrInventFftMotion() {
+        val dcSlope = AudioVisualResponse.from(0f, 0f, 0f, 1f)
+        assertFalse(dcSlope.shouldAnimate(0f, true))
+        assertEquals(0f, dcSlope.energyBoost)
+        assertEquals(0f, dcSlope.radiusBoost)
+        assertTrue(dcSlope.filamentBoost > 0f)
+    }
+
     @Test fun genuineTransientAndWaveformBrightnessRemainDistinctSignals() {
         val bass = AudioVisualResponse.from(.3f, .6f, .4f, .05f)
         val bright = AudioVisualResponse.from(.3f, .6f, .4f, .9f)
