@@ -183,20 +183,37 @@ class PerformanceInputEpochTest {
     }
 
     @Test
-    fun rejectedThreadStartCancelsPrearmedNotesWithoutTouchingDsp() {
+    fun rejectedThreadStartCancelsPrearmedNotesAndEveryBoundedQueueReservation() {
         val harness = Harness {}
         harness.transport.armInputForPendingWorker()
         assertTrue(harness.transport.inputNoteOn(-1L, 0, 60))
-        // Thread.start() failed outright. No worker exists to invoke
-        // onWorkerStop(), so the owner performs atomic-only cancel.
+        assertTrue(harness.transport.inputNoteOn(-1L, 0, 61))
+        assertTrue(harness.transport.inputNoteOff(-1L, 0, 61))
+        // A nonphysical parameter edit must not own a capacity reservation.
+        assertTrue(harness.transport.setTempo(121))
+        assertEquals(3, harness.transport.pendingPhysicalInputCount)
+
+        // Thread.start() failed outright, so NO worker exists to call
+        // onWorkerStop(). Discard every command while decrementing #142's
+        // bounded physical queue reservation for that exact command.
         harness.transport.cancelPendingWorkerInput()
+        assertEquals("startup abort must never leak queue reservations",
+            0, harness.transport.pendingPhysicalInputCount)
         assertFalse(harness.transport.inputNoteOn(-1L, 0, 60))
         assertTrue(harness.held.isEmpty())
-
-        harness.transport.armInputForPendingWorker()
-        harness.transport.onWorkerStart()
-        assertEquals(0f, harness.render()[0], 0f)
         assertTrue(harness.attacks.isEmpty())
+
+        // The next worker still accepts its very first real physical note,
+        // without replaying the aborted note-on and note-off.
+        harness.transport.armInputForPendingWorker()
+        assertTrue(harness.transport.inputNoteOn(-1L, 0, 62))
+        assertEquals(1, harness.transport.pendingPhysicalInputCount)
+        harness.transport.onWorkerStart()
+        assertEquals(1f, harness.render()[0], 0f)
+        assertEquals(0, harness.transport.pendingPhysicalInputCount)
+        assertEquals(listOf(Triple(-1L, 0, 62)), harness.attacks)
         harness.transport.onWorkerStop()
+        assertTrue(harness.held.isEmpty())
+        assertEquals(0, harness.transport.pendingPhysicalInputCount)
     }
 }
