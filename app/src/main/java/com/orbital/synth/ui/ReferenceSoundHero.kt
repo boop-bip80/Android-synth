@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -117,7 +116,7 @@ fun ReferenceSoundHero(
             // any finger on the orb edits the same audible normalized parameters.
             Box(
                 Modifier
-                    .matchParentSize()
+                    .fillMaxSize()
                     .testTag("referenceHeroOrbInput")
                     .semantics {
                         contentDescription = "Touch glowing synth orb to edit morph " +
@@ -265,7 +264,7 @@ private fun ReferenceHeroArrow(
 ) {
     Box(
         Modifier
-            .size(39.dp)
+            .size(48.dp)
             .background(HeroGlass, RoundedCornerShape(11.dp))
             .border(1.dp, OrbitalPalette.Cyan.copy(alpha = .32f),
                 RoundedCornerShape(11.dp))
