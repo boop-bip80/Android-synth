@@ -1,0 +1,73 @@
+name: Compact350 isolated phase-entry forensic test
+
+on:
+  push:
+    branches: ['diagnostics/compact350-phase-entry-20261103']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compact350-diagnostic:
+    name: API 35 compact350 strict two-test forensic lane
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Install SDK and build tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Validate strict compact350 script
+        run: bash -n .github/workflows/ci-compact350.sh
+      - name: Precompile test and app APK before QEMU
+        run: gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --console=plain --stacktrace
+      - name: Enable KVM
+        run: if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Fresh API35 emulator with full strict two-test JUnit gate
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 2
+          ram-size: 3072M
+          heap-size: 512M
+          disk-size: 6000M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
+          script: bash .github/workflows/ci-compact350.sh
+      - name: Upload phase-entry, full logcat, host cgroup/QEMU telemetry
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compact350-phase-entry-forensics
+          path: |
+            artifacts/compact350-*.txt
+            artifacts/compact350-live-logcat.txt
+            artifacts/emulator-*.txt
+            artifacts/app-memory.txt
+            artifacts/activity-state.txt
+            artifacts/instrumentation-suite.txt
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload complete strict JUnit/UTP reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compact350-phase-entry-junit
+          path: |
+            app/build/outputs/androidTest-results/
+            app/build/reports/androidTests/
+          if-no-files-found: warn
+          retention-days: 14

@@ -103,6 +103,7 @@ class Compact350SoundInstrumentedTest {
      * into the real ParameterId.ENGINE callback while piano remains pinned.
      */
     @Test fun shortLandscapeCanSelectAllFiveArchitecturesWithAnchoredPiano() {
+        Log.i(TAG, "phase=engine-method-enter")
         val engineId = ParameterId.entries.first { it.name == "ENGINE" }
         val parameters = mutableStateOf(mapOf(engineId to 0f))
         // Match the actual host layout: OSC toggle is mounted only with eight
@@ -110,6 +111,7 @@ class Compact350SoundInstrumentedTest {
         val slots = mutableStateOf(List(8) { OscillatorSlot() })
         val engineCalls = mutableListOf<Float>()
         val noteOns = mutableListOf<Int>()
+        Log.i(TAG, "phase=engine-before-setContent")
         compose.setContent {
             Box(Modifier.width(360.dp).height(350.dp)) {
                 OrbitalScreen(
@@ -131,10 +133,14 @@ class Compact350SoundInstrumentedTest {
                 )
             }
         }
+        Log.i(TAG, "phase=engine-after-setContent-before-toggle")
         compose.onNodeWithTag("compactOscillatorToggle").assertIsDisplayed()
+        Log.i(TAG, "phase=engine-after-initial-toggle")
+        Log.i(TAG, "phase=engine-before-initial-piano-assert")
         compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
         ).assertIsDisplayed()
+        Log.i(TAG, "phase=engine-after-initial-piano-assert")
         Log.i(TAG, "phase=engine-before-physical-swipe")
         compose.onNodeWithTag("soundEditorScroll").performTouchInput {
             val x = center.x
