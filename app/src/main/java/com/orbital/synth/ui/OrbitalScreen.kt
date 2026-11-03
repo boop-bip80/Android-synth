@@ -545,6 +545,29 @@ fun OrbitalScreen(
                             }
                         }
                     }
+                    if (!compactOscillatorExpanded && compactSoundPage == CompactSoundPage.ENGINE) {
+                        // Keep all five interactive synthesis choices in the first
+                        // 350dp viewport, directly beneath the 48dp accessible
+                        // OSC/LIVE/TONE/VOICE/ENGINE row and above the 82dp piano.
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .horizontalScroll(rememberScrollState())
+                                .testTag("compactEngineOptionsRow"),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            EngineArchitectures.forEachIndexed { index, choice ->
+                                Pill(
+                                    label = choice.name,
+                                    active = engineArchitectureIndex(engineValue) == index,
+                                    onClick = { engineId?.let { onParameterChange(it, choice.value) } },
+                                    description = "Select synthesis architecture " + choice.name,
+                                    role = Role.RadioButton,
+                                    enabled = engineId != null,
+                                )
+                            }
+                        }
+                    }
                     if (canEditOscillators && compactOscillatorExpanded) {
                         // A bounded single-purpose page replaces the formerly
                         // simultaneous giant rack+patch+macro scroll tree.
@@ -556,7 +579,6 @@ fun OrbitalScreen(
                     } else {
                         CompactSoundPanel(
                             parameter = parameter,
-                            engineId = engineId,
                             engineValue = engineValue,
                             onParameterChange = onParameterChange,
                             page = compactSoundPage,
@@ -2459,7 +2481,6 @@ private enum class CompactSoundPage(val caption: String) {
 @Composable
 private fun CompactSoundPanel(
     parameter: (ParameterId) -> Float,
-    engineId: ParameterId?,
     engineValue: Float,
     onParameterChange: (ParameterId, Float) -> Unit,
     page: CompactSoundPage,
@@ -2505,27 +2526,9 @@ private fun CompactSoundPanel(
                 }
             }
             CompactSoundPage.ENGINE -> {
-                // The five-way toolbar already names ENGINE. The extra
-                // decorative headline previously pushed its real choices
-                // beyond the 350dp viewport and beneath the pinned piano.
-                // Keep the 48dp radio choices first and fully visible.
-                Row(
-                    Modifier.fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .testTag("compactEngineOptionsRow"),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    EngineArchitectures.forEachIndexed { index, choice ->
-                        Pill(
-                            label = choice.name,
-                            active = engineArchitectureIndex(engineValue) == index,
-                            onClick = { engineId?.let { onParameterChange(it, choice.value) } },
-                            description = "Select synthesis architecture " + choice.name,
-                            role = Role.RadioButton,
-                            enabled = engineId != null,
-                        )
-                    }
-                }
+                // Architecture selection lives directly beneath the compact
+                // navigation rail in the parent editor. This page retains its
+                // additional CHARACTER timbre control below the visible choices.
                 ParameterId.entries.firstOrNull { it.name == "CHARACTER" }?.let { id ->
                     CompactFxControl("CHARACTER", parameter(id), id, onParameterChange,
                         "Engine timbre and model character")
