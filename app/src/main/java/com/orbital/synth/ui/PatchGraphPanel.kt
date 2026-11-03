@@ -701,7 +701,7 @@ fun PatchGraphPanel(
                     title = "SOURCE",
                     selected = editedRoute.source,
                     choices = ModSource.entries,
-                    display = { it.name },
+                    display = { ModulationSourceAvailability.pickerLabel(it) },
                     tag = "patchGraphRouteSource",
                     modifier = Modifier.weight(1f),
                 ) { chosenSource ->
@@ -730,10 +730,20 @@ fun PatchGraphPanel(
                 onRouteChange(routeIndex, editedRoute.copy(curve = curve, enabled = true))
             }
             Text(
-                "Sources are saved connections; actual signal depends on enabled source and input. " +
-                    "Only the six selectable destinations are processed in PCM.",
-                color = OrbitalPalette.Muted,
+                ModulationSourceAvailability.sourceLabel(editedRoute.source) +
+                    " · " + ModulationSourceAvailability.routeStatus(
+                        editedRoute, lfos, stepConfig
+                    ),
+                color = if (ModulationSourceAvailability.isUnwired(editedRoute.source))
+                    OrbitalPalette.Gold else OrbitalPalette.Muted,
                 fontSize = 9.sp,
+                modifier = Modifier.testTag("patchGraphSourceTruth"),
+            )
+            Text(
+                "All 24 source IDs remain saved/editable. Only 8 LFOs and STEP are internally " +
+                    "generated; TOUCH sources need a gesture. The six live destinations " +
+                    "reach PCM only when their source supplies a nonzero signal.",
+                color = OrbitalPalette.Muted, fontSize = 9.sp,
             )
             Text(
                 "DEPTH  " + "%.2f".format(PatchGraphUiModel.safeDepth(editedRoute.depth)) + "×",

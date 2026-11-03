@@ -53,7 +53,7 @@ class ModulationConstellationModelTest {
         assertEquals(ModDestination.entries.toSet(), model.destinationChoices.toSet())
         for (target in supported) {
             assertTrue(model.destinationLabel(target).startsWith("LIVE"))
-            assertTrue(model.destinationStatus(target).startsWith("AUDIBLE NOW"))
+            assertTrue(model.destinationStatus(target).startsWith("DSP-CAPABLE TARGET"))
         }
         for (target in ModDestination.entries.filterNot(model::audibleTarget)) {
             assertFalse(model.audibleTarget(target))

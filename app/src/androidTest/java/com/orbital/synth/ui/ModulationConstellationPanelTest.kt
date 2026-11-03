@@ -79,14 +79,17 @@ class ModulationConstellationPanelTest {
             }
         }
         compose.onNodeWithTag("modulationRouteEditor").performScrollTo()
-        compose.onNodeWithText("LIVE AUDIO CONNECTION").assertExists()
+        compose.onNodeWithText("GESTURE-DRIVEN / TOUCH TO MODULATE").assertExists()
         compose.onNodeWithText(
-            "AUDIBLE NOW • Sweeps the actual per-voice filter cutoff."
+            "TOUCH_X · GESTURE-DRIVEN / TOUCH REQUIRED"
+        ).assertExists()
+        compose.onNodeWithText(
+            "DSP-CAPABLE TARGET • When driven, sweeps the per-voice filter cutoff."
         ).assertExists()
         compose.onNodeWithTag("modulationLiveDestinationsLegend").assertExists()
 
         compose.runOnIdle { selected = selected.copy(destination = ModDestination.OSC1_GAIN) }
-        compose.onNodeWithText("SAVED / DSP RESERVED").assertExists()
+        compose.onNodeWithText("RESERVED DSP TARGET / SAVED CONFIG ONLY").assertExists()
         compose.onNodeWithText(
             "SAVED ROUTE • Reserved for a future audio engine connection."
         ).assertExists()

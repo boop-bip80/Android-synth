@@ -54,12 +54,12 @@ internal object ModulationConstellationModel {
             enumLabel(destination.name)
 
     fun destinationStatus(destination: ModDestination): String = when (destination) {
-        ModDestination.PITCH -> "AUDIBLE NOW • Live semitone modulation."
-        ModDestination.MORPH -> "AUDIBLE NOW • Live oscillator waveform morph."
-        ModDestination.CUTOFF -> "AUDIBLE NOW • Sweeps the actual per-voice filter cutoff."
-        ModDestination.RESONANCE -> "AUDIBLE NOW • Controls the actual filter resonance."
-        ModDestination.AMP -> "AUDIBLE NOW • Gain modulation before master effects."
-        ModDestination.PAN -> "AUDIBLE NOW • Stereo balance before master effects."
+        ModDestination.PITCH -> "DSP-CAPABLE TARGET • When driven, applies live semitone modulation."
+        ModDestination.MORPH -> "DSP-CAPABLE TARGET • When driven, controls oscillator waveform morph."
+        ModDestination.CUTOFF -> "DSP-CAPABLE TARGET • When driven, sweeps the per-voice filter cutoff."
+        ModDestination.RESONANCE -> "DSP-CAPABLE TARGET • When driven, changes filter resonance."
+        ModDestination.AMP -> "DSP-CAPABLE TARGET • When driven, changes gain before master effects."
+        ModDestination.PAN -> "DSP-CAPABLE TARGET • When driven, changes stereo balance before master effects."
         else -> "SAVED ROUTE • Reserved for a future audio engine connection."
     }
 

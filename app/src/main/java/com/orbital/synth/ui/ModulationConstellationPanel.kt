@@ -123,9 +123,10 @@ fun ModulationConstellationPanel(
             fontSize = 10.sp,
             fontFamily = FontFamily.Monospace,
         )
-        ConstellationGraph(lanes, patch, current)
+        ConstellationGraph(lanes, patch, current, stepConfig)
         Text(
-            "Animated cables change real audio; dim static cables are saved for future DSP. This graph is not a measured spectrum.",
+            "Moving photons are decorative paths for configured, enabled periodic DSP sources; " +
+                "they are NOT measured PCM, LFO phase or loudness. Silent, touch and unwired routes stay static.",
             color = OrbitalPalette.Muted,
             fontSize = 10.sp,
         )
@@ -238,17 +239,18 @@ fun ModulationConstellationPanel(
                         color = OrbitalPalette.Gold, fontSize = 15.sp,
                         fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                     Text(
-                        when {
-                            !chosen.enabled -> "AVAILABLE SLOT"
-                            ModulationConstellationModel.audibleTarget(chosen.destination) ->
-                                "LIVE AUDIO CONNECTION"
-                            else -> "SAVED / DSP RESERVED"
-                        },
-                        color = if (chosen.enabled &&
-                            ModulationConstellationModel.audibleTarget(chosen.destination))
-                            OrbitalPalette.Teal else OrbitalPalette.Muted,
+                        ModulationSourceAvailability.routeStatus(chosen, lanes, stepConfig),
+                        color = if (ModulationSourceAvailability.showConfiguredPhoton(
+                            chosen, lanes, stepConfig
+                        )) OrbitalPalette.Teal else OrbitalPalette.Gold,
                         fontSize = 9.sp,
                         modifier = Modifier.testTag("modulationConnectionState"),
+                    )
+                    Text(
+                        ModulationSourceAvailability.sourceLabel(chosen.source),
+                        color = OrbitalPalette.Muted,
+                        fontSize = 9.sp,
+                        modifier = Modifier.testTag("modulationSourceAvailability"),
                     )
                 }
                 Row {
@@ -272,7 +274,7 @@ fun ModulationConstellationPanel(
             ) {
                 EnumPicker(
                     "SOURCE", chosen.source, ModSource.entries,
-                    { ModulationConstellationModel.enumLabel(it.name) },
+                    { ModulationSourceAvailability.pickerLabel(it) },
                     { onRouteChange(current, chosen.copy(source = it, enabled = true)) }, Modifier.weight(1f),
                 )
                 Text("→", color = OrbitalPalette.Gold, fontSize = 22.sp)
@@ -679,6 +681,7 @@ private fun ConstellationGraph(
     lfos: List<ModulationLfoConfig>,
     routes: List<ModulationRouteConfig>,
     selected: Int,
+    stepConfig: ModulationStepConfig?,
 ) {
     val motionAllowed = remember { ValueAnimator.areAnimatorsEnabled() }
     val clock = rememberInfiniteTransition(label = "modulation-clock")
@@ -742,12 +745,16 @@ private fun ConstellationGraph(
             val control1 = Offset(w * .42f, sy + (ey - sy) * .05f)
             val control2 = Offset(w * .58f, ey - (ey - sy) * .05f)
             val tint = sourceTint(route.source)
-            val audible = ModulationConstellationModel.audibleTarget(route.destination)
+            val dspDestination = ModulationConstellationModel.audibleTarget(route.destination)
+            val illustratedGenerator = ModulationSourceAvailability.showConfiguredPhoton(
+                route, lfos, stepConfig
+            )
             val alpha = when {
-                index == selected && audible -> .93f
+                index == selected && illustratedGenerator -> .93f
                 index == selected -> .58f
-                audible -> .54f
-                else -> .25f
+                illustratedGenerator -> .54f
+                dspDestination -> .32f
+                else -> .18f
             }
             val stroke = if (index == selected) 2.0.dp.toPx() else .9.dp.toPx()
             val path = Path().apply {
@@ -759,9 +766,11 @@ private fun ConstellationGraph(
             drawPath(path, tint.copy(alpha = alpha),
                 style = Stroke(width = stroke, cap = StrokeCap.Round))
             drawCircle(tint.copy(alpha = alpha), 2.4.dp.toPx(), Offset(ex, ey))
-            // Photons imply an active connection to DSP; reserved cables never
-            // show animated audio flow even when their metadata is enabled.
-            if (motionAllowed && audible) {
+            // Decorative particles require an actually enabled *periodic*
+            // source and nonzero signed depth, NOT merely a configured DSP
+            // destination. TOUCH/UNWIRED/paused/zero routes remain static;
+            // even eligible photons are never measured PCM or actual LFO phase.
+            if (motionAllowed && illustratedGenerator) {
                 val t = (animate + index * .17f) % 1f
                 val q = 1f - t
                 fun bezier(a: Float, b: Float, c: Float, d: Float): Float =
