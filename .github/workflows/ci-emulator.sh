@@ -163,17 +163,24 @@ printf '%s\n' 'instrumentation' > artifacts/emulator-phase.txt
 # messages even if emulator-5554 vanishes before EXIT diagnostics can query it.
 adb logcat -v threadtime -s OrbitalCompactTest:I AndroidRuntime:E ActivityManager:W SurfaceFlinger:E HWUI:E libc:F DEBUG:E '*:S' > artifacts/compact-test-live-logcat.txt 2>&1 &
 compact_logcat_pid=$!
-# Every remaining Compose/UI test runs normally on API35. The previous
-# artificial 350dp Box fixtures have been replaced with two stronger real
-# device keyboard/navigation checks in ci-compact-geometry.sh.
-printf 'suite=general\nexpected_at_least=38\n' > artifacts/instrumentation-suite.txt
-timeout 30m gradle :app:connectedDebugAndroidTest --stacktrace --no-daemon --console=plain
+# The expensive real-PCM live FOCUS framebuffer test now runs STRICTLY in its
+# own fresh API35 `stage` emulator lane (including its real screenshot proof).
+# Exclude only that class from this full-suite pass to avoid executing it a
+# second time after dozens of Compose tests; no other tests are excluded.
+printf 'suite=general\nexpected_at_least=38\nexclusive_stage_class=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest\n' > artifacts/instrumentation-suite.txt
+timeout 30m gradle :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.notClass=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest \
+  --stacktrace --no-daemon --console=plain
 python3 - <<'PY'
 import glob
 from xml.etree import ElementTree as ET
 files = glob.glob("app/build/outputs/androidTest-results/connected/debug/*.xml")
 cases = sum(len(ET.parse(path).findall(".//testcase")) for path in files)
 print(f"ORBITAL general instrumentation: {cases} testcases in {len(files)} XML reports")
+excluded = "com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest"
+if any(excluded in case.attrib.get("classname", "") or excluded in case.attrib.get("name", "")
+       for path in files for case in ET.parse(path).findall(".//testcase")):
+    raise SystemExit("General runner ignored notClass; fresh stage lane must own this class")
 if cases < 38:
     raise SystemExit(f"Expected at least 38 instrumented tests, got {cases}")
 PY
