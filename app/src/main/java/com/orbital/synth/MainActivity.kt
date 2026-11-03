@@ -37,8 +37,15 @@ import com.orbital.synth.ui.OrbitalUiState
 import com.orbital.synth.ui.PatchChoice
 import com.orbital.synth.ui.SequenceChoice
 import com.orbital.synth.ui.PlayMode
+import com.orbital.synth.ui.StageTouchLoadSource
+import com.orbital.synth.ui.StageTouchSettings
+import com.orbital.synth.ui.StageTouchSettingsCodec
+import com.orbital.synth.ui.StageTouchSettingsHostStore
+import com.orbital.synth.ui.StageTouchSettingsSave
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -66,6 +73,10 @@ class MainActivity : ComponentActivity() {
 
     private var patchIndex = 0
     private var screenState by mutableStateOf(OrbitalUiState())
+    private lateinit var stageTouchStore: StageTouchSettingsHostStore
+    private var stageTouchRestorePending = true
+    private var stageTouchEditedBeforeRestore = false
+    private var lastStageTouchProblem: String? = null
     private var sequenceSelectionToken = 0L
     private var sequenceSaveInFlight = false
     // Keep the editor responsive until the render worker publishes each queued edit.
@@ -142,6 +153,8 @@ class MainActivity : ComponentActivity() {
                 synth.setPitchBend(bend * 2f)
             }
         })
+
+        beginStageTouchPersistence()
 
         setContent {
             // Poll ONLY for visual playhead feedback; musical note timing is
@@ -233,9 +246,7 @@ class MainActivity : ComponentActivity() {
                         if (bpm.isFinite()) updateMusicTempo(bpm.roundToInt())
                     },
                     onReadAudioVisual = { audioOutput.audioVisualSnapshot },
-                    onStageTouchSettingsChange = { settings ->
-                        screenState = screenState.copy(stageTouchSettings = settings)
-                    },
+                    onStageTouchSettingsChange = ::updateStageTouchSettings,
                     onStageModulationTouch = { x, y, pressure ->
                         if (x.isFinite() && y.isFinite() && pressure.isFinite()) {
                             synth.setModulationSource(ModSource.TOUCH_X, x * 2f - 1f)
@@ -312,6 +323,94 @@ class MainActivity : ComponentActivity() {
                     },
                 )
             }
+        }
+    }
+
+    /**
+     * A stage config is independent of patches. Reads and writes never run on
+     * the audio thread or block Compose; one process-owned worker coalesces
+     * sliders and persists the final value even across Activity recreation.
+     */
+    private fun beginStageTouchPersistence() {
+        stageTouchStore = StageTouchSettingsHostStore.forApplication(applicationContext)
+        val alreadyReported = stageTouchStore.completedRevision()
+        lifecycleScope.launch {
+            var lastObserved = alreadyReported
+            stageTouchStore.notices.filterNotNull().collect { notice ->
+                if (notice.revision <= lastObserved) return@collect
+                lastObserved = notice.revision
+                // A newer finger edit may already supersede this outcome.
+                if (notice.revision < stageTouchStore.requestedRevision()) return@collect
+                when (val outcome = notice.result) {
+                    StageTouchSettingsSave.Saved -> clearStageTouchProblem()
+                    is StageTouchSettingsSave.Invalid -> reportStageTouchProblem(outcome.reason)
+                    is StageTouchSettingsSave.UnreadableExisting -> {
+                        stageTouchLoadProblem(outcome.reason)?.let(::reportStageTouchProblem)
+                    }
+                    is StageTouchSettingsSave.StorageError -> reportStageTouchProblem(outcome.reason)
+                }
+            }
+        }
+        lifecycleScope.launch {
+            val loaded = stageTouchStore.loadAfterPendingWrites()
+            // Restore may finish AFTER a quick user edit on the performance
+            // screen. Keep the performer's in-memory choice and save it after
+            // the pending disk read; never let late defaults overwrite their edit.
+            if (stageTouchEditedBeforeRestore) {
+                screenState.stageTouchSettings?.let { stageTouchStore.requestSave(it) }
+            } else {
+                screenState = screenState.copy(stageTouchSettings = loaded.settings)
+            }
+            stageTouchRestorePending = false
+            stageTouchLoadProblem(loaded.source)?.let(::reportStageTouchProblem)
+        }
+    }
+
+    private fun updateStageTouchSettings(settings: StageTouchSettings) {
+        try {
+            StageTouchSettingsCodec.validate(settings)
+        } catch (_: IllegalArgumentException) {
+            reportStageTouchProblem("Touch settings were invalid and were not saved.")
+            return
+        }
+        screenState = screenState.copy(stageTouchSettings = settings)
+        if (stageTouchRestorePending) {
+            stageTouchEditedBeforeRestore = true
+        } else {
+            stageTouchStore.requestSave(settings)
+        }
+    }
+
+    /**
+     * Corrupt/unknown future records are NOT implicitly reset, not even when a
+     * user changes a slider or selects RESET in the stage config panel.
+     * The original bytes are preserved until a separate explicit recovery UI
+     * is implemented. Alert performers rather than promising a false save.
+     */
+    private fun stageTouchLoadProblem(source: StageTouchLoadSource): String? = when (source) {
+        StageTouchLoadSource.DEFAULT_UNSUPPORTED ->
+            "Touch settings are from a newer version. Original file preserved; changes cannot be saved."
+        StageTouchLoadSource.DEFAULT_CORRUPT ->
+            "Saved touch settings are damaged. Original file preserved; changes cannot be saved."
+        StageTouchLoadSource.DEFAULT_STORAGE_ERROR ->
+            "Touch settings storage unavailable. Changes may not be saved."
+        else -> null
+    }
+
+    private fun reportStageTouchProblem(message: String) {
+        if (lastStageTouchProblem == message) return
+        lastStageTouchProblem = message
+        screenState = screenState.copy(patchFeedback = message)
+        // The regular Snackbar is hidden while the full-screen stage is open.
+        // Android Toast remains visible during keyboardless sound design.
+        Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
+    }
+
+    private fun clearStageTouchProblem() {
+        val previous = lastStageTouchProblem
+        lastStageTouchProblem = null
+        if (previous != null && screenState.patchFeedback == previous) {
+            screenState = screenState.copy(patchFeedback = null)
         }
     }
 
