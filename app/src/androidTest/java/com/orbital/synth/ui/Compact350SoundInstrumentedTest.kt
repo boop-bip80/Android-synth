@@ -214,6 +214,16 @@ class Compact350SoundInstrumentedTest {
             .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val editorBounds = compose.onNodeWithTag("soundEditorScroll")
             .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val pianoBounds = compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        ).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        Log.i(TAG, "geometry nav=$topNavBounds editor=$editorBounds " +
+            "engineChoices=$choiceRowBounds piano=$pianoBounds")
+        assertTrue(
+            "Compact editor must remain ABOVE the pinned live 82dp piano: " +
+                "editor=$editorBounds piano=$pianoBounds",
+            editorBounds.bottom <= pianoBounds.top + 1f,
+        )
         assertTrue(
             "Engine option row must provide 48dp touch corridor; row=$choiceRowBounds editor=$editorBounds",
             choiceRowBounds.height >= 48f * density - 1f,

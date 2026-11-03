@@ -351,10 +351,10 @@ fun OrbitalScreen(
         Column(
             Modifier.fillMaxSize().padding(
                 horizontal = if (compactHeight) 8.dp else 12.dp,
-                vertical = if (compactHeight) 3.dp else if (referencePortrait) 6.dp else 9.dp,
+                vertical = if (compactHeight) 0.dp else if (referencePortrait) 6.dp else 9.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(
-                if (compactHeight) 2.dp else if (referencePortrait) 4.dp
+                if (compactHeight) 0.dp else if (referencePortrait) 4.dp
                 else if (compactOrbitLayout) 8.dp else 12.dp,
             ),
         ) {
@@ -463,7 +463,7 @@ fun OrbitalScreen(
                 .testTag("soundEditorScroll")
                 .padding(
                     horizontal = if (referencePortrait) 5.dp else 7.dp,
-                    vertical = if (compactHeight || referencePortrait) 3.dp else 6.dp,
+                    vertical = if (compactHeight) 1.dp else if (referencePortrait) 3.dp else 6.dp,
                 ),
             verticalArrangement = Arrangement.spacedBy(
                 if (compactHeight) 3.dp else if (compactOrbitLayout) 8.dp else 12.dp,
