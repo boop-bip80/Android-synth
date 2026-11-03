@@ -41,6 +41,8 @@ data class StageTouchSettings(
     val pressureSensitivity: Float = .5f,
     val pitchAxis: TouchPitchAxis = TouchPitchAxis.HORIZONTAL,
     val glissando: Boolean = true,
+    /** OFF by default; Android may decline even an opted-in one-shot accent. */
+    val hapticsEnabled: Boolean = false,
 ) {
     fun toTouchConfig(): TouchPerformanceConfig = TouchPerformanceConfig(
         rootMidiNote = ((baseOctave.coerceIn(0, 8) + 1) * 12 + tonic.coerceIn(0, 11)).coerceIn(0, 127),
@@ -159,6 +161,25 @@ internal fun StageTouchConfigurationPanel(
                     modifier = Modifier.fillMaxWidth().testTag("stagePressureSensitivity")
                         .semantics { contentDescription = "Optional pressure sensitivity" },
                 )
+            }
+            ConfigSection(
+                "08 / TACTILE ACCENTS",
+                "Optional short response on a fresh note only. Never on drags; Android and accessibility settings can suppress it.",
+            ) {
+                ConfigChoiceRow {
+                    ConfigChip(
+                        "OFF · DEFAULT", !settings.hapticsEnabled,
+                        "Disable tactile note accents", "stageHapticsOff",
+                    ) {
+                        onChange(settings.copy(hapticsEnabled = false))
+                    }
+                    ConfigChip(
+                        "SUBTLE · ON", settings.hapticsEnabled,
+                        "Enable one short tactile accent at note onset", "stageHapticsOn",
+                    ) {
+                        onChange(settings.copy(hapticsEnabled = true))
+                    }
+                }
             }
             Text(
                 if (settings.pitchAxis == TouchPitchAxis.HORIZONTAL)
