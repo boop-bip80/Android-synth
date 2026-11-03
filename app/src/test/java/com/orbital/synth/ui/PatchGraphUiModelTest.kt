@@ -365,6 +365,21 @@ class PatchGraphUiModelTest {
         assertEquals("BUSOSC8_PITCH", disabled.patchCables.single().to.id)
         assertFalse(disabled.patchCables.single().active)
 
+        // Gain modulation multiplies the configured slot level: zero stays
+        // silent even if the OSC is enabled and the LFO is producing output.
+        val zeroLevel = snapshot(
+            oscillators = List(8) {
+                OscillatorSlot(enabled = true, level = if (it == 7) 0f else .55f)
+            },
+            routes = listOf(route),
+            bank = PatchGraphTargetBank.OSC8,
+        )
+        assertEquals(1, zeroLevel.dormantOscillatorTargetRouteCount)
+        assertFalse(zeroLevel.nodes.single {
+            it.id == "BUSOSC8_PITCH"
+        }.active)
+        assertFalse(zeroLevel.patchCables.single().active)
+
         val enabled = snapshot(
             oscillators = List(8) { OscillatorSlot(enabled = true, level = .55f) },
             routes = listOf(route),
