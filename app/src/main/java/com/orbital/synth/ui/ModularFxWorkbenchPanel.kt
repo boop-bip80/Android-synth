@@ -635,8 +635,8 @@ private fun FxSignalTopology(
                 val samples = 24
                 for (sample in 0..samples) {
                     val theta = sample * (2.0 * PI / samples)
-                    val swell = 1.0 + .06 * sin(theta * (2 + config.rate * 6) +
-                        phase * 2.0 * PI + index)
+                    val swell = 1.0 + .06 * sin(theta * (2.0 + config.rate.toDouble() * 6.0) +
+                        phase.toDouble() * 2.0 * PI + index)
                     val rr = r * 2.1 * swell
                     val px = center.x + (cos(theta) * rr).toFloat()
                     val py = center.y + (sin(theta) * rr * .56).toFloat()
