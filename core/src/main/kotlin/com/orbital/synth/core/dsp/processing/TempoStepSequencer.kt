@@ -66,7 +66,7 @@ class TempoStepSequencer(val sampleRate: Int = 48_000, private val randomSeed: I
     fun configure(config: ModulationStepConfig) {
         val previous = configuration
         configuration = config
-        if ((!previous.enabled && config.enabled) ||
+        if (!config.enabled || (!previous.enabled && config.enabled) ||
             previous.direction != config.direction || previous.length != config.length
         ) reset()
     }
