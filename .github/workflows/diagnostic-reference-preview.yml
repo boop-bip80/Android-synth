@@ -114,3 +114,44 @@ jobs:
                   print(f"{label}_B64_{offset // 512:04d}:{encoded[offset:offset+512]}")
               print(f"{label}_JPEG_END")
           PY
+
+      - name: Download real held-note immersive stage screenshot from #120 successful API35 run (read only)
+        uses: actions/download-artifact@v4
+        with:
+          name: orbital-api35-stage-emulator-screenshot
+          run-id: 41600952276
+          github-token: ${{ github.token }}
+          path: artifacts/real-stage-success
+      - name: Stream resized genuine stage frame pixels for visual quality audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import glob
+          import hashlib
+          import io
+          import os
+          from PIL import Image, ImageOps
+
+          files = sorted(glob.glob('artifacts/real-stage-success/**/*.png', recursive=True))
+          assert files, 'Expected real API35 stage PNG artifact; no image found'
+          for index, path in enumerate(files):
+              with open(path, 'rb') as stream:
+                  blob = stream.read()
+              assert blob[:8] == b'\x89PNG\r\n\x1a\n', 'Screenshot has bad PNG signature'
+              original = Image.open(io.BytesIO(blob))
+              size = original.size
+              image = ImageOps.exif_transpose(original).convert('RGB')
+              image.thumbnail((700, 1400), Image.Resampling.LANCZOS)
+              out = io.BytesIO()
+              image.save(out, format='JPEG', quality=52, optimize=True, progressive=True)
+              jpeg = out.getvalue()
+              assert len(jpeg) > 4000, 'Stage image unexpectedly tiny'
+              prefix = f'STAGE{index}'
+              encoded = base64.b64encode(jpeg).decode('ascii')
+              print(f'{prefix}_JPEG_BEGIN file={os.path.basename(path)} original={size} preview={image.size} sha256={hashlib.sha256(blob).hexdigest()} bytes={len(jpeg)}')
+              for offset in range(0, len(encoded), 512):
+                  print(f'{prefix}_B64_{offset // 512:04d}:{encoded[offset:offset+512]}')
+              print(f'{prefix}_JPEG_END')
+          PY
