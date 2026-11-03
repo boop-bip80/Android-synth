@@ -193,9 +193,12 @@ fun OscillatorRackPanel(
                 color = OrbitalPalette.Muted,
                 fontSize = 9.sp, letterSpacing = .8.sp,
             )
+            // All five waveform families fit in a single accessible row on
+            // phones. Avoid nesting a horizontal scroller inside the vertical
+            // SOUND editor: offscreen chips must scroll into view on tap/TalkBack.
             Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 val waveIndex = (layer.waveform.coerceIn(0f, 1f) * 4f).roundToInt()
                 OscNames.forEachIndexed { index, label ->
@@ -214,8 +217,8 @@ fun OscillatorRackPanel(
                                 onSlotChange(selected, layer.copy(waveform = index / 4f))
                             }
                             .testTag("oscillatorWave" + index)
-                            .heightIn(min = 43.dp)
-                            .padding(horizontal = 10.dp, vertical = 13.dp),
+                            .heightIn(min = 48.dp)
+                            .padding(horizontal = 6.dp, vertical = 13.dp),
                     ) {
                         Text(
                             label, color = if (active) tint else OrbitalPalette.Muted,
