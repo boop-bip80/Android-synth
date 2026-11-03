@@ -191,6 +191,8 @@ jobs:
             artifacts/oscillator-capture-logcat.txt
             artifacts/oscillator-activity-launch.txt
             artifacts/oscillator-window-state.txt
+            artifacts/oscillator-test-apk-install.txt
+            artifacts/oscillator-capture-instrumentation.txt
             artifacts/oscillator-*.xml
             artifacts/oscillator-*-dump.txt
             artifacts/immersive-gesture.txt
