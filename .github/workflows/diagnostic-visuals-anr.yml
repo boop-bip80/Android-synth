@@ -1,8 +1,8 @@
-name: Diagnostic only - ORBITAL ANR after cold relaunch
+name: Diagnostic only - ORBITAL ANR with emulator audio ON
 on:
   push:
     branches:
-      - diag/visuals-orbital-anr-mainthread-20261103
+      - diag/visuals-orbital-anr-audio-on-20261103
   workflow_dispatch:
 
 permissions:
@@ -54,7 +54,7 @@ jobs:
           heap-size: 512M
           disk-size: 6000M
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -no-boot-anim
           script: bash .github/workflows/ci-diagnostic-visuals-anr.sh
       - name: Upload ANR traces and exact strict GUI diagnostics
         if: always()
