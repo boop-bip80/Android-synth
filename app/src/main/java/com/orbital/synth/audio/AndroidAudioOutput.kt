@@ -70,6 +70,9 @@ class AndroidAudioOutput(
         .setOnAudioFocusChangeListener(focusListener)
         .build()
     private val renderedFrameCounter = AtomicLong(0)
+    // Submitted PCM is metered on the audio worker with no allocations or locks.
+    // A snapshot allocation occurs only when a UI consumer requests one.
+    private val visualTelemetry = AudioVisualTelemetry(sampleRate)
     // Two preallocated scratch buffers support nested sample-accurate arp and
     // step-sequencer event boundaries without allocating arrays per callback.
     private val performanceScratch = FloatArray(framesPerWrite * 2)
@@ -101,6 +104,9 @@ class AndroidAudioOutput(
     @Volatile private var lastEncoding = AudioFormat.ENCODING_PCM_FLOAT
 
     val isRunning: Boolean get() = running
+
+    /** Coherent, normalized PCM-derived meter for visual consumers (up to 30 Hz). */
+    val audioVisualSnapshot: AudioVisualSnapshot get() = visualTelemetry.snapshot()
     val isSequencerPlaying: Boolean get() = audioSequencer.isPlaying
     val sequencerPlayhead: Int get() = audioSequencer.playhead
     val sequencerTempo: Int get() = audioSequencer.tempo
@@ -220,6 +226,7 @@ class AndroidAudioOutput(
         }
         lastEncoding = config.encoding
         playback = config.track
+        visualTelemetry.begin()
         running = true
         val thread = Thread({ renderLoop(config) }, "OrbitalAudioRender")
         thread.isDaemon = true
@@ -239,6 +246,7 @@ class AndroidAudioOutput(
             pendingRestartToken = null
             focusState.cancelPlayback()
             running = false
+            visualTelemetry.stop()
             synth.allNotesOff()
             runCatching { playback?.pause() }
             workerThread?.interrupt()
@@ -333,6 +341,13 @@ class AndroidAudioOutput(
                         noProgress = 0
                     }
                 }
+                if (running && written == sampleCount) {
+                    // Meter the PCM actually accepted by AudioTrack, including
+                    // 16-bit quantization on the fallback path. Never sample
+                    // unsubmitted buffers or an interrupted partial write.
+                    if (shorts == null) visualTelemetry.observeFloat(floats, framesPerWrite)
+                    else visualTelemetry.observePcm16(shorts, framesPerWrite)
+                }
                 renderedFrameCounter.addAndGet(framesPerWrite.toLong())
             }
         } catch (_: InterruptedException) {
@@ -341,6 +356,7 @@ class AndroidAudioOutput(
             if (running) Log.e("OrbitalAudio", "Audio render stopped unexpectedly", failure)
         } finally {
             running = false
+            visualTelemetry.stop()
             audioSequencer.onWorkerStop()
             performanceArp.onWorkerStop()
             lastUnderruns = runCatching { config.track.underrunCount }.getOrDefault(lastUnderruns)
@@ -377,6 +393,7 @@ class AndroidAudioOutput(
             lifecycleGeneration++
             pendingRestartToken = null
             running = false
+            visualTelemetry.stop()
             synth.allNotesOff()
             runCatching { playback?.pause() }
             workerThread?.interrupt()
