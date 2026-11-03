@@ -73,9 +73,26 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
         }
     }
 
-    /** New note starts all layers together; disabling a layer does not reset its phase. */
+    /**
+     * No sample is audible from an idle voice; prime each new patch lane at its
+     * requested timbre/tuning instead of beginning a new note with a spurious
+     * eight-millisecond glide from the default 0-semitone sine oscillator.
+     */
+    fun primeSilentSlot(index: Int) {
+        currentGain[index] = targetGain[index]
+        currentRatio[index] = targetRatio[index]
+        wave[index] = targetWave[index]
+        morph[index] = targetMorph[index]
+        mipCeilingRatio[index] = targetRatio[index]
+        if (currentGain[index] > 0f) hasLayers = true
+    }
+
+    /** Every new note can use its current harmonically safe mip ceiling. */
     fun resetPhase() {
         phases.fill(0.0)
+        for (i in 0 until SLOT_COUNT) {
+            mipCeilingRatio[i] = max(currentRatio[i], targetRatio[i])
+        }
     }
 
     /**
