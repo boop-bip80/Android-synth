@@ -122,7 +122,7 @@ class StageTouchSettingsPersistenceTest {
             )
             assertEquals(StageTouchSettingsSave.Saved, repo.save(saved))
             assertEquals(StageTouchSettingsLoad(saved, StageTouchLoadSource.SAVED), repo.load())
-            assertTrue(Files.readString(path).startsWith(StageTouchSettingsCodec.V1_HEADER))
+            assertTrue(readUtf8(path).startsWith(StageTouchSettingsCodec.V1_HEADER))
             assertEquals(1, Files.list(path.parent).use { stream ->
                 stream.filter { it.fileName.toString() == path.fileName.toString() }.count().toInt()
             })
@@ -133,26 +133,26 @@ class StageTouchSettingsPersistenceTest {
         withScratch { path ->
             val repo = StageTouchSettingsRepository(path, Dispatchers.Unconfined)
             val corrupt = "ORBITAL-STAGE-TOUCH-V1\nscale=BAD\n"
-            Files.writeString(path, corrupt)
+            writeUtf8(path, corrupt)
             val damaged = repo.load()
             assertEquals(StageTouchLoadSource.DEFAULT_CORRUPT, damaged.source)
             assertEquals(StageTouchSettings(), damaged.settings)
             assertEquals(StageTouchSettingsSave.UnreadableExisting(
                 StageTouchLoadSource.DEFAULT_CORRUPT,
             ), repo.save(StageTouchSettings(tonic = 8)))
-            assertEquals(corrupt, Files.readString(path))
+            assertEquals(corrupt, readUtf8(path))
             assertEquals(StageTouchSettingsSave.Saved, repo.save(
                 StageTouchSettings(tonic = 8), replaceUnreadable = true,
             ))
             assertEquals(8, repo.load().settings.tonic)
 
             val unknown = "ORBITAL-STAGE-TOUCH-V4\nmagic=prototype\n"
-            Files.writeString(path, unknown)
+            writeUtf8(path, unknown)
             assertEquals(StageTouchLoadSource.DEFAULT_UNSUPPORTED, repo.load().source)
             assertEquals(StageTouchSettingsSave.UnreadableExisting(
                 StageTouchLoadSource.DEFAULT_UNSUPPORTED,
             ), repo.save(StageTouchSettings(tonic = 5)))
-            assertEquals(unknown, Files.readString(path))
+            assertEquals(unknown, readUtf8(path))
         }
     }
 
@@ -182,15 +182,23 @@ class StageTouchSettingsPersistenceTest {
     @Test fun legacyFileIsUpgradedOnlyAfterExplicitUserSave() = runBlocking {
         withScratch { path ->
             val legacy = "ORBITAL-STAGE-TOUCH-V0\noctave=3\nscale=MAJOR\naxis=Y\n"
-            Files.writeString(path, legacy)
+            writeUtf8(path, legacy)
             val repo = StageTouchSettingsRepository(path, Dispatchers.Unconfined)
             val loaded = repo.load()
             assertEquals(StageTouchLoadSource.LEGACY, loaded.source)
-            assertEquals(legacy, Files.readString(path)) // A read never mutates user data.
+            assertEquals(legacy, readUtf8(path)) // A read never mutates user data.
             assertEquals(StageTouchSettingsSave.Saved, repo.save(loaded.settings))
             assertEquals(StageTouchLoadSource.SAVED, repo.load().source)
             assertEquals(loaded.settings, repo.load().settings)
         }
+    }
+
+    // API-26 compatible java.nio I/O in Android-targeted JVM unit tests.
+    private fun readUtf8(path: Path): String =
+        String(Files.readAllBytes(path), Charsets.UTF_8)
+
+    private fun writeUtf8(path: Path, value: String) {
+        Files.write(path, value.toByteArray(Charsets.UTF_8))
     }
 
     private fun assertFails(block: () -> Unit) {
