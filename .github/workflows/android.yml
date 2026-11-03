@@ -138,7 +138,7 @@ jobs:
           heap-size: 512M
           disk-size: ${{ matrix.suite == 'compact' && '4000M' || '6000M' }}
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
+          emulator-options: -no-window -gpu swangle -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           # The runner executes each nonempty script line in a separate `sh -c`.
           # Use one Bash command so traps, pipefail and exit codes work together.
           script: ${{ matrix.suite == 'compact' && 'bash .github/workflows/ci-compact-geometry.sh' || matrix.suite == 'stage' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-live-stage-framebuffer.sh' || matrix.suite == 'visuals' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-immersive-stage.sh && bash .github/workflows/ci-oscillator-workbench.sh && bash .github/workflows/ci-landscape.sh' || matrix.suite == 'compact350' && 'bash .github/workflows/ci-compact350.sh' || matrix.suite == 'restart' && 'bash .github/workflows/ci-process-restart.sh && bash .github/workflows/ci-stage-bootstrap.sh' || 'bash .github/workflows/ci-emulator.sh' }}
