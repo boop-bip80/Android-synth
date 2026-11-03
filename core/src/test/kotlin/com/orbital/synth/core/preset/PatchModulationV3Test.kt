@@ -94,7 +94,7 @@ class PatchModulationV3Test {
         )
         val encoded = PatchCodec.encode(patch)
         assertTrue(encoded.startsWith("ORBITAL-PATCH/3\n"))
-        assertEquals(4, PatchCodec.CURRENT_VERSION)
+        assertEquals(5, PatchCodec.CURRENT_VERSION)
         assertEquals(patch, PatchCodec.decode(encoded))
         assertEquals(encoded, PatchCodec.encode(PatchCodec.decode(encoded)))
         assertTrue(encoded.length <= 65_536)
@@ -197,7 +197,7 @@ class PatchModulationV3Test {
         rejects { PatchCodec.decode(v3.replace("mod.tempo=133.0", "mod.tempo=NaN")) }
         rejects { PatchCodec.decode(v3 + "route.0=0,LFO1,MORPH,0,LINEAR\n") }
         rejects { PatchCodec.decode(v3.replace("route.0=", "route.1=")) }
-        rejects { PatchCodec.decode(v3.replace("ORBITAL-PATCH/3", "ORBITAL-PATCH/5")) }
+        rejects { PatchCodec.decode(v3.replace("ORBITAL-PATCH/3", "ORBITAL-PATCH/6")) }
     }
 
     @Test fun olderPatchVersionsRejectNewVersionFields() {
