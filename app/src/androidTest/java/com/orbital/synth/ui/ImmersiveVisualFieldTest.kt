@@ -29,10 +29,17 @@ class ImmersiveVisualFieldTest {
             .assertIsDisplayed().fetchSemanticsNode().boundsInWindow
         val origin = IntArray(2)
         val focused = BooleanArray(1)
-        compose.runOnIdle {
-            val window = compose.activity.window.decorView
-            window.getLocationOnScreen(origin)
-            focused[0] = window.hasWindowFocus()
+        // A visible Compose node can briefly precede Android's input-focus
+        // handoff on a fresh emulator Activity. Wait for genuine focus; never
+        // accept a screenshot whose measured window stays unfocused.
+        for (attempt in 1..8) {
+            compose.runOnIdle {
+                val window = compose.activity.window.decorView
+                window.getLocationOnScreen(origin)
+                focused[0] = window.hasWindowFocus()
+            }
+            if (focused[0]) break
+            Thread.sleep(150L)
         }
         return NativeCanvasPixelCapture.capture(
             nodeBoundsInWindow = nodeBounds,
@@ -119,7 +126,15 @@ class ImmersiveVisualFieldTest {
             )
         }
         compose.waitForIdle()
-        val proof = realCanvas()
+        // A cold GPU Surface can initially appear black even while its
+        // semantics node is displayed. Require genuine colored display
+        // pixels within bounded frames; a persistently black Canvas fails.
+        var proof = realCanvas()
+        for (attempt in 1..8) {
+            if (proof.colorfulPixels() >= 16) break
+            Thread.sleep(150L)
+            proof = realCanvas()
+        }
         val lit = proof.colorfulPixels()
         assertTrue(
             "NaN/Infinity telemetry suppressed actual Canvas artwork: " +
