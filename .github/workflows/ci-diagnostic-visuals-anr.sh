@@ -85,6 +85,24 @@ sampler_pid=$!
 
 printf 'strict-stage-bootstrap\n' > artifacts/diag-phase.txt
 bash .github/workflows/ci-stage-bootstrap.sh
-printf 'strict-immersive-force-stop-relaunch\n' > artifacts/diag-phase.txt
-bash .github/workflows/ci-immersive-stage.sh
-printf 'complete\n' > artifacts/diag-phase.txt
+
+# Ten strict, independent force-stop/relaunch transitions on an unchanged
+# production APK and the same live API35 emulator. Each round verifies real
+# keybed, mode transitions, stage screenshot and return; never swallow failures.
+printf 'source_run=41633233561\nrounds=10\n' > artifacts/diag-cold-relaunch-rounds.txt
+for round in {1..10}; do
+  printf 'round=%s_start_utc=%s\n' "$round" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> artifacts/diag-cold-relaunch-rounds.txt
+  printf 'strict-immersive-cold-relaunch-round-%02d\n' "$round" > artifacts/diag-phase.txt
+  bash .github/workflows/ci-immersive-stage.sh
+  # Fresh verified Android UI hierarchy and framebuffer per round.
+  cp artifacts/immersive-regular.xml "artifacts/diag-round-$round-normal.xml"
+  cp artifacts/immersive-stage.xml "artifacts/diag-round-$round-stage.xml"
+  cp artifacts/immersive-returned.xml "artifacts/diag-round-$round-returned.xml"
+  cp artifacts/orbital-immersive-emulator.png "artifacts/diag-round-$round-stage.png"
+  printf 'round=%s_pass_utc=%s app_pid=%s stage_png_sha=%s\n' \
+    "$round" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$(timeout 5s adb shell pidof com.orbital.synth | tr -d '\r\n')" \
+    "$(sha256sum artifacts/orbital-immersive-emulator.png | cut -d' ' -f1)" \
+    >> artifacts/diag-cold-relaunch-rounds.txt
+done
+printf 'complete-10-strict-cold-relaunch-rounds\n' > artifacts/diag-phase.txt
