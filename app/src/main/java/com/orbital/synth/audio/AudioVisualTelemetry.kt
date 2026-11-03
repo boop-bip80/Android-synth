@@ -40,7 +40,10 @@ class AudioVisualTelemetry(
         require(maxRefreshHz in 1..60)
     }
 
-    private val framesPerPublication = (sampleRate / maxRefreshHz).coerceAtLeast(1)
+    // Ceiling division guarantees an absolute <= maxRefreshHz publication cap
+    // even at sample rates that are not divisible by the requested frame rate.
+    private val framesPerPublication =
+        ((sampleRate + maxRefreshHz - 1) / maxRefreshHz).coerceAtLeast(1)
     private val packed = AtomicLong(0L)
     @Volatile private var active = false
 
