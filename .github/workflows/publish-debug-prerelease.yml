@@ -2,7 +2,7 @@ name: Publish verified ORBITAL debug prerelease
 
 # Explicit opt-in only: manual dispatch OR a successful main source commit
 # whose message begins exactly [publish-debug-apk]. Ordinary merges and PRs
-# never publish. This creates an immutable, SHA-addressed *developer* APK,
+# never publish. This creates a write-once, SHA-addressed *developer* APK,
 # not a Play-signed release or physical-device latency/performance certificate.
 on:
   workflow_dispatch:
@@ -106,7 +106,7 @@ jobs:
           source_sha="$(jq -r .head_sha <<< "$run_json")"
           [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
           if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
-            # Defense in depth: re-fetch the immutable source run, rather than
+            # Defense in depth: re-fetch the identified source run, rather than
             # trusting the event payload alone to grant publication authority.
             [[ "$SOURCE_EVENT_SHA" == "$source_sha" ]] || {
               echo "Workflow event/source run SHA mismatch." >&2
@@ -187,7 +187,7 @@ jobs:
           sha256sum "$apk" | tee "$RUNNER_TEMP/orbital-apk-sha256.txt"
           cp "$apk" "$RUNNER_TEMP/ORBITAL-${{ steps.source.outputs.short }}-debug.apk"
 
-      - name: Create immutable SHA-tagged developer prerelease
+      - name: Create write-once SHA-tagged developer prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
