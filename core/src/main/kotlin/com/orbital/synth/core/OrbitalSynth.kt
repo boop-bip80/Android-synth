@@ -62,6 +62,11 @@ data class OscillatorSlot(
     val level: Float = 0f,
     val coarseSemitones: Int = 0,
     val fineCents: Float = 0f,
+    // Zero is exact legacy wavetable PCM. One substitutes noise entirely;
+    // intermediate values make tonal/noise hybrids.
+    val noiseLevel: Float = 0f,
+    // Continuous color: 0 = white, 0.5 = pink, 1 = brown.
+    val noiseColor: Float = 0f,
 )
 
 class OrbitalSynth(
@@ -305,14 +310,55 @@ class OrbitalSynth(
         require(index in 0 until oscillatorSlotCount) { "oscillator slot must be 0..7" }
         if (!waveform.isFinite() || !morph.isFinite() ||
             !level.isFinite() || !fineCents.isFinite()) return
-        oscillatorSlots.set(index, OscillatorSlot(
-            enabled = enabled,
-            waveform = waveform.coerceIn(0f, 1f),
-            morph = morph.coerceIn(0f, 1f),
-            level = level.coerceIn(0f, 1f),
-            coarseSemitones = coarseSemitones.coerceIn(-48, 48),
-            fineCents = fineCents.coerceIn(-100f, 100f),
+        // Preserve any independently edited noise blend/color when an existing
+        // V1-V5 wave/level/transpose UI control publishes a newer snapshot.
+        // CAS avoids losing a simultaneous noise-knob update.
+        while (true) {
+            val prior = oscillatorSlots.get(index)
+            val updated = prior.copy(
+                enabled = enabled,
+                waveform = waveform.coerceIn(0f, 1f),
+                morph = morph.coerceIn(0f, 1f),
+                level = level.coerceIn(0f, 1f),
+                coarseSemitones = coarseSemitones.coerceIn(-48, 48),
+                fineCents = fineCents.coerceIn(-100f, 100f),
+            )
+            if (oscillatorSlots.compareAndSet(index, prior, updated)) return
+        }
+    }
+
+    /** Configure a full immutable slot, e.g. when recalling a V6 sound patch. */
+    fun setOscillatorSlot(index: Int, config: OscillatorSlot) {
+        require(index in 0 until oscillatorSlotCount) { "oscillator slot must be 0..7" }
+        if (!config.waveform.isFinite() || !config.morph.isFinite() ||
+            !config.level.isFinite() || !config.fineCents.isFinite() ||
+            !config.noiseLevel.isFinite() || !config.noiseColor.isFinite()) return
+        oscillatorSlots.set(index, config.copy(
+            waveform = config.waveform.coerceIn(0f, 1f),
+            morph = config.morph.coerceIn(0f, 1f),
+            level = config.level.coerceIn(0f, 1f),
+            coarseSemitones = config.coarseSemitones.coerceIn(-48, 48),
+            fineCents = config.fineCents.coerceIn(-100f, 100f),
+            noiseLevel = config.noiseLevel.coerceIn(0f, 1f),
+            noiseColor = config.noiseColor.coerceIn(0f, 1f),
         ))
+    }
+
+    /**
+     * Atomically morph any of the eight wavetable layers into a white/pink/brown
+     * source. The audio worker slews noise level/color over 8 ms per voice; no
+     * random-number work is done when noiseLevel == 0.
+     */
+    fun setOscillatorNoise(index: Int, noiseLevel: Float, noiseColor: Float) {
+        require(index in 0 until oscillatorSlotCount) { "oscillator slot must be 0..7" }
+        if (!noiseLevel.isFinite() || !noiseColor.isFinite()) return
+        val level = noiseLevel.coerceIn(0f, 1f)
+        val color = noiseColor.coerceIn(0f, 1f)
+        while (true) {
+            val prior = oscillatorSlots.get(index)
+            val updated = prior.copy(noiseLevel = level, noiseColor = color)
+            if (oscillatorSlots.compareAndSet(index, prior, updated)) return
+        }
     }
 
     /** Current UI-side snapshot. This is not the render worker's mutable state. */
