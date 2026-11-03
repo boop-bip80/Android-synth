@@ -1,4 +1,4 @@
-name: Diagnostic - cold strict #149 reordered compact editor
+name: Diagnostic - cold strict #149 FIRST-child compact editor
 on:
   push:
     branches: [diagnostic/isolated-compact-osc-20261103]
@@ -25,14 +25,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: orbital-debug-apk
-          run-id: 41630528857
+          run-id: 41631432651
           github-token: ${{ github.token }}
           path: app/build/outputs/apk/debug
       - name: Download validated #149 EXACT androidTest artifact
         uses: actions/download-artifact@v4
         with:
           name: orbital-debug-android-test-apk
-          run-id: 41630528857
+          run-id: 41631432651
           github-token: ${{ github.token }}
           path: app/build/outputs/apk/androidTest/debug
       - name: Enable /dev/kvm
