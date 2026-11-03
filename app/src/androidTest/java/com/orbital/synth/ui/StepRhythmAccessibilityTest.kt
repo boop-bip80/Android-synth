@@ -73,8 +73,8 @@ class StepRhythmAccessibilityTest {
             val visible = viewport.fetchSemanticsNode().boundsInRoot
             // Fixture density is exactly 3px/dp. Require the entire 76dp
             // painting surface, not a fortuitously visible clipped fragment.
-            if (bounds.width >= 48f * 3f - 1f &&
-                bounds.height >= 76f * 3f - 1f &&
+            if (bounds.width >= 48f * 3f &&
+                bounds.height >= 76f * 3f &&
                 bounds.left >= visible.left - 1f &&
                 bounds.right <= visible.right + 1f &&
                 bounds.top >= visible.top - 1f &&
@@ -142,8 +142,8 @@ class StepRhythmAccessibilityTest {
         // least 48dp wide even inside the doubly padded phone-size editor.
         for (index in 0 until 16) {
             val bounds = revealPadWithPhysicalSwipes(index, scroll)
-            assertTrue("STEP pad $index width at $widthDp dp", bounds.width >= 143f)
-            assertTrue("STEP pad $index full height at $widthDp dp", bounds.height >= 227f)
+            assertTrue("STEP pad $index width at $widthDp dp", bounds.width >= 144f)
+            assertTrue("STEP pad $index full height at $widthDp dp", bounds.height >= 228f)
             val semantics = compose.onNodeWithTag("modStepPad" + index)
                 .fetchSemanticsNode().config
             assertTrue("STEP pad $index must be adjustable by assistive input",
