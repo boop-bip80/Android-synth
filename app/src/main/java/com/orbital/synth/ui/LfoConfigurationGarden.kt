@@ -15,12 +15,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -72,7 +74,14 @@ internal fun LfoConfigurationGarden(
             )
         }
     }
+    val miniReveal = LocalLfoGardenRevealRequest.current
     var selected by remember { mutableIntStateOf(0) }
+    // Selecting a new mini card moves to EXACTLY the saved enabled LFO's
+    // source. Ordinary DSP recompositions, XY movement and garden edits must
+    // never reset a manually selected lane: only a fresh tap epoch may.
+    LaunchedEffect(miniReveal?.navigationEpoch) {
+        if (miniReveal != null) selected = miniReveal.laneIndex.coerceIn(0, 7)
+    }
     var routeCursor by remember(selected) { mutableIntStateOf(0) }
     val lane = lanes[selected]
     val config = lane.config
@@ -113,7 +122,13 @@ internal fun LfoConfigurationGarden(
                     LfoGardenNode(
                         lane = item, focused = selected == index,
                         onClick = { selected = index },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).then(
+                            if (miniReveal != null &&
+                                miniReveal.laneIndex.coerceIn(0, 7) == index
+                            ) {
+                                Modifier.bringIntoViewRequester(miniReveal.requester)
+                            } else Modifier
+                        ),
                     )
                 }
             }

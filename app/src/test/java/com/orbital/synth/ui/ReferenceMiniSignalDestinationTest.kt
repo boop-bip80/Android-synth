@@ -9,7 +9,7 @@ class ReferenceMiniSignalDestinationTest {
     @Test fun eachPreviewHasOneHonestRealEditorAndNoSyntheticAudioDestination() {
         assertEquals(4, ReferenceMiniSignalDestination.entries.size)
         assertEquals(
-            listOf("ADSR envelope", "LFO rate and depth", "XY routing modes",
+            listOf("ADSR envelope", "LFO source controls", "XY routing modes",
                 "64-route modulation matrix"),
             ReferenceMiniSignalDestination.entries.map { it.editorLabel },
         )

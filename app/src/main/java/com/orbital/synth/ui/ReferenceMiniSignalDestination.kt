@@ -8,7 +8,7 @@ enum class ReferenceMiniSignalDestination(
     val editorLabel: String,
 ) {
     ENVELOPE("ADSR envelope"),
-    LFO("LFO rate and depth"),
+    LFO("LFO source controls"),
     EXPRESSION("XY routing modes"),
     MODULATION("64-route modulation matrix");
 

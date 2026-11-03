@@ -24,6 +24,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
 import androidx.compose.ui.unit.Density
@@ -32,6 +33,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.core.dsp.processing.LfoShape
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -51,15 +53,21 @@ class ReferenceMiniSignalTapNavigationTest {
     private fun setHost(
         width: () -> Int,
         connected: Boolean = true,
+        firstEnabledLfoIndex: Int = 0,
         onEdit: (ParameterId, Float) -> Unit = { _, _ -> },
+        onGardenEdit: (Int, ModulationLfoConfig) -> Unit = { _, _ -> },
     ) {
         val parameters = mapOf(
             ParameterId.ATTACK to .20f,
             ParameterId.LFO_RATE to .24f,
             ParameterId.CUTOFF to .50f,
         )
-        val lfos = if (connected) List(8) {
-            ModulationLfoConfig(enabled = it == 0)
+        val lfos = if (connected) List(8) { index ->
+            ModulationLfoConfig(
+                enabled = index == firstEnabledLfoIndex,
+                shape = if (index == firstEnabledLfoIndex) LfoShape.TRIANGLE
+                    else LfoShape.SINE,
+            )
         } else emptyList()
         val routes = if (connected) List(64) { ModulationRouteConfig() } else emptyList()
         compose.setContent {
@@ -78,7 +86,7 @@ class ReferenceMiniSignalTapNavigationTest {
                         onParameterChange = onEdit,
                         onModeChange = {},
                         onOctaveChange = {},
-                        onModulationLfoChange = if (connected) { _, _ -> } else null,
+                        onModulationLfoChange = if (connected) onGardenEdit else null,
                         onModulationRouteChange = if (connected) { _, _ -> } else null,
                         onModulationRouteClear = if (connected) { _ -> } else null,
                         onModulationTempoChange = if (connected) { _ -> } else null,
@@ -125,10 +133,14 @@ class ReferenceMiniSignalTapNavigationTest {
         }
     }
 
-    @Test fun envAndLfoPhysicalMiniTapsOpenActualHostSlidersAndWriteDspParams() {
+    @Test fun envAndDisconnectedCoreLfoTapsOpenActualSlidersAndWriteDspParams() {
         var width by mutableIntStateOf(360)
         val writes = mutableListOf<Pair<ParameterId, Float>>()
-        setHost(width = { width }, onEdit = { id, value -> writes += id to value })
+        setHost(
+            width = { width },
+            connected = false,
+            onEdit = { id, value -> writes += id to value },
+        )
 
         tapCard("referenceMiniEnv")
         compose.onNodeWithContentDescription("Tab FX").assertIsDisplayed()
@@ -142,6 +154,7 @@ class ReferenceMiniSignalTapNavigationTest {
         }
         compose.onNodeWithContentDescription("Tab SOUND").performClick()
         compose.waitForIdle()
+        compose.onNodeWithText("CORE").assertExists()
         tapCard("referenceMiniLfo")
         compose.onNodeWithTag("miniLfoActualEditor").assertIsDisplayed()
         compose.onNodeWithContentDescription("LFO RATE. Modulation speed")
@@ -150,6 +163,33 @@ class ReferenceMiniSignalTapNavigationTest {
             }
         compose.runOnIdle {
             assertTrue(writes.any { it.first == ParameterId.LFO_RATE && it.second > .78f })
+        }
+        compose.onNodeWithTag("referencePerformanceKeybed").assertIsDisplayed()
+    }
+
+    @Test fun connectedLfoMiniTapRevealsActualFirstEnabledRackLaneAndEditsIt() {
+        var width by mutableIntStateOf(360)
+        val laneWrites = mutableListOf<Pair<Int, ModulationLfoConfig>>()
+        setHost(
+            width = { width },
+            connected = true,
+            firstEnabledLfoIndex = 5,
+            onGardenEdit = { index, config -> laneWrites += index to config },
+        )
+        compose.onNodeWithText("TRIAN").assertExists()
+        tapCard("referenceMiniLfo")
+        compose.onNodeWithContentDescription("Tab FX").assertIsDisplayed()
+        compose.onNodeWithTag("lfoGardenNode5").assertIsDisplayed()
+        compose.onNodeWithText("SOURCE  06  /  TRIANGLE").assertExists()
+        // This is the SAME eight-LFO editor visualized in the mini trace,
+        // not the unrelated legacy DSP LFO_RATE / LFO_DEPTH sliders.
+        compose.onNodeWithTag("lfoConfigurationGarden").assertExists()
+        compose.onNodeWithTag("lfoGardenShapeSINE")
+            .performScrollTo().performTouchInput { click(center) }
+        compose.runOnIdle {
+            assertTrue("Genuine lane-six shape callback must reach host", laneWrites.any {
+                it.first == 5 && it.second.shape == LfoShape.SINE
+            })
         }
         compose.onNodeWithTag("referencePerformanceKeybed").assertIsDisplayed()
     }

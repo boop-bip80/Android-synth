@@ -41,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
@@ -315,10 +316,20 @@ fun OrbitalScreen(
     val envelopeEditorRequest = remember { BringIntoViewRequester() }
     val lfoEditorRequest = remember { BringIntoViewRequester() }
     val modulationEditorRequest = remember { BringIntoViewRequester() }
+    val matchingLfoGardenRequest = remember { BringIntoViewRequester() }
     val modulationRackConnected = state.modulationLfos.isNotEmpty() &&
         state.modulationRoutes.isNotEmpty() &&
         onModulationLfoChange != null && onModulationRouteChange != null &&
         onModulationRouteClear != null && onModulationTempoChange != null
+    val miniGardenReveal = if (selectedTab == Tab.FX &&
+        pendingMiniSignal == ReferenceMiniSignalDestination.LFO && modulationRackConnected
+    ) {
+        LfoGardenRevealRequest(
+            requester = matchingLfoGardenRequest,
+            laneIndex = state.modulationLfos.indexOfFirst { it.enabled }.coerceAtLeast(0),
+            navigationEpoch = miniSignalNavigationEpoch,
+        )
+    } else null
 
     if (immersiveMode) {
         ImmersiveStage(
@@ -362,7 +373,16 @@ fun OrbitalScreen(
                 ReferenceMiniSignalDestination.ENVELOPE ->
                     envelopeEditorRequest.bringIntoView()
                 ReferenceMiniSignalDestination.LFO ->
-                    lfoEditorRequest.bringIntoView()
+                    if (modulationRackConnected) {
+                        // The mini trace depicts the FIRST enabled rack LFO.
+                        // Reveal exactly that existing 84dp live node, never
+                        // pretend legacy core LFO_RATE edits this waveform.
+                        matchingLfoGardenRequest.bringIntoView()
+                    } else {
+                        // No writable 8-LFO garden: clearly labeled core
+                        // legacy controls are still real audible parameters.
+                        lfoEditorRequest.bringIntoView()
+                    }
                 ReferenceMiniSignalDestination.MODULATION ->
                     if (modulationRackConnected) {
                         // The matrix may be taller than one screen: reveal its
@@ -883,6 +903,9 @@ fun OrbitalScreen(
                             .bringIntoViewRequester(modulationEditorRequest)
                             .testTag("miniModActualEditor"),
                     ) {
+                        CompositionLocalProvider(
+                            LocalLfoGardenRevealRequest provides miniGardenReveal,
+                        ) {
                         ModulationConstellationPanel(
                             lfos = state.modulationLfos,
                             routes = state.modulationRoutes,
@@ -895,6 +918,7 @@ fun OrbitalScreen(
                             stepPlayhead = state.modulationStepPlayhead,
                             onStepChange = onModulationStepsChange,
                         )
+                        }
                     }
                 }
             }

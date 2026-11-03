@@ -197,6 +197,7 @@ fun ReferenceSoundControls(
                 values = envelope,
                 tint = OrbitalPalette.Violet,
                 tag = "referenceMiniEnv",
+                editorLabel = "Edit ADSR envelope",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
                 onOpen = onOpenMiniSignal
@@ -205,10 +206,15 @@ fun ReferenceSoundControls(
             )
             ReferenceMiniSignal(
                 title = "LFO",
-                caption = if (lfo == null) "OFF" else lfo.shape.name.take(5),
+                caption = if (!canEditModulationRack && onOpenMiniSignal != null)
+                    "CORE" // Wires to the legacy core LFO when rack edits are disconnected.
+                else if (lfo == null) "OFF" else lfo.shape.name.take(5),
                 values = lfoPreview,
                 tint = OrbitalPalette.Cyan,
                 tag = "referenceMiniLfo",
+                editorLabel = if (canEditModulationRack)
+                    "Edit matching configured eight-LFO source"
+                else "Edit core LFO rate and depth",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
                 onOpen = onOpenMiniSignal
@@ -221,6 +227,7 @@ fun ReferenceSoundControls(
                 values = expressionPreview,
                 tint = OrbitalPalette.Gold,
                 tag = "referenceMiniExpr",
+                editorLabel = "Edit XY routing modes",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
                 onOpen = onOpenMiniSignal
@@ -233,6 +240,7 @@ fun ReferenceSoundControls(
                 values = routePreview,
                 tint = OrbitalPalette.Violet,
                 tag = "referenceMiniMod",
+                editorLabel = "Edit 64-route modulation matrix",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
                 onOpen = onOpenMiniSignal
@@ -630,6 +638,7 @@ private fun ReferenceMiniSignal(
     values: List<Float>,
     tint: Color,
     tag: String,
+    editorLabel: String,
     modifier: Modifier,
     height: Dp,
     onOpen: (() -> Unit)?,
@@ -658,11 +667,11 @@ private fun ReferenceMiniSignal(
             .semantics {
                 contentDescription = title + " configured preview, " + caption +
                     ". This is not sampled audio. " +
-                    (if (onOpen != null) "Double tap to edit " + title + "." else
+                    (if (onOpen != null) "Double tap to " + editorLabel + "." else
                         "Editing unavailable in this view.")
                 if (onOpen != null) {
                     role = Role.Button
-                    onClick(label = "Edit " + title + " sound controls") {
+                    onClick(label = editorLabel) {
                         onOpen()
                         true
                     }
