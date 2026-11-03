@@ -27,6 +27,14 @@ interface SourceAwareMidiMessageListener : MidiMessageListener {
         onPitchBend(channel, value)
     }
 
+    /**
+     * Source-aware controller events preserve the origin of CC121 resets.
+     * Default delivery remains exactly one legacy control callback.
+     */
+    fun onSourceControlChange(sourceId: Long, channel: Int, controller: Int, value: Int) {
+        onControlChange(channel, controller, value)
+    }
+
     /** A port's last expression value must not survive its physical disconnection. */
     fun onSourceDisconnected(sourceId: Long) {}
 }
@@ -51,7 +59,9 @@ internal class MidiSourceRouter(
     }
 
     override fun onControlChange(channel: Int, controller: Int, value: Int) {
-        target.onControlChange(channel, controller, value)
+        if (target is SourceAwareMidiMessageListener) {
+            target.onSourceControlChange(sourceId, channel, controller, value)
+        } else target.onControlChange(channel, controller, value)
     }
 
     override fun onPitchBend(channel: Int, value: Int) {
