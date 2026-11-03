@@ -186,6 +186,53 @@ class UserPatchRepositoryTest {
         }
     }
 
+    @Test fun saveNewRejectsExistingFileWithoutOverwritingAnyBytes() {
+        val folder = temp.newFolder("exclusive-new-patch").toPath()
+        val store = PatchDirectoryStore(folder)
+        val original = FactoryPresets.AURORA.copy(id = "user-locked")
+        assertTrue(store.saveNew(original))
+        val path = folder.resolve("user-locked.orbital")
+        val initialBytes = Files.readAllBytes(path)
+
+        val conflicting = original.copy(name = "Would Overwrite")
+        assertFalse(store.saveNew(conflicting))
+        assertArrayEquals(initialBytes, Files.readAllBytes(path))
+        assertEquals(original, store.load(original.id))
+    }
+
+    @Test fun twoRepositoryInstancesSaveAndImportWithoutLosingRacingPatches() = runBlocking {
+        val folder = temp.newFolder("parallel-repositories").toPath()
+        val store = PatchDirectoryStore(folder)
+        val saver = UserPatchRepository(
+            PatchDirectoryStore(folder), { mapOf("CUTOFF" to .23f) }, {},
+            Dispatchers.Unconfined,
+        )
+        val importer = UserPatchRepository(
+            PatchDirectoryStore(folder), { mapOf("CUTOFF" to .87f) }, {},
+            Dispatchers.Unconfined,
+        )
+        val importText = PatchCodec.encode(FactoryPresets.AURORA.copy(name = "Race Pad"))
+        // Each instance owns a different mutex; only exclusive disk publication
+        // can prevent the two from clobbering identical ID candidates.
+        val saved = coroutineScope {
+            (1..64).map { index ->
+                async(Dispatchers.Default) {
+                    success(
+                        if (index % 2 == 0) saver.saveCurrentAs("Race Pad")
+                        else importer.importPatchText(importText)
+                    )
+                }
+            }.awaitAll()
+        }
+        assertEquals(64, saved.map { it.patch.id }.toSet().size)
+        assertEquals(64, store.storedIds().size)
+        assertEquals(64, store.list().size)
+        val savedById = saved.associateBy { it.patch.id }
+        for ((id, result) in savedById) {
+            assertEquals(result.patch, store.load(id))
+        }
+    }
+
     @Test fun oversizedImportReturnsTypedFormatErrorWithoutCreatingFiles() = runBlocking {
         val repository = repository()
         failure(repository.importPatchText("X".repeat(65_537)), PatchFailureKind.INVALID_FORMAT)
