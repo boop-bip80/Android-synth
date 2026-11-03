@@ -770,9 +770,9 @@ fun PatchGraphPanel(
                         oscillators.getOrNull(oscillatorIndex)?.let {
                             it.enabled && it.level > 0f
                         } != true
-                    ) "REAL DSP TARGET • OSC " + (oscillatorIndex + 1) +
+                    ) "DSP-CAPABLE TARGET • OSC " + (oscillatorIndex + 1) +
                         " BYPASSED OR LEVEL ZERO; CABLE DORMANT UNTIL AUDIBLE"
-                    else "REAL PCM TARGET • " +
+                    else "DSP-CAPABLE TARGET • SIGNAL REQUIRES SOURCE + DEPTH • " +
                         PatchGraphUiModel.destinationEndpoint(editedRoute.destination)
                 } else "RESERVED METADATA • THIS CABLE HAS NO AUDIO EFFECT",
                 color = if (editedRoute.enabled &&
