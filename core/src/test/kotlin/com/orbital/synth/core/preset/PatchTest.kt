@@ -94,7 +94,7 @@ class PatchTest {
 
     @Test fun rejectsUnknownFutureVersion() {
         val encoded = PatchCodec.encode(FactoryPatches.DEFAULT)
-        rejects { PatchCodec.decode(encoded.replace("ORBITAL-PATCH/1", "ORBITAL-PATCH/4")) }
+        rejects { PatchCodec.decode(encoded.replace("ORBITAL-PATCH/1", "ORBITAL-PATCH/5")) }
     }
 
     @Test fun rejectsDuplicateFieldsAndUnknownParameterKeys() {

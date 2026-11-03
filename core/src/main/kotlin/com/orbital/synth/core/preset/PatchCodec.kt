@@ -7,6 +7,8 @@ import com.orbital.synth.core.dsp.processing.LfoShape
 import com.orbital.synth.core.dsp.processing.ModSource
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModCurve
+import com.orbital.synth.core.dsp.processing.FxModuleConfig
+import com.orbital.synth.core.dsp.processing.FxModuleType
 
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -23,22 +25,26 @@ import java.nio.charset.StandardCharsets
  * param.CUTOFF=0.62
  */
 object PatchCodec {
-    const val CURRENT_VERSION: Int = 3
+    const val CURRENT_VERSION: Int = 4
     private const val MAGIC_V1 = "ORBITAL-PATCH/1"
     private const val MAGIC_V2 = "ORBITAL-PATCH/2"
     private const val MAGIC_V3 = "ORBITAL-PATCH/3"
+    private const val MAGIC_V4 = "ORBITAL-PATCH/4"
     private val OSC_FIELD = Regex("osc\\.[0-7]")
     private val LFO_FIELD = Regex("lfo\\.[0-7]")
     private val ROUTE_FIELD = Regex("route\\.([0-9]|[1-5][0-9]|6[0-3])")
+    private val FX_FIELD = Regex("fx\\.[0-5]")
     private const val MAX_TEXT_LENGTH = 65_536
     private val FIELDS = setOf("id", "name", "author", "description", "tags")
 
     fun encode(patch: SynthPatch): String {
         val out = StringBuilder(512)
+        val hasFx = patch.fxSlots.isNotEmpty()
         val hasModulation = patch.modulationRoutes.isNotEmpty() ||
             patch.modulationLfos.isNotEmpty() || patch.modulationTempoBpm != 120f
         out.append(
             when {
+                hasFx -> MAGIC_V4
                 hasModulation -> MAGIC_V3
                 patch.oscillatorSlots.isNotEmpty() -> MAGIC_V2
                 else -> MAGIC_V1
@@ -61,7 +67,7 @@ object PatchCodec {
                 .append(slot.coarseSemitones).append(',')
                 .append(slot.fineCents).append('\n')
         }
-        if (hasModulation) {
+        if (hasModulation || hasFx) {
             out.append("mod.tempo=").append(patch.modulationTempoBpm).append('\n')
             patch.modulationLfos.forEachIndexed { index, lfo ->
                 out.append("lfo.").append(index).append('=')
@@ -80,6 +86,17 @@ object PatchCodec {
                     .append(route.curve.name).append('\n')
             }
         }
+        if (hasFx) {
+            patch.fxSlots.forEachIndexed { index, fx ->
+                out.append("fx.").append(index).append('=')
+                    .append(if (fx.enabled) '1' else '0').append(',')
+                    .append(fx.type.name).append(',')
+                    .append(fx.wet).append(',')
+                    .append(fx.depth).append(',')
+                    .append(fx.rate).append(',')
+                    .append(fx.stereo).append('\n')
+            }
+        }
         require(out.length <= MAX_TEXT_LENGTH) { "Patch exceeds format size limit" }
         return out.toString()
     }
@@ -91,6 +108,7 @@ object PatchCodec {
             MAGIC_V1 -> 1
             MAGIC_V2 -> 2
             MAGIC_V3 -> 3
+            MAGIC_V4 -> 4
             else -> throw IllegalArgumentException("Unknown patch format/version")
         }
 
@@ -104,8 +122,9 @@ object PatchCodec {
             require(key in FIELDS || (key.startsWith("param.") &&
                 key.removePrefix("param.") in PatchParameters.NAMES) ||
                 (version >= 2 && OSC_FIELD.matches(key)) ||
-                (version == 3 && (key == "mod.tempo" ||
-                    LFO_FIELD.matches(key) || ROUTE_FIELD.matches(key)))) {
+                (version >= 3 && (key == "mod.tempo" ||
+                    LFO_FIELD.matches(key) || ROUTE_FIELD.matches(key))) ||
+                (version == 4 && FX_FIELD.matches(key))) {
                 "Unknown patch field"
             }
             require(key !in values) { "Duplicate patch field" }
@@ -149,7 +168,7 @@ object PatchCodec {
             )
         }
 
-        val tempo = if (version == 3) {
+        val tempo = if (version >= 3) {
             values["mod.tempo"]?.toFloatOrNull()
                 ?: throw IllegalArgumentException("Missing or invalid modulation tempo")
         } else 120f
@@ -193,6 +212,32 @@ object PatchCodec {
             )
         }
 
+        val fxSlots = mutableListOf<FxModuleConfig>()
+        val orderedFx = values.entries
+            .filter { it.key.startsWith("fx.") }
+            .sortedBy { it.key.removePrefix("fx.").toInt() }
+        for ((key, rawValue) in orderedFx) {
+            val index = key.removePrefix("fx.").toInt()
+            require(index == fxSlots.size) { "FX slots must be sequential" }
+            val fields = rawValue.split(',')
+            require(fields.size == 6) { "Malformed FX module settings" }
+            fxSlots += FxModuleConfig(
+                enabled = flag(fields[0]),
+                type = FxModuleType.valueOf(fields[1]),
+                wet = fields[2].toFloatOrNull()
+                    ?: throw IllegalArgumentException("Malformed FX wet level"),
+                depth = fields[3].toFloatOrNull()
+                    ?: throw IllegalArgumentException("Malformed FX depth"),
+                rate = fields[4].toFloatOrNull()
+                    ?: throw IllegalArgumentException("Malformed FX rate"),
+                stereo = fields[5].toFloatOrNull()
+                    ?: throw IllegalArgumentException("Malformed FX stereo"),
+            )
+        }
+        if (version == 4) require(fxSlots.isNotEmpty()) {
+            "V4 patches must contain explicit FX slot state"
+        }
+
         fun required(field: String): String =
             unescape(values[field] ?: throw IllegalArgumentException("Missing patch field"))
 
@@ -214,13 +259,14 @@ object PatchCodec {
             modulationRoutes = routes,
             modulationLfos = lfos,
             modulationTempoBpm = tempo,
+            fxSlots = fxSlots,
         )
     }
 
     private fun flag(raw: String): Boolean = when (raw) {
         "1" -> true
         "0" -> false
-        else -> throw IllegalArgumentException("Malformed modulation boolean")
+        else -> throw IllegalArgumentException("Malformed patch boolean")
     }
 
     private fun escape(value: String): String =
