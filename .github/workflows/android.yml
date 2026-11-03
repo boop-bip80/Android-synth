@@ -86,7 +86,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [general, compact, stage]
+        suite: [general, compact, stage, visuals]
     env:
       ORBITAL_TEST_SUITE: ${{ matrix.suite }}
     steps:
@@ -121,7 +121,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           # The runner executes each nonempty script line in a separate `sh -c`.
           # Use one Bash command so traps, pipefail and exit codes work together.
-          script: ${{ matrix.suite == 'compact' && 'bash .github/workflows/ci-compact-geometry.sh' || matrix.suite == 'stage' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-live-stage-framebuffer.sh' || 'bash .github/workflows/ci-emulator.sh && bash .github/workflows/ci-immersive-stage.sh && bash .github/workflows/ci-oscillator-workbench.sh && bash .github/workflows/ci-landscape.sh' }}
+          script: ${{ matrix.suite == 'compact' && 'bash .github/workflows/ci-compact-geometry.sh' || matrix.suite == 'stage' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-live-stage-framebuffer.sh' || matrix.suite == 'visuals' && 'bash .github/workflows/ci-stage-bootstrap.sh && bash .github/workflows/ci-immersive-stage.sh && bash .github/workflows/ci-oscillator-workbench.sh && bash .github/workflows/ci-landscape.sh' || 'bash .github/workflows/ci-emulator.sh' }}
       - name: Upload real emulator screenshots
         if: always()
         uses: actions/upload-artifact@v4
