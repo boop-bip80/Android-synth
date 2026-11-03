@@ -410,6 +410,7 @@ fun OrbitalScreen(
                     RoundedCornerShape(19.dp),
                 )
                 .verticalScroll(editorScroll)
+                .testTag("soundEditorScroll")
                 .padding(horizontal = 7.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(if (compactOrbitLayout) 8.dp else 12.dp),
         ) {

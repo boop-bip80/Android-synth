@@ -56,7 +56,7 @@ class OscillatorNoiseActivityHostTest {
         // The same XY plasma/noise pad is a *real* production touch control,
         // not only an illustrative Compose callback. Read back the worker's
         // published slot, and confirm sound-design touches create no stuck notes.
-        compose.onNodeWithTag("oscillatorNoiseCanvas").performScrollTo()
+        compose.fullyRevealOscillatorCanvas("oscillatorNoiseCanvas", "soundEditorScroll")
             .performTouchInput { click(Offset(center.x * .8f, center.y * .6f)) }
         compose.waitForIdle()
         compose.runOnIdle {

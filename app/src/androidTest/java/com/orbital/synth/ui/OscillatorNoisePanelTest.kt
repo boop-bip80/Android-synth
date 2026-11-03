@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -36,7 +37,7 @@ class OscillatorNoisePanelTest {
         var slots by mutableStateOf(List(8) { OscillatorSlot() })
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.verticalScroll(rememberScrollState()).testTag("noiseEditorScroll")) {
                     OscillatorRackPanel(
                         slots = slots,
                         onSlotChange = { index, next ->
@@ -69,7 +70,7 @@ class OscillatorNoisePanelTest {
         })
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.verticalScroll(rememberScrollState()).testTag("noiseEditorScroll")) {
                     OscillatorRackPanel(
                         slots = slots,
                         onSlotChange = { index, next ->
@@ -79,8 +80,9 @@ class OscillatorNoisePanelTest {
                 }
             }
         }
-        val canvas = compose.onNodeWithTag("oscillatorNoiseCanvas")
-            .performScrollTo().assertIsDisplayed()
+        val canvas = compose.fullyRevealOscillatorCanvas(
+            "oscillatorNoiseCanvas", "noiseEditorScroll",
+        ).assertIsDisplayed()
         val canvasBounds = canvas.fetchSemanticsNode().boundsInRoot
         val rootBounds = compose.onRoot().fetchSemanticsNode().boundsInRoot
         val intended = Offset(
@@ -126,7 +128,7 @@ class OscillatorNoisePanelTest {
         })
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.verticalScroll(rememberScrollState()).testTag("noiseEditorScroll")) {
                     OscillatorRackPanel(
                         slots = slots,
                         onSlotChange = { index, next ->
@@ -139,7 +141,7 @@ class OscillatorNoisePanelTest {
 
         // The pad must own DOWN and MOVE; the enclosing vertical scroller
         // must not steal finger sound-design gestures.
-        compose.onNodeWithTag("oscillatorNoiseCanvas").performScrollTo()
+        compose.fullyRevealOscillatorCanvas("oscillatorNoiseCanvas", "noiseEditorScroll")
             .performTouchInput {
                 swipe(
                     start = Offset(center.x * .2f, center.y * 1.6f),
@@ -155,7 +157,7 @@ class OscillatorNoisePanelTest {
                 slots[0].noiseLevel in 0.72f..0.89f)
         }
 
-        compose.onNodeWithTag("oscillatorWaveCanvas").performScrollTo()
+        compose.fullyRevealOscillatorCanvas("oscillatorWaveCanvas", "noiseEditorScroll")
             .performTouchInput { click(center) }
         compose.waitForIdle()
         compose.runOnIdle {
@@ -172,7 +174,7 @@ class OscillatorNoisePanelTest {
         })
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.verticalScroll(rememberScrollState()).testTag("noiseEditorScroll")) {
                     OscillatorRackPanel(
                         slots = slots,
                         onSlotChange = { index, next ->
