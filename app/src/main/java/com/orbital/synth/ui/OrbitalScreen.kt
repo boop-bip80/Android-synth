@@ -567,7 +567,7 @@ fun OrbitalScreen(
                 ((state.octave + 1) * 12).coerceIn(0, 127),
                 onSaveSequence,
             )
-            Tab.FX -> FxPanel(parameter, onParameterChange)
+            Tab.FX -> FxPanel(parameter, onParameterChange, compactHeight)
         }
         }
 
@@ -2149,23 +2149,76 @@ private fun StepValueSlider(
     }
 }
 
+private enum class CompactFxPage(val caption: String) {
+    QUICK("QUICK"), ENVELOPE("ENV"), MODULATION("LFO"), SPACE("SPACE")
+}
+
+/**
+ * Short landscape screens cannot afford the full envelope + LFO + FX slider
+ * subtree in one eager scrolling column. Page it by effect family, keeping
+ * every parameter editable and the 82dp piano keyboard anchored below.
+ */
 @Composable
 private fun FxPanel(
     parameter: (ParameterId) -> Float,
     onParameterChange: (ParameterId, Float) -> Unit,
+    compactHeight: Boolean,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("ENVELOPES  /  EFFECTS", color = OrbitalPalette.Text, fontSize = 13.sp, letterSpacing = 1.8.sp)
-        SignalTile("ENV", parameter(ParameterId.ATTACK), OrbitalPalette.Violet, Modifier.fillMaxWidth())
-        ParameterSlider("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
-        ParameterSlider("DECAY", parameter(ParameterId.DECAY), ParameterId.DECAY, onParameterChange, "Transient fall")
-        ParameterSlider("SUSTAIN", parameter(ParameterId.SUSTAIN), ParameterId.SUSTAIN, onParameterChange, "Held volume")
-        ParameterSlider("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
-        Spacer(Modifier.height(3.dp))
-        SignalTile("LFO", parameter(ParameterId.LFO_RATE), OrbitalPalette.Cyan, Modifier.fillMaxWidth())
-        ParameterSlider("LFO RATE", parameter(ParameterId.LFO_RATE), ParameterId.LFO_RATE, onParameterChange, "Modulation speed")
-        ParameterSlider("LFO DEPTH", parameter(ParameterId.LFO_DEPTH), ParameterId.LFO_DEPTH, onParameterChange, "Modulation strength")
-        ParameterSlider("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
+    if (compactHeight) {
+        var page by remember { mutableStateOf(CompactFxPage.QUICK) }
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text(
+                "FX  /  PERFORMANCE RACK",
+                color = OrbitalPalette.Text, fontSize = 12.sp, letterSpacing = 1.3.sp,
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                CompactFxPage.entries.forEach { choice ->
+                    Pill(
+                        label = choice.caption,
+                        active = page == choice,
+                        onClick = { page = choice },
+                        description = "FX page " + choice.name,
+                        role = Role.RadioButton,
+                    )
+                }
+            }
+            when (page) {
+                CompactFxPage.QUICK -> {
+                    ParameterSlider("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
+                    ParameterSlider("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
+                    ParameterSlider("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
+                }
+                CompactFxPage.ENVELOPE -> {
+                    ParameterSlider("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
+                    ParameterSlider("DECAY", parameter(ParameterId.DECAY), ParameterId.DECAY, onParameterChange, "Transient fall")
+                    ParameterSlider("SUSTAIN", parameter(ParameterId.SUSTAIN), ParameterId.SUSTAIN, onParameterChange, "Held volume")
+                    ParameterSlider("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
+                }
+                CompactFxPage.MODULATION -> {
+                    ParameterSlider("LFO RATE", parameter(ParameterId.LFO_RATE), ParameterId.LFO_RATE, onParameterChange, "Modulation speed")
+                    ParameterSlider("LFO DEPTH", parameter(ParameterId.LFO_DEPTH), ParameterId.LFO_DEPTH, onParameterChange, "Modulation strength")
+                }
+                CompactFxPage.SPACE ->
+                    ParameterSlider("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
+            }
+        }
+    } else {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("ENVELOPES  /  EFFECTS", color = OrbitalPalette.Text, fontSize = 13.sp, letterSpacing = 1.8.sp)
+            SignalTile("ENV", parameter(ParameterId.ATTACK), OrbitalPalette.Violet, Modifier.fillMaxWidth())
+            ParameterSlider("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
+            ParameterSlider("DECAY", parameter(ParameterId.DECAY), ParameterId.DECAY, onParameterChange, "Transient fall")
+            ParameterSlider("SUSTAIN", parameter(ParameterId.SUSTAIN), ParameterId.SUSTAIN, onParameterChange, "Held volume")
+            ParameterSlider("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
+            Spacer(Modifier.height(3.dp))
+            SignalTile("LFO", parameter(ParameterId.LFO_RATE), OrbitalPalette.Cyan, Modifier.fillMaxWidth())
+            ParameterSlider("LFO RATE", parameter(ParameterId.LFO_RATE), ParameterId.LFO_RATE, onParameterChange, "Modulation speed")
+            ParameterSlider("LFO DEPTH", parameter(ParameterId.LFO_DEPTH), ParameterId.LFO_DEPTH, onParameterChange, "Modulation strength")
+            ParameterSlider("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
+        }
     }
 }
 
