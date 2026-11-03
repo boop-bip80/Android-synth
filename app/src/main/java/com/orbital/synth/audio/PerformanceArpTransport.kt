@@ -185,6 +185,17 @@ internal class PerformanceArpTransport(
      */
     fun armInputForPendingWorker() = activateInputEpoch()
 
+    /**
+     * Thread.start() can fail before the worker ever reaches onWorkerStop().
+     * Only the lifecycle owner may call this when no new worker was launched.
+     * Invalidate startup producers before dropping their queued notes; no
+     * synth/AudioTrack operations or render-thread locks are involved.
+     */
+    fun cancelPendingWorkerInput() {
+        deactivateInputEpoch()
+        commands.clear()
+    }
+
     /** Called on worker lifecycle only; MIDI and UI producer paths never lock. */
     private fun activateInputEpoch() {
         while (true) {
