@@ -50,6 +50,10 @@ fun ImmersiveVisualField(
     touchY: Float = 0.5f,
     touchIntensity: Float = 0f,
     pulse: Long = 0L,
+    audioRms: Float = 0f,
+    audioPeak: Float = 0f,
+    audioTransient: Float = 0f,
+    audioBrightness: Float = 0f,
 ) {
     fun normalized(value: Float, fallback: Float): Float =
         if (value.isFinite()) value.coerceIn(0f, 1f) else fallback
@@ -61,22 +65,39 @@ fun ImmersiveVisualField(
     val fingerX = normalized(touchX, .5f)
     val fingerY = normalized(touchY, .5f)
     val pressure = normalized(touchIntensity, 0f)
+    // Actual output-PCM meter; optional args preserve original old-host visuals.
+    val pcm = remember(audioRms, audioPeak, audioTransient, audioBrightness) {
+        AudioVisualResponse.from(audioRms, audioPeak, audioTransient, audioBrightness)
+    }
 
-    // These two animations exist only while the screen is composed. The app's
-    // animator-off accessibility setting freezes the moving artwork.
+    // The idle black surface has no active animation at all, saving battery.
+    // Android animator-off settings also disable every moving graphic.
     val animationsEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
-    val clock = rememberInfiniteTransition(label = "immersive-energy")
-    val phase by clock.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 11_000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "orbital-currents",
-    )
-    val animatedPhase = if (animationsEnabled) phase else 0f
+    val animatedPhase = if (pcm.shouldAnimate(pressure, animationsEnabled)) {
+        val clock = rememberInfiniteTransition(label = "immersive-energy")
+        val phase by clock.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 11_000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "orbital-currents",
+        )
+        phase
+    } else 0f
     val impact = remember { Animatable(1f) }
+    val audioImpact = remember { Animatable(1f) }
+    val previousAudioTransient = remember { FloatArray(1) }
+    LaunchedEffect(pcm.transient) {
+        val rising = pcm.transient > .30f &&
+            pcm.transient > previousAudioTransient[0] + .16f
+        previousAudioTransient[0] = pcm.transient
+        if (rising && animationsEnabled) {
+            audioImpact.snapTo(0f)
+            audioImpact.animateTo(1f, tween(durationMillis = 620, easing = LinearEasing))
+        }
+    }
 
     // Compose gesture coordinates are tracked for a translucent performance trail.
     // Keep only the latest 24 points, even during long drags; no event grows memory.
@@ -118,12 +139,12 @@ fun ImmersiveVisualField(
         val amber = Color(0xFFFFD58A)
         val ink = Color(0xFF010207)
         val turn = (2.0 * PI).toFloat()
-        val energy = .58f + pressure * .42f
+        val energy = (.58f + pressure * .42f + pcm.energyBoost).coerceAtMost(1.18f)
         val c = Offset(
             width * (.5f + (fingerX - .5f) * pressure * .10f),
             height * (.49f + (fingerY - .5f) * pressure * .075f),
         )
-        val radius = shortEdge * (.265f + aperture * .045f)
+        val radius = shortEdge * (.265f + aperture * .045f) * (1f + pcm.radiusBoost)
         val touch = Offset(width * fingerX, height * fingerY)
         val stroke = (shortEdge / 390f).coerceIn(.6f, 2.2f)
 
