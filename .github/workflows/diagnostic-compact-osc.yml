@@ -1,32 +1,62 @@
-name: Diagnostic - inspect failing compact oscillator runtime
+name: Diagnostic - isolated API35 compact oscillator phased test
 on:
   push:
     branches: [diagnostic/isolated-compact-osc-20261103]
 permissions:
   contents: read
-  actions: read
 jobs:
-  inspect:
-    name: Read exact fresh-emulator failure diagnostics
+  isolated:
+    name: Fresh emulator phased compact 350dp debug test
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
-      - name: Download exact failed single-test emulator diagnostics
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
-          name: isolated-compact-oscillator-api35
-          run-id: 41628143712
-          github-token: ${{ github.token }}
-          path: diagnostic
-      - name: Print bounded instrumentation, logcat and device/memory postmortem
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install API35 SDK and Gradle
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile exact phase-logged app and Android test WITHOUT emulator
+        run: gradle :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon --console=plain
+      - name: Enable KVM
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Run isolated phase-logged real compact test on clean API35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 2
+          ram-size: 3072M
+          heap-size: 512M
+          disk-size: 6000M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
+          script: bash .github/workflows/diagnostic-compact-osc.sh
+      - name: Print bounded last phase and GPU/host watchdog on crash
+        if: always()
         shell: bash
         run: |
-          find diagnostic -maxdepth 3 -type f -printf '%p %s bytes\n'
-          for f in diagnostic/*.txt diagnostic/**/*.txt; do
-            [[ -f "$f" ]] || continue
-            printf '\n=== DIAGNOSTIC %s ===\n' "$f"
-            case "$f" in
-              *logcat*) tail -n 180 "$f" | cut -c 1-280 ;;
-              *) sed -n '1,160p' "$f" | cut -c 1-280 ;;
-            esac
-          done
+          printf '\n=== ANDROID PHASES ===\n'
+          grep 'OrbitalCompactTest.*PHASE-' artifacts/isolated-compact-live-logcat.txt || true
+          printf '\n=== DEVICE / GLES / OOM LOG TAIL ===\n'
+          tail -n 160 artifacts/isolated-compact-live-logcat.txt || true
+          printf '\n=== HOST / CGROUP MEMORY WATCHDOG TAIL ===\n'
+          tail -n 110 artifacts/isolated-compact-host-watchdog.txt || true
+      - name: Retain exact provenance, phase, pre-crash Android and host state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-compact-oscillator-phased-api35
+          path: artifacts/isolated-compact-*.txt
+          if-no-files-found: warn
+          retention-days: 7

@@ -73,6 +73,8 @@ class AndroidAudioOutput(
         .setOnAudioFocusChangeListener(focusListener)
         .build()
     private val renderedFrameCounter = AtomicLong(0)
+    // Monotonic UI touch-session invalidation; never increments per PCM frame.
+    private val performanceSessionRevision = AtomicLong(0L)
     // Submitted PCM is metered on the audio worker with no allocations or locks.
     // A snapshot allocation occurs only when a UI consumer requests one.
     private val visualTelemetry = AudioVisualTelemetry(sampleRate)
@@ -116,6 +118,9 @@ class AndroidAudioOutput(
     }
 
     val isRunning: Boolean get() = running
+
+    /** Revoke stale touch leases across fast stop/restart and focus interruptions. */
+    val performanceSessionEpoch: Long get() = performanceSessionRevision.get()
 
     /** Coherent, normalized PCM-derived meter for visual consumers (up to 30 Hz). */
     val audioVisualSnapshot: AudioVisualSnapshot get() = visualTelemetry.snapshot()
@@ -246,6 +251,7 @@ class AndroidAudioOutput(
         // Worker-only DSP cleanup still happens inside renderLoop.onWorkerStart().
         performanceArp.armInputForPendingWorker()
         running = true
+        performanceSessionRevision.incrementAndGet() // actual new worker
         val workerGeneration = lifecycleGeneration
         val thread = Thread({ renderLoop(config, workerGeneration) }, "OrbitalAudioRender")
         thread.isDaemon = true
@@ -284,6 +290,7 @@ class AndroidAudioOutput(
             running = false
             visualTelemetry.stop()
             synth.allNotesOff()
+            performanceSessionRevision.incrementAndGet() // explicit stop/panic
             runCatching { playback?.pause() }
             workerThread?.interrupt()
             // Must execute under the same lock as start() requests focus: a
@@ -395,6 +402,7 @@ class AndroidAudioOutput(
                 Log.e("OrbitalAudio", "Audio render stopped unexpectedly", failure)
             }
         } finally {
+            val unrequestedExit = unexpectedFailure || running
             running = false
             visualTelemetry.stop()
             audioSequencer.onWorkerStop()
@@ -403,6 +411,7 @@ class AndroidAudioOutput(
             // queued beyond the transport's last block. Flush all ownership before
             // any replacement worker renders a fresh buffer.
             if (unexpectedFailure) synth.allNotesOff()
+            if (unrequestedExit) performanceSessionRevision.incrementAndGet()
             lastUnderruns = runCatching { config.track.underrunCount }.getOrDefault(lastUnderruns)
             runCatching { config.track.pause() }
             runCatching { config.track.flush() }
@@ -459,6 +468,7 @@ class AndroidAudioOutput(
             running = false
             visualTelemetry.stop()
             synth.allNotesOff()
+            performanceSessionRevision.incrementAndGet() // focus interruption
             runCatching { playback?.pause() }
             workerThread?.interrupt()
             if (!transient) abandonFocusLocked()

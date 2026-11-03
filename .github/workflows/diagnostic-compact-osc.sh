@@ -10,6 +10,15 @@ finish() {
   local status=$?
   trap - EXIT
   set +e
+  if [[ -n "${live_logcat_pid:-}" ]]; then kill "$live_logcat_pid" >/dev/null 2>&1; fi
+  if [[ -n "${watchdog_pid:-}" ]]; then kill "$watchdog_pid" >/dev/null 2>&1; fi
+  if [[ -n "${live_logcat_pid:-}" ]]; then wait "$live_logcat_pid" >/dev/null 2>&1; fi
+  if [[ -n "${watchdog_pid:-}" ]]; then wait "$watchdog_pid" >/dev/null 2>&1; fi
+  printf '\n=== PRECRASH LIVE ANDROID LOGCAT LAST 160 ===\n'
+  tail -n 160 artifacts/isolated-compact-live-logcat.txt 2>/dev/null || true
+  printf '\n=== LAST HOST WATCHDOG ===\n'
+  tail -n 130 artifacts/isolated-compact-host-watchdog.txt 2>/dev/null || true
+
   printf 'script_status=%s\nphase=%s\n' "$status" "$(cat "$phase" 2>/dev/null)" > artifacts/isolated-compact-summary.txt
   timeout 12s adb devices -l > artifacts/isolated-compact-adb.txt 2>&1 || true
   timeout 12s adb logcat -d -t 2500 -v threadtime > artifacts/isolated-compact-logcat.txt 2>&1 || true
@@ -20,6 +29,25 @@ finish() {
   exit "$status"
 }
 trap finish EXIT
+# Stream the 8-10 seconds BEFORE QEMU vanishes; postmortem adb logcat -d
+# cannot connect after native emulator exit. Never mask instrument result.
+adb logcat -v threadtime -s OrbitalCompactTest:I AndroidRuntime:E SurfaceFlinger:E HWUI:E DEBUG:E libc:F ActivityManager:W '*:S' > artifacts/isolated-compact-live-logcat.txt 2>&1 &
+live_logcat_pid=$!
+(
+  set +e
+  while :; do
+    printf '\n=== watchdog %s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    free -m
+    printf 'cgroup-events='
+    cat /sys/fs/cgroup/memory.events 2>/dev/null | tr '\n' ' '
+    printf '\n'
+    ps -eo pid,comm,rss --sort=-rss | head -n 10
+    timeout 3s adb devices -l | tail -n 3
+    sleep 3
+  done
+) > artifacts/isolated-compact-host-watchdog.txt 2>&1 &
+watchdog_pid=$!
+
 
 app=app/build/outputs/apk/debug/app-debug.apk
 testapk=app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk

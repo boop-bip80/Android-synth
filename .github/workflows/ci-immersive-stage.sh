@@ -59,18 +59,27 @@ import sys
 import xml.etree.ElementTree as ET
 path, mode = sys.argv[1:]
 names = [n.attrib.get("content-desc", "") for n in ET.parse(path).iter("node")]
-keyboard = sum("multitouch piano keyboard" in n.lower() for n in names)
+piano = sum("multitouch piano keyboard" in n.lower() for n in names)
+chromatic = sum(n.lower().startswith(
+    "twelve live chromatic liquid-glass keys, octave ") for n in names)
 enter = names.count("Enter immersive performance")
 exit = names.count("Exit immersive performance")
 if mode == "normal":
-    if keyboard != 1 or enter != 1 or exit:
-        raise SystemExit(f"Normal screen must have keyboard+enter, no exit: {keyboard}/{enter}/{exit}")
+    # Portrait SOUND now has exactly one real chromatic performance keybed.
+    # Keep the strict on-device keyboard AND enter checks; never accept 0
+    # buttons, stale PLAY piano, or two overlapping keyboard families.
+    if piano != 0 or chromatic != 1 or enter != 1 or exit:
+        raise SystemExit(
+            f"Normal SOUND must have one chromatic keybed+enter/no legacy piano/exit: "
+            f"piano={piano} glass={chromatic} enter={enter} exit={exit}")
 elif mode == "stage":
-    if keyboard or enter or exit != 1:
-        raise SystemExit(f"Stage must hide keyboard+enter and expose exit: {keyboard}/{enter}/{exit}")
+    if piano or chromatic or enter or exit != 1:
+        raise SystemExit(
+            f"STAGE must hide BOTH keyboards+enter and expose exit: "
+            f"piano={piano} glass={chromatic} enter={enter} exit={exit}")
 else:
     raise SystemExit(f"Unknown screen {mode}")
-print(f"PASS {mode}: keyboard={keyboard} enter={enter} exit={exit}")
+print(f"PASS {mode}: piano={piano} glass={chromatic} enter={enter} exit={exit}")
 PY
 }
 tap_action() {

@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -29,21 +30,49 @@ class OscillatorWorkbenchCaptureTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test fun capturesRunningOscillatorEditorAfterUserConfiguration() {
+        // Portrait SOUND deliberately leads with the reference hero. An OSC
+        // rack only exists after a real, reachable advanced-editor tap.
+        compose.onNodeWithTag("referenceSoundAdvancedToggle").performScrollTo()
+            .assertIsDisplayed().performClick()
         compose.onNodeWithTag("oscillatorRack").assertExists()
 
-        // Compose's actual scroll semantics locate a deeply nested workbench
-        // without screen-size-specific ADB swipe coordinates.
-        compose.onNodeWithTag("oscillatorEnable").performScrollTo()
-            .assertIsDisplayed().performClick()
+        // Real factory boot may legitimately have zero enabled oscillators;
+        // the workbench must permit constructing its FIRST audible source.
+        compose.onNodeWithTag("oscillatorLayer0").performScrollTo().performClick()
+        if (compose.onAllNodesWithContentDescription("Oscillator 1, active")
+                .fetchSemanticsNodes().isEmpty()
+        ) {
+            compose.onNodeWithTag("oscillatorEnable").performScrollTo()
+                .assertIsDisplayed().performClick()
+        }
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Oscillator 1, active").assertExists()
+
+        // Add a second truly audible oscillator and select it before wave
+        // edits. This remains valid if a saved patch already has OSC2 active.
+        if (compose.onAllNodesWithContentDescription("Oscillator 2, active")
+                .fetchSemanticsNodes().isEmpty()
+        ) {
+            compose.onNodeWithTag("oscillatorAdd").performScrollTo()
+                .assertIsDisplayed().performClick()
+        }
+        // The selector lives in a HORIZONTAL strip above the ADD footer.
+        // performScrollTo() alone resolves its nearest horizontal ancestor
+        // while the outer SOUND vertical editor may still clip the whole row.
+        // Physically scroll UP inside the actual editor until the 49×51dp
+        // layer is fully visible, then tap it like a user.
+        compose.fullyRevealOscillatorCanvas(
+            "oscillatorLayer1", "soundEditorScroll", searchDirection = -1,
+        ).assertIsDisplayed().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Oscillator 2, active").assertExists()
 
         // Display the real wave editor and change the actual synth parameter.
         compose.onNodeWithTag("oscillatorWave2").performScrollTo()
             .assertIsDisplayed().performClick()
         compose.waitForIdle()
         compose.onNodeWithTag("oscillatorWave2").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Oscillator 1, active").assertExists()
+        compose.onNodeWithContentDescription("Oscillator 2, active").assertExists()
 
         // UiAutomation samples Android's actual display, not Compose's
         // testing render buffer; PNG bytes come from the running emulator.
