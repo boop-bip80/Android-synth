@@ -174,6 +174,17 @@ internal class PerformanceArpTransport(
         return if (epoch > 0L && (epoch and 1L) != 0L) epoch else null
     }
 
+    /**
+     * Arm the next worker's input epoch after AudioTrack opens, before its thread
+     * starts. The lifecycle owner guarantees the previous worker has finished
+     * onWorkerStop() before calling this. This only flips an atomic epoch; it
+     * does not touch DSP state, clear a queue, allocate, or run a render callback.
+     *
+     * A key pressed during the thread-start gap can now be queued and played
+     * exactly once by the first renderBlock() after onWorkerStart().
+     */
+    fun armInputForPendingWorker() = activateInputEpoch()
+
     /** Called on worker lifecycle only; MIDI and UI producer paths never lock. */
     private fun activateInputEpoch() {
         while (true) {
