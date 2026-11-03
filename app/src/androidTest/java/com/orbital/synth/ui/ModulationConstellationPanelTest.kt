@@ -16,6 +16,8 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
+import com.orbital.synth.core.dsp.processing.ModDestination
+import com.orbital.synth.core.dsp.processing.ModSource
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -50,6 +52,40 @@ class ModulationConstellationPanelTest {
         compose.onNodeWithTag("modulationRouteEditor").performScrollTo()
         compose.onNodeWithText("ENABLE").performClick()
         compose.runOnIdle { assertTrue("enable callback reached real state owner", first.enabled) }
+    }
+
+    @Test fun liveAndReservedDestinationsReceiveDifferentHonestScreenFeedback() {
+        var selected by mutableStateOf(ModulationRouteConfig(
+            enabled = true, source = ModSource.TOUCH_X,
+            destination = ModDestination.CUTOFF, depth = 0.5f,
+        ))
+        compose.setContent {
+            MaterialTheme {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    ModulationConstellationPanel(
+                        lfos = List(8) { ModulationLfoConfig(enabled = it == 0) },
+                        routes = List(64) { if (it == 0) selected else ModulationRouteConfig() },
+                        tempoBpm = 120f,
+                        onLfoChange = { _, _ -> },
+                        onRouteChange = { index, value -> if (index == 0) selected = value },
+                        onRouteClear = {},
+                        onTempoChange = {},
+                    )
+                }
+            }
+        }
+        compose.onNodeWithTag("modulationRouteEditor").performScrollTo()
+        compose.onNodeWithText("LIVE AUDIO CONNECTION").assertExists()
+        compose.onNodeWithText(
+            "AUDIBLE NOW • Sweeps the actual per-voice filter cutoff."
+        ).assertExists()
+        compose.onNodeWithTag("modulationLiveDestinationsLegend").assertExists()
+
+        compose.runOnIdle { selected = selected.copy(destination = ModDestination.OSC1_GAIN) }
+        compose.onNodeWithText("SAVED / DSP RESERVED").assertExists()
+        compose.onNodeWithText(
+            "SAVED ROUTE • Reserved for a future audio engine connection."
+        ).assertExists()
     }
 
     @Test fun screenExposesActualLfoParametersAndTopologicalGraph() {

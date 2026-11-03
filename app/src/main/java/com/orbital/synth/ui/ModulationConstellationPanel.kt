@@ -113,7 +113,7 @@ fun ModulationConstellationPanel(
         )
         ConstellationGraph(lanes, patch, current)
         Text(
-            "Glowing lines represent configured routes, not microphone data or a measured audio spectrum.",
+            "Animated cables change real audio; dim static cables are saved for future DSP. This graph is not a measured spectrum.",
             color = OrbitalPalette.Muted,
             fontSize = 10.sp,
         )
@@ -160,6 +160,8 @@ fun ModulationConstellationPanel(
                         val route = patch[index]
                         val selected = index == current
                         val tint = if (route.enabled) sourceTint(route.source) else OrbitalPalette.Muted
+                        val live = route.enabled &&
+                            ModulationConstellationModel.audibleTarget(route.destination)
                         Box(
                             Modifier.weight(1f).padding(2.dp).height(39.dp)
                                 .border(
@@ -168,13 +170,15 @@ fun ModulationConstellationPanel(
                                     RoundedCornerShape(7.dp),
                                 )
                                 .background(
-                                    if (route.enabled) tint.copy(alpha = .15f)
+                                    if (live) tint.copy(alpha = .15f)
+                                    else if (route.enabled) tint.copy(alpha = .06f)
                                     else Color(0xFF061020), RoundedCornerShape(7.dp),
                                 )
                                 .clickable(role = Role.Button) { current = index }
                                 .semantics {
                                     contentDescription = "Route " + (index + 1) +
-                                        (if (route.enabled) ", connected" else ", empty")
+                                        (if (!route.enabled) ", empty"
+                                        else if (live) ", audible" else ", reserved")
                                 }
                                 .testTag("modRouteSlot" + index),
                             contentAlignment = Alignment.Center,
@@ -206,9 +210,19 @@ fun ModulationConstellationPanel(
                     Text("ROUTE " + ModulationConstellationModel.slotLabel(current),
                         color = OrbitalPalette.Gold, fontSize = 15.sp,
                         fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-                    Text(if (chosen.enabled) "LIVE CONNECTION" else "AVAILABLE SLOT",
-                        color = if (chosen.enabled) OrbitalPalette.Teal else OrbitalPalette.Muted,
-                        fontSize = 9.sp)
+                    Text(
+                        when {
+                            !chosen.enabled -> "AVAILABLE SLOT"
+                            ModulationConstellationModel.audibleTarget(chosen.destination) ->
+                                "LIVE AUDIO CONNECTION"
+                            else -> "SAVED / DSP RESERVED"
+                        },
+                        color = if (chosen.enabled &&
+                            ModulationConstellationModel.audibleTarget(chosen.destination))
+                            OrbitalPalette.Teal else OrbitalPalette.Muted,
+                        fontSize = 9.sp,
+                        modifier = Modifier.testTag("modulationConnectionState"),
+                    )
                 }
                 Row {
                     NeonButton(
@@ -236,8 +250,9 @@ fun ModulationConstellationPanel(
                 )
                 Text("→", color = OrbitalPalette.Gold, fontSize = 22.sp)
                 EnumPicker(
-                    "DESTINATION", chosen.destination, ModDestination.entries,
-                    { ModulationConstellationModel.enumLabel(it.name) },
+                    "DESTINATION", chosen.destination,
+                    ModulationConstellationModel.destinationChoices,
+                    { ModulationConstellationModel.destinationLabel(it) },
                     { onRouteChange(current, chosen.copy(destination = it, enabled = true)) }, Modifier.weight(1f),
                 )
             }
@@ -263,18 +278,18 @@ fun ModulationConstellationPanel(
                 ),
             )
             Text(
-                if (ModulationConstellationModel.audibleTarget(chosen.destination))
-                    "AUDIBLE NOW • This destination is processed by the live audio engine."
-                else
-                    "ROUTE SAVED • This destination is reserved for future DSP integration.",
+                ModulationConstellationModel.destinationStatus(chosen.destination),
                 color = if (ModulationConstellationModel.audibleTarget(chosen.destination))
                     OrbitalPalette.Teal else OrbitalPalette.Gold,
                 fontSize = 10.sp,
+                modifier = Modifier.testTag("modulationDestinationStatus"),
             )
         }
         Text(
-            "Current audio destinations: PITCH and MORPH. The remaining destination choices can be configured but are not yet audible.",
+            "LIVE AUDIO TARGETS  /  PITCH · MORPH · CUTOFF · RESONANCE · AMP · PAN. " +
+                "All other destinations remain saved/editable but are not yet audible.",
             color = OrbitalPalette.Muted, fontSize = 10.sp,
+            modifier = Modifier.testTag("modulationLiveDestinationsLegend"),
         )
     }
 }
@@ -514,9 +529,13 @@ private fun ConstellationGraph(
             val control1 = Offset(w * .42f, sy + (ey - sy) * .05f)
             val control2 = Offset(w * .58f, ey - (ey - sy) * .05f)
             val tint = sourceTint(route.source)
-            val alpha = if (index == selected) .93f
-                else if (ModulationConstellationModel.audibleTarget(route.destination)) .54f
-                else .25f
+            val audible = ModulationConstellationModel.audibleTarget(route.destination)
+            val alpha = when {
+                index == selected && audible -> .93f
+                index == selected -> .58f
+                audible -> .54f
+                else -> .25f
+            }
             val stroke = if (index == selected) 2.0.dp.toPx() else .9.dp.toPx()
             val path = Path().apply {
                 moveTo(sx, sy)
@@ -527,7 +546,9 @@ private fun ConstellationGraph(
             drawPath(path, tint.copy(alpha = alpha),
                 style = Stroke(width = stroke, cap = StrokeCap.Round))
             drawCircle(tint.copy(alpha = alpha), 2.4.dp.toPx(), Offset(ex, ey))
-            if (motionAllowed) {
+            // Photons imply an active connection to DSP; reserved cables never
+            // show animated audio flow even when their metadata is enabled.
+            if (motionAllowed && audible) {
                 val t = (animate + index * .17f) % 1f
                 val q = 1f - t
                 fun bezier(a: Float, b: Float, c: Float, d: Float): Float =

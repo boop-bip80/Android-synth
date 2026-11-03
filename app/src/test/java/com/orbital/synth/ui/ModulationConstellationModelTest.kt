@@ -40,12 +40,37 @@ class ModulationConstellationModelTest {
         assertEquals(64f, ModulationConstellationModel.adjacentBeats(64f, 1))
     }
 
-    @Test fun routeStatusDoesNotClaimReservedTargetsAreAudible() {
-        assertTrue(ModulationConstellationModel.audibleTarget(ModDestination.PITCH))
-        assertTrue(ModulationConstellationModel.audibleTarget(ModDestination.MORPH))
-        assertFalse(ModulationConstellationModel.audibleTarget(ModDestination.FILTER_DRIVE))
-        assertFalse(ModulationConstellationModel.audibleTarget(ModDestination.OSC1_GAIN))
-        assertFalse(ModulationConstellationModel.audibleTarget(ModDestination.CUTOFF))
+    @Test fun selectorShowsExactlySixWorkingAudioDestinationsFirst() {
+        val model = ModulationConstellationModel
+        val supported = listOf(
+            ModDestination.PITCH, ModDestination.MORPH,
+            ModDestination.CUTOFF, ModDestination.RESONANCE,
+            ModDestination.AMP, ModDestination.PAN,
+        )
+        assertEquals(supported.toSet(), ModDestination.entries.filter(model::audibleTarget).toSet())
+        assertEquals(supported, model.destinationChoices.take(supported.size))
+        assertEquals(ModDestination.entries.size, model.destinationChoices.size)
+        assertEquals(ModDestination.entries.toSet(), model.destinationChoices.toSet())
+        for (target in supported) {
+            assertTrue(model.destinationLabel(target).startsWith("LIVE"))
+            assertTrue(model.destinationStatus(target).startsWith("AUDIBLE NOW"))
+        }
+        for (target in ModDestination.entries.filterNot(model::audibleTarget)) {
+            assertFalse(model.audibleTarget(target))
+            assertTrue(model.destinationLabel(target).startsWith("RESERVED"))
+            assertTrue(model.destinationStatus(target).startsWith("SAVED ROUTE"))
+        }
+    }
+
+    @Test fun destinationDescriptionsMatchActualSignalPath() {
+        val model = ModulationConstellationModel
+        assertTrue(model.destinationStatus(ModDestination.CUTOFF).contains("filter cutoff"))
+        assertTrue(model.destinationStatus(ModDestination.RESONANCE).contains("filter resonance"))
+        assertTrue(model.destinationStatus(ModDestination.AMP).contains("before master effects"))
+        assertTrue(model.destinationStatus(ModDestination.PAN).contains("before master effects"))
+        assertFalse(model.audibleTarget(ModDestination.FILTER_DRIVE))
+        assertFalse(model.audibleTarget(ModDestination.OSC1_GAIN))
+        assertFalse(model.audibleTarget(ModDestination.FX_AMOUNT))
     }
 
     @Test fun routeGridLabelsAlwaysStayWithinFiniteSlotRange() {
