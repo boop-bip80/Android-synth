@@ -161,8 +161,11 @@ fun OrbitalScreen(
     onArpRateChange: ((Int) -> Unit)? = null,
     onArpLatchChange: ((Boolean) -> Unit)? = null,
     onArpSwingChange: ((Float) -> Unit)? = null,
+    /** Optional pressure-aware stage note-on; old integer-note callers remain compatible. */
+    onExpressiveNoteOn: ((Int, Float) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
+    var immersiveMode by remember { mutableStateOf(false) }
     var compactGraphExpanded by remember { mutableStateOf(false) }
     var showPatchLibrary by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
@@ -223,6 +226,16 @@ fun OrbitalScreen(
 
     val editorScroll = rememberScrollState()
 
+    if (immersiveMode) {
+        ImmersiveStage(
+            state = state,
+            onNoteOn = onNoteOn,
+            onNoteOff = onNoteOff,
+            onParameterChange = onParameterChange,
+            onExpressiveNoteOn = onExpressiveNoteOn,
+            onExit = { immersiveMode = false },
+        )
+    } else {
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
@@ -279,6 +292,7 @@ fun OrbitalScreen(
             onOpenLibrary = { showPatchLibrary = true },
             libraryEnabled = onSavePatch != null || onSelectPatch != null,
             compact = compactHeight,
+            onEnterImmersive = { immersiveMode = true },
         )
         Row(
             Modifier
@@ -663,6 +677,7 @@ fun OrbitalScreen(
         Spacer(Modifier.height(if (compactHeight) 0.dp else 6.dp))
         }
         SnackbarHost(hostState = snackbarHost, modifier = Modifier.align(Alignment.BottomCenter))
+    }
     }
 
     if (showPatchLibrary) {
@@ -1105,7 +1120,13 @@ private fun CompactOctaveButton(
 }
 
 @Composable
-private fun Header(patch: String, onOpenLibrary: () -> Unit, libraryEnabled: Boolean, compact: Boolean) {
+private fun Header(
+    patch: String,
+    onOpenLibrary: () -> Unit,
+    libraryEnabled: Boolean,
+    compact: Boolean,
+    onEnterImmersive: () -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1146,6 +1167,26 @@ private fun Header(patch: String, onOpenLibrary: () -> Unit, libraryEnabled: Boo
         Spacer(Modifier.weight(1f))
         Text("●", color = OrbitalPalette.Teal, fontSize = 9.sp,
             modifier = Modifier.semantics { contentDescription = "Patch loaded: $patch" })
+        Box(
+            Modifier
+                .width(if (compact) 54.dp else 64.dp)
+                .heightIn(min = 40.dp)
+                .testTag("immersiveModeToggle")
+                .border(1.dp, OrbitalPalette.Cyan.copy(alpha = .55f), RoundedCornerShape(13.dp))
+                .background(OrbitalPalette.Blue.copy(alpha = .18f), RoundedCornerShape(13.dp))
+                .clickable(role = Role.Button, onClick = onEnterImmersive)
+                .semantics { contentDescription = "Enter immersive performance" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "STAGE",
+                color = OrbitalPalette.Cyan,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.sp,
+            )
+        }
+        Spacer(Modifier.width(5.dp))
         Box(
             Modifier
                 .size(if (compact) 40.dp else 48.dp)
