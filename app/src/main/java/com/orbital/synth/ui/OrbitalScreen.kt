@@ -217,6 +217,10 @@ fun OrbitalScreen(
     }
     var immersiveMode by remember { mutableStateOf(false) }
     var soundAdvancedExpanded by remember { mutableStateOf(false) }
+    // A new physical ENGINE-title tap requests ONE reveal; PCM repaint cannot retrigger it.
+    var engineRevealEpoch by remember { mutableIntStateOf(0) }
+    var completedEngineRevealEpoch by remember { mutableIntStateOf(0) }
+    val engineEditorRequest = remember { BringIntoViewRequester() }
     var soundGraphExpanded by remember { mutableStateOf(false) }
     var compactOscillatorExpanded by remember { mutableStateOf(false) }
     // Preserve compact LIVE/TONE/VOICE/ENGINE selection across OSC paging and tab switches.
@@ -687,7 +691,10 @@ fun OrbitalScreen(
                         ) { { showPatchLibrary = true } } else null,
                         onPreviousPatch = onPreviousPatch,
                         onNextPatch = onNextPatch,
-                        onOpenEngine = { soundAdvancedExpanded = true },
+                        onOpenEngine = {
+                            soundAdvancedExpanded = true
+                            engineRevealEpoch++
+                        },
                         xyMode = effectiveXyMode,
                         onXyModeSelected = { mode -> soundXyModeName = mode.name },
                         canEditModulationRack = modulationRackConnected,
@@ -791,13 +798,29 @@ fun OrbitalScreen(
                         }
                     }
                     if (soundAdvancedExpanded) {
-                        EngineArchitecturePanel(
-                            value = engineValue,
-                            enabled = engineId != null,
-                            onChoose = { value ->
-                                engineId?.let { onParameterChange(it, value) }
-                            },
-                        )
+                        // The ENGINE title is a navigation promise: bring actual
+                        // architecture choices into the scroll viewport, above
+                        // the still-pinned keyboard. No invented modal or DSP write.
+                        LaunchedEffect(engineRevealEpoch) {
+                            if (engineRevealEpoch > completedEngineRevealEpoch) {
+                                withFrameNanos { } // Engine panel measured after expand.
+                                engineEditorRequest.bringIntoView()
+                                completedEngineRevealEpoch = engineRevealEpoch
+                            }
+                        }
+                        Box(
+                            Modifier.fillMaxWidth()
+                                .bringIntoViewRequester(engineEditorRequest)
+                                .testTag("referenceEngineActualEditor"),
+                        ) {
+                            EngineArchitecturePanel(
+                                value = engineValue,
+                                enabled = engineId != null,
+                                onChoose = { value ->
+                                    engineId?.let { onParameterChange(it, value) }
+                                },
+                            )
+                        }
                         // Original engine controls remain genuine DSP inputs,
                         // accessible on demand instead of crowding the orb.
                         val voiceParameters =

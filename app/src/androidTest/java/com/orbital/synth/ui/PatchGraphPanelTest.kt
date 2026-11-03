@@ -1,6 +1,9 @@
 package com.orbital.synth.ui
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -8,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertDoesNotExist
@@ -18,6 +22,7 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
@@ -44,17 +49,74 @@ import org.junit.runner.RunWith
 class PatchGraphPanelTest {
     @get:Rule val compose = createComposeRule()
 
+    /**
+     * A node may report 48dp measured size while its last pixels sit BEHIND the
+     * real weighted editor viewport. Inspect the physical root+viewport
+     * intersection, never the un-clipped semantics bounds alone.
+     */
     private fun assertVisible48Dp(tag: String) {
-        val visible = compose.onNodeWithTag(tag)
-            .performScrollTo().assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val measured = compose.onNodeWithTag(tag).assertIsDisplayed()
+            .fetchSemanticsNode().boundsInRoot
+        val viewport = compose.onNodeWithTag("patchGraphPhysicalViewport")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val screen = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        val exposedWidth = (
+            minOf(measured.right, viewport.right, screen.right) -
+                maxOf(measured.left, viewport.left, screen.left)
+            ).coerceAtLeast(0f)
+        val exposedHeight = (
+            minOf(measured.bottom, viewport.bottom, screen.bottom) -
+                maxOf(measured.top, viewport.top, screen.top)
+            ).coerceAtLeast(0f)
         val density = InstrumentationRegistry.getInstrumentation()
             .targetContext.resources.displayMetrics.density
+        val minimum = 48f * density - 1f
         assertTrue(
-            "$tag must expose a fully visible 48dp × 48dp physical tap corridor " +
-                "at the real device density $density: $visible",
-            visible.width >= 48f * density - 1f &&
-                visible.height >= 48f * density - 1f,
+            "$tag must have a complete physical 48dp × 48dp corridor " +
+                "INSIDE visible graph viewport and screen, not merely a " +
+                "48dp unclipped layout: node=$measured viewport=$viewport " +
+                "screen=$screen exposed=${exposedWidth}x$exposedHeight px " +
+                "at density=$density",
+            exposedWidth >= minimum && exposedHeight >= minimum,
         )
+    }
+
+    /**
+     * The production graph's 790dp Canvas precedes its REAL semantic controls.
+     * Use bounded genuine finger swipes on a 350dp scroll viewport instead of
+     * performScrollTo() semantics automation (which has hung API35 GPU lanes).
+     * The final gate is the measured CLIPPED 48dp corridor above.
+     */
+    private fun physicallyReveal48Dp(tag: String) {
+        val density = InstrumentationRegistry.getInstrumentation()
+            .targetContext.resources.displayMetrics.density
+        repeat(16) {
+            val bounds = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            val viewport = compose.onNodeWithTag("patchGraphPhysicalViewport")
+                .fetchSemanticsNode().boundsInRoot
+            val exposedHeight = (
+                minOf(bounds.bottom, viewport.bottom) -
+                    maxOf(bounds.top, viewport.top)
+                ).coerceAtLeast(0f)
+            if (exposedHeight >= 48f * density - 1f) {
+                assertVisible48Dp(tag)
+                return
+            }
+            val moveUp = bounds.top >= viewport.bottom - 48f * density ||
+                (bounds.top >= viewport.top && bounds.bottom > viewport.bottom)
+            // 50%-height swipe with a 420ms duration avoids fling overshoot on
+            // both large ScrollColumn and near-boundary 48dp fallback chips.
+            compose.onNodeWithTag("patchGraphPhysicalViewport").performTouchInput {
+                val start = if (moveUp) Offset(center.x * 1.65f, center.y * 1.50f)
+                    else Offset(center.x * 1.65f, center.y * .50f)
+                val end = if (moveUp) Offset(center.x * 1.65f, center.y * .50f)
+                    else Offset(center.x * 1.65f, center.y * 1.50f)
+                swipe(start = start, end = end, durationMillis = 420L)
+            }
+        }
+        // Never skip: even with 16 physical attempts the control MUST actually
+        // fit the viewport or the test fails with its measured clipping.
+        assertVisible48Dp(tag)
     }
 
     @Test fun talkBackAccessibleLfoButtonsPatchActualTypedLiveRouteCallbacks() {
@@ -365,41 +427,50 @@ class PatchGraphPanelTest {
         val routes = mutableStateOf(List(64) { ModulationRouteConfig() })
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.width(350.dp).verticalScroll(rememberScrollState())) {
-                    PatchGraphPanel(
-                        oscillators = List(8) { OscillatorSlot(enabled = true, level = .5f) },
-                        lfos = List(8) { ModulationLfoConfig(enabled = true) },
-                        routes = routes.value,
-                        fxSlots = List(8) { FxModuleConfig() },
-                        onRouteChange = { index, next ->
-                            routes.value = routes.value.toMutableList().apply { set(index, next) }
-                        },
-                        onRouteClear = { index ->
-                            routes.value = routes.value.toMutableList().apply {
-                                set(index, ModulationRouteConfig())
-                            }
-                        },
-                        onMoveFxSlot = { _, _ -> },
-                    )
+                Box(
+                    Modifier
+                        .width(350.dp)
+                        .height(580.dp)
+                        .testTag("patchGraphPhysicalViewport"),
+                ) {
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                        PatchGraphPanel(
+                            oscillators = List(8) { OscillatorSlot(enabled = true, level = .5f) },
+                            lfos = List(8) { ModulationLfoConfig(enabled = true) },
+                            routes = routes.value,
+                            fxSlots = List(8) { FxModuleConfig() },
+                            onRouteChange = { index, next ->
+                                routes.value = routes.value.toMutableList().apply {
+                                    set(index, next)
+                                }
+                            },
+                            onRouteClear = { index ->
+                                routes.value = routes.value.toMutableList().apply {
+                                    set(index, ModulationRouteConfig())
+                                }
+                            },
+                            onMoveFxSlot = { _, _ -> },
+                        )
+                    }
                 }
             }
         }
         // These controls have physical >=48dp semantic touch corridors in
         // a real 350dp-wide screen, no 22-node overlapping atlas fiction.
-        assertVisible48Dp("patchLfo7")
+        physicallyReveal48Dp("patchLfo7")
         compose.onNodeWithTag("patchLfo7")
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
-        assertVisible48Dp("patchGraphBankOSC8")
+        physicallyReveal48Dp("patchGraphBankOSC8")
         compose.onNodeWithTag("patchGraphBankOSC8")
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
         compose.onNodeWithTag("patchGraphTargetBankStatus")
             .assertTextContains("OSC 8", substring = true)
         compose.onNodeWithTag("patchBusOSC7_GAIN").assertDoesNotExist()
-        assertVisible48Dp("patchBusOSC8_GAIN")
+        physicallyReveal48Dp("patchBusOSC8_GAIN")
         compose.onNodeWithTag("patchBusOSC8_GAIN").assertHeightIsAtLeast(48.dp)
-        assertVisible48Dp("patchBusOSC8_PITCH")
+        physicallyReveal48Dp("patchBusOSC8_PITCH")
         compose.onNodeWithTag("patchBusOSC8_PITCH")
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
@@ -415,12 +486,12 @@ class PatchGraphPanelTest {
 
         // Switching banks never changes/erases the saved OSC8 cable. A global
         // tap creates a second real, different route through the SAME host API.
-        assertVisible48Dp("patchGraphBankGLOBAL")
+        physicallyReveal48Dp("patchGraphBankGLOBAL")
         compose.onNodeWithTag("patchGraphBankGLOBAL")
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
         compose.onNodeWithTag("patchBusOSC8_PITCH").assertDoesNotExist()
-        assertVisible48Dp("patchBusCUTOFF")
+        physicallyReveal48Dp("patchBusCUTOFF")
         compose.onNodeWithTag("patchBusCUTOFF")
             .assertHeightIsAtLeast(48.dp)
             .performTouchInput { click(center) }
