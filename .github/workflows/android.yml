@@ -34,7 +34,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Validate emulator harness syntax
-        run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-process-restart.sh && bash -n .github/workflows/ci-compact350.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh && bash -n .github/workflows/ci-immersive-stage.sh && bash -n .github/workflows/ci-oscillator-workbench.sh && bash -n .github/workflows/ci-live-stage-framebuffer.sh && bash -n .github/workflows/ci-stage-bootstrap.sh && python3 -m py_compile .github/workflows/ci-verify-android-shards.py
+        run: bash -n .github/workflows/ci-provision-emulator-sdk.sh && bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-process-restart.sh && bash -n .github/workflows/ci-compact350.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh && bash -n .github/workflows/ci-immersive-stage.sh && bash -n .github/workflows/ci-oscillator-workbench.sh && bash -n .github/workflows/ci-live-stage-framebuffer.sh && bash -n .github/workflows/ci-stage-bootstrap.sh && python3 -m py_compile .github/workflows/ci-verify-android-shards.py
       - name: Host tests, lint, app APK and instrumentation test APK
         run: gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
       - name: Upload debug APK
@@ -123,6 +123,8 @@ jobs:
         with:
           name: orbital-debug-android-test-apk
           path: app/build/outputs/apk/androidTest/debug
+      - name: Provision and verify Android emulator SDK (three bounded attempts)
+        run: bash .github/workflows/ci-provision-emulator-sdk.sh
       - name: Enable KVM for the emulator
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
@@ -136,7 +138,7 @@ jobs:
           cores: 2
           ram-size: 3072M
           heap-size: 512M
-          disk-size: ${{ matrix.suite == 'compact' && '4000M' || '6000M' }}
+          disk-size: ${{ startsWith(matrix.suite, 'general-') && '5000M' || matrix.suite == 'compact' && '4000M' || '6000M' }}
           disable-animations: true
           emulator-options: -no-window -gpu swangle -feature -Vulkan -no-snapshot -noaudio -no-boot-anim
           # The runner executes each nonempty script line in a separate `sh -c`.
