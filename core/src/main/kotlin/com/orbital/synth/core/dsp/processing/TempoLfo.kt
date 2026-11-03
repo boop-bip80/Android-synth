@@ -53,6 +53,24 @@ class TempoLfo(sampleRate: Int = 48_000, initialSeed: Int = 0x12ab34cd) {
         return result.coerceIn(-1f, 1f)
     }
 
+    /**
+     * Move the oscillator clock forward without evaluating trigonometry for
+     * every skipped silent sample. SAMPLE_HOLD still advances its deterministic
+     * random sequence once for each elapsed period.
+     */
+    fun advance(samples: Int) {
+        require(samples >= 0)
+        if (samples == 0) return
+        val total = phase + increment * samples
+        val wraps = kotlin.math.floor(total).toLong()
+        phase = total - wraps
+        var remaining = wraps
+        while (remaining > 0L) {
+            heldValue = randomBipolar()
+            remaining--
+        }
+    }
+
     private fun randomBipolar(): Float {
         var x = randomState
         x = x xor (x shl 13)
