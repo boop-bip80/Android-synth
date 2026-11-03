@@ -16,6 +16,13 @@ cleanup() {
   timeout 8s adb devices -l >> artifacts/luminous-probe-summary.txt 2>&1
   timeout 10s adb shell dumpsys window windows \
     > artifacts/luminous-probe-window.txt 2>&1
+  echo "=== REAL Android logcat: user-visible touch phases (bounded) ==="
+  if [[ -s artifacts/luminous-probe-logcat.txt ]]; then
+    grep -En 'LuminousGestureProbe|FATAL EXCEPTION|Fatal signal|OutOfMemoryError|lowmemorykiller|ANR in|killed process|am_crash' \
+      artifacts/luminous-probe-logcat.txt | tail -n 75 || true
+    echo "=== REAL Android logcat: final crash context (last 100 lines) ==="
+    tail -n 100 artifacts/luminous-probe-logcat.txt
+  fi
   exit "$status"
 }
 trap cleanup EXIT
