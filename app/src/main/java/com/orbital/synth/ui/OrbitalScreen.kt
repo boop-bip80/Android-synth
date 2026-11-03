@@ -61,6 +61,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.Role
@@ -312,7 +314,19 @@ fun OrbitalScreen(
                             role = Role.Tab,
                             onClick = { selectedTab = tab },
                         )
-                        .semantics { contentDescription = "Tab " + tab.title }
+                        // A single actionable accessibility node must own its
+                        // label, selection, and click action. Nested semantics
+                        // otherwise make UIAutomator see a non-clickable label
+                        // with selected=false even when the tab is active.
+                        .clearAndSetSemantics {
+                            contentDescription = "Tab " + tab.title
+                            selected = active
+                            role = Role.Tab
+                            onClick(label = "Open " + tab.title) {
+                                selectedTab = tab
+                                true
+                            }
+                        }
                         .heightIn(min = if (compactHeight) 40.dp else 48.dp)
                         .padding(vertical = if (compactHeight) 3.dp else 5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
