@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -192,6 +193,37 @@ class ReferenceMiniSignalTapNavigationTest {
             })
         }
         compose.onNodeWithTag("referencePerformanceKeybed").assertIsDisplayed()
+    }
+
+    @Test fun heldMiniTapSurvivesRealParameterRecompositionAtSoundTelemetryCadence() {
+        var liveMorph by mutableFloatStateOf(.30f)
+        compose.setContent {
+            CompositionLocalProvider(
+                LocalDensity provides Density(density = density, fontScale = 1.3f),
+            ) {
+                Box(Modifier.width(360.dp).height(820.dp)) {
+                    OrbitalScreen(
+                        state = OrbitalUiState(
+                            parameters = mapOf(ParameterId.MORPH to liveMorph),
+                        ),
+                        onNoteOn = {}, onNoteOff = {},
+                        onParameterChange = { _, _ -> },
+                        onModeChange = {}, onOctaveChange = {},
+                    )
+                }
+            }
+        }
+        val tile = compose.onNodeWithTag("referenceMiniEnv")
+            .assertIsDisplayed().assertHasClickAction()
+        // Inject a genuine DOWN, force unrelated SOUND parameter recompose while
+        // finger stays held, then real UP. A pointerInput(callback) key would
+        // cancel the pending gesture whenever the 20Hz PCM/UI path updates.
+        tile.performTouchInput { down(0, center) }
+        compose.runOnIdle { liveMorph = .70f }
+        tile.performTouchInput { up(0) }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Tab FX").assertIsDisplayed()
+        compose.onNodeWithTag("miniEnvActualEditor").assertIsDisplayed()
     }
 
     @Test fun expressionMiniPhysicallyOpensSameSixActualXyRoutingModes() {

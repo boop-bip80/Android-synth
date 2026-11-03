@@ -643,6 +643,9 @@ private fun ReferenceMiniSignal(
     height: Dp,
     onOpen: (() -> Unit)?,
 ) {
+    // SOUND PCM telemetry updates at 20Hz. Keep one physical detector across
+    // those recompositions; only swap its latest routing callback.
+    val latestOpen by rememberUpdatedState(onOpen)
     Column(
         modifier
             .height(height)
@@ -658,8 +661,8 @@ private fun ReferenceMiniSignal(
             // so the original caption Text nodes remain discoverable to tests
             // and assistive navigation (clickable would merge them away).
             .then(
-                if (onOpen != null) Modifier.pointerInput(onOpen) {
-                    detectTapGestures(onTap = { onOpen() })
+                if (onOpen != null) Modifier.pointerInput(Unit) {
+                    detectTapGestures(onTap = { latestOpen?.invoke() })
                 } else Modifier
             )
             .padding(horizontal = 5.dp, vertical = 5.dp)
@@ -672,7 +675,8 @@ private fun ReferenceMiniSignal(
                 if (onOpen != null) {
                     role = Role.Button
                     onClick(label = editorLabel) {
-                        onOpen()
+                        val action = latestOpen ?: return@onClick false
+                        action()
                         true
                     }
                 }
