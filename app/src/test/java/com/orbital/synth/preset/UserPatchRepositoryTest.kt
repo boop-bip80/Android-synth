@@ -1,5 +1,7 @@
 package com.orbital.synth.preset
 
+import com.orbital.synth.core.OscillatorSlot
+
 import com.orbital.synth.core.preset.FactoryPresets
 import com.orbital.synth.core.preset.PatchCodec
 import com.orbital.synth.core.preset.PatchDirectoryStore
@@ -78,6 +80,28 @@ class UserPatchRepositoryTest {
         assertEquals(.65f, loaded.parameters["CUTOFF"]!!, 0.000001f)
         assertEquals(listOf(saved.patch.id), success(repository.listUser()).map { it.id })
         assertEquals(FactoryPresets.ALL.size + 1, success(repository.listAll()).size)
+    }
+
+    @Test fun savesAndRestoresEditableOscillatorLayersWithoutFlatteningThem() = runBlocking {
+        val folder = temp.newFolder("oscillator-patches").toPath()
+        var layer = OscillatorSlot(true, .75f, .48f, .28f, -7, 12.5f)
+        val repository = UserPatchRepository(
+            PatchDirectoryStore(folder),
+            { mapOf("CUTOFF" to .65f) },
+            {},
+            Dispatchers.Unconfined,
+            snapshotOscillators = { listOf(layer) },
+        )
+        val first = success(repository.saveCurrentAs("Orbit Layers"))
+        assertEquals(listOf(layer), first.patch.oscillatorSlots)
+        assertEquals(listOf(layer), PatchCodec.decode(success(
+            repository.exportPatchText(first.patch.id)
+        )).oscillatorSlots)
+
+        layer = layer.copy(level = .92f, fineCents = -19f)
+        val updated = success(repository.overwriteCurrent(first.patch.id))
+        assertEquals(listOf(layer), updated.oscillatorSlots)
+        assertEquals(listOf(layer), success(repository.load(first.patch.id)).oscillatorSlots)
     }
 
     @Test fun duplicateNamesDoNotOverwriteAndExplicitReplaceDoes() = runBlocking {

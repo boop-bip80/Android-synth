@@ -15,6 +15,20 @@ fun OrbitalSynth.loadPatch(patch: SynthPatch) {
         }
         value?.let { setParameter(id, it) }
     }
+    // Patches created before the modular rack must never inherit oscillators
+    // from the previously loaded sound. Missing slots are intentionally silent.
+    clearOscillatorRack()
+    patch.oscillatorSlots.forEachIndexed { index, slot ->
+        setOscillatorSlot(
+            index = index,
+            enabled = slot.enabled,
+            waveform = slot.waveform,
+            level = slot.level,
+            coarseSemitones = slot.coarseSemitones,
+            fineCents = slot.fineCents,
+            morph = slot.morph,
+        )
+    }
 }
 
 /** Friendly factory-name alias for application integrations. */
