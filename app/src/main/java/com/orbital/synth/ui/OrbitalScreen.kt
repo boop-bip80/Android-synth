@@ -348,13 +348,16 @@ fun OrbitalScreen(
         // configuration mini plots ABOVE the anchored chromatic keyboard.
         // Reclaim shell whitespace, not plasma pixels or 48dp touch targets.
         val referencePortrait = selectedTab == Tab.SOUND && !compactHeight
+        // Real API35 360×350dp geometry: the ENGINE row was clipped to ~41dp
+        // below a 48dp SOUND rail despite 48dp child targets. Reclaim compact
+        // shell whitespace only; keep nav, octave, and 82dp piano untouched.
         Column(
             Modifier.fillMaxSize().padding(
                 horizontal = if (compactHeight) 8.dp else 12.dp,
-                vertical = if (compactHeight) 3.dp else if (referencePortrait) 6.dp else 9.dp,
+                vertical = if (compactHeight) 1.dp else if (referencePortrait) 6.dp else 9.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(
-                if (compactHeight) 2.dp else if (referencePortrait) 4.dp
+                if (compactHeight) 0.dp else if (referencePortrait) 4.dp
                 else if (compactOrbitLayout) 8.dp else 12.dp,
             ),
         ) {
@@ -463,10 +466,10 @@ fun OrbitalScreen(
                 .testTag("soundEditorScroll")
                 .padding(
                     horizontal = if (referencePortrait) 5.dp else 7.dp,
-                    vertical = if (compactHeight || referencePortrait) 3.dp else 6.dp,
+                    vertical = if (compactHeight) 1.dp else if (referencePortrait) 3.dp else 6.dp,
                 ),
             verticalArrangement = Arrangement.spacedBy(
-                if (compactHeight) 3.dp else if (compactOrbitLayout) 8.dp else 12.dp,
+                if (compactHeight) 1.dp else if (compactOrbitLayout) 8.dp else 12.dp,
             ),
         ) {
         when (selectedTab) {
