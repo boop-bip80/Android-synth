@@ -337,7 +337,7 @@ class OrbitalSynth(
 
         // Reserve room for upward bend and vibrato when selecting anti-alias mip levels.
         val highestPitchMultiplier = 2.0.pow((max(0.0, pitchBend) +
-            modulationDepth * 0.5 + if (modulationEnabled) 6.0 else 0.0) / 12.0)
+            modulationDepth * 0.5 + (if (liveModulation.pitchRouteActive) 6.0 else 0.0)) / 12.0)
         for (voice in voices) voice.preparePitch(highestPitchMultiplier)
 
         var active = 0
