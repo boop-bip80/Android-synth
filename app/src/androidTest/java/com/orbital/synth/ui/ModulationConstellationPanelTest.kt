@@ -115,7 +115,7 @@ class ModulationConstellationPanelTest {
         compose.onNodeWithTag("modStepRhythmPanel").assertExists()
         compose.onNodeWithTag("modStepRhythmPanel").performScrollTo()
         compose.onNodeWithTag("modStepPad0").performTouchInput {
-            click(Offset(center.x, size.height * .90f))
+            click(Offset(center.x, center.y * 1.8f))
         }
         compose.runOnIdle {
             assertTrue("Touching the bottom of a pad must publish negative DSP voltage",
