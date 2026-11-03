@@ -13,19 +13,25 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
@@ -71,6 +77,8 @@ fun ReferenceXyModeRail(
     onBeforeSelect: () -> Unit = {},
 ) {
     val activeMode = selectedMode.resolveFallback(normalizedEngine)
+    val currentOnModeSelected by rememberUpdatedState(onModeSelected)
+    val currentBeforeSelect by rememberUpdatedState(onBeforeSelect)
     var expanded by remember { mutableStateOf(false) }
     val railShape = RoundedCornerShape(12.dp)
     val menuShape = RoundedCornerShape(15.dp)
@@ -179,22 +187,78 @@ fun ReferenceXyModeRail(
                                         },
                                         tile,
                                     )
-                                    .selectable(
-                                        selected = chosen,
-                                        enabled = available,
-                                        role = Role.RadioButton,
-                                        onClick = {
-                                            onBeforeSelect()
-                                            onModeSelected(mode)
-                                            expanded = false
-                                        },
-                                    )
+                                    // A newly mounted menu is underneath fingers
+                                    // that were already DOWN before it opened.
+                                    // Compose's generic selectable detector can
+                                    // mistake their trailing UP for a tap on the
+                                    // *new* menu. Admit only a real fresh DOWN,
+                                    // own that exact PointerId until its UP,
+                                    // and never transfer ownership mid-gesture.
+                                    .pointerInput(available) {
+                                        if (available) {
+                                            awaitPointerEventScope {
+                                                var ownerId: PointerId? = null
+                                                while (true) {
+                                                    val frame = awaitPointerEvent()
+                                                    val previous = ownerId
+                                                    if (previous != null) {
+                                                        val pointer = frame.changes.firstOrNull {
+                                                            it.id == previous
+                                                        }
+                                                        if (pointer == null) {
+                                                            ownerId = null
+                                                        } else if (!pointer.pressed) {
+                                                            if (pointer.previousPressed &&
+                                                                !pointer.isConsumed &&
+                                                                pointer.position.x >= 0f &&
+                                                                pointer.position.y >= 0f &&
+                                                                pointer.position.x < size.width &&
+                                                                pointer.position.y < size.height
+                                                            ) {
+                                                                currentBeforeSelect()
+                                                                currentOnModeSelected(mode)
+                                                                expanded = false
+                                                            }
+                                                            pointer.consume()
+                                                            ownerId = null
+                                                        } else {
+                                                            pointer.consume()
+                                                        }
+                                                    }
+                                                    if (ownerId == null) {
+                                                        val freshDown = frame.changes.firstOrNull {
+                                                            it.pressed &&
+                                                                !it.previousPressed &&
+                                                                !it.isConsumed
+                                                        }
+                                                        if (freshDown != null) {
+                                                            ownerId = freshDown.id
+                                                            freshDown.consume()
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                     .semantics {
+                                        role = Role.RadioButton
+                                        selected = chosen
                                         contentDescription =
                                             "${mode.title} XY routing: horizontal ${mode.xLabel}; " +
                                             "vertical ${mode.yLabel}. ${mode.guidance}"
                                         if (!available) {
+                                            disabled()
                                             stateDescription = "Unavailable on current engine"
+                                        } else {
+                                            // TalkBack activates this action
+                                            // directly; physical touch uses the
+                                            // fresh-down pointer owner above.
+                                            onClick(label = "Select ${mode.title} XY mode") {
+                                                currentBeforeSelect()
+                                                currentOnModeSelected(mode)
+                                                expanded = false
+                                                true
+                                            }
                                         }
                                     }
                                     .testTag("referenceXyMode${mode.name}"),
