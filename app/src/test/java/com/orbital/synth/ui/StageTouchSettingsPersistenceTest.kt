@@ -11,19 +11,63 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class StageTouchSettingsPersistenceTest {
-    @Test fun completeV1RoundTripsEveryEditableStageField() {
+    @Test fun completeV2RoundTripsEveryEditableStageField() {
         val original = StageTouchSettings(
             tonic = 11, baseOctave = 3, octaveRange = 4,
             scale = TouchScale.BLUES, pressureSensitivity = .72f,
             pitchAxis = TouchPitchAxis.VERTICAL, glissando = false,
+            hapticsEnabled = true,
         )
         val wire = StageTouchSettingsCodec.encode(original)
-        assertTrue(wire.startsWith(StageTouchSettingsCodec.V1_HEADER + "\n"))
+        assertTrue(wire.startsWith(StageTouchSettingsCodec.V2_HEADER + "\n"))
         assertFalse(wire.contains("null"))
         val decoded = StageTouchSettingsCodec.decode(wire)
         assertEquals(original, decoded.settings)
         assertFalse(decoded.legacy)
         assertEquals(wire, StageTouchSettingsCodec.encode(decoded.settings))
+    }
+
+    @Test fun strictV1StageFileRestoresSevenControlsAndDefaultsHapticsOff() = runBlocking {
+        withScratch { path ->
+            val v1 = """
+                ORBITAL-STAGE-TOUCH-V1
+                tonic=8
+                baseOctave=3
+                octaveRange=4
+                scale=BLUES
+                pressureSensitivity=0.65
+                pitchAxis=VERTICAL
+                glissando=false
+            """.trimIndent() + "\n"
+            writeUtf8(path, v1)
+            val repo = StageTouchSettingsRepository(path, Dispatchers.Unconfined)
+            val restored = repo.load()
+            assertEquals(StageTouchLoadSource.LEGACY, restored.source)
+            assertEquals(StageTouchSettings(
+                tonic = 8, baseOctave = 3, octaveRange = 4,
+                scale = TouchScale.BLUES, pressureSensitivity = .65f,
+                pitchAxis = TouchPitchAxis.VERTICAL, glissando = false,
+                hapticsEnabled = false,
+            ), restored.settings)
+            assertEquals(v1, readUtf8(path))
+            // No silent V2 migration until a performer explicitly changes config.
+            assertEquals(StageTouchSettingsSave.Saved, repo.save(
+                restored.settings.copy(hapticsEnabled = true)
+            ))
+            assertTrue(readUtf8(path).startsWith(StageTouchSettingsCodec.V2_HEADER))
+            assertTrue(readUtf8(path).contains("hapticsEnabled=true"))
+            assertEquals(true, repo.load().settings.hapticsEnabled)
+        }
+    }
+
+    @Test fun v2TactileFieldIsMandatoryAndRejectsUnknownFutureVersions() {
+        val on = StageTouchSettings(hapticsEnabled = true)
+        val encoded = StageTouchSettingsCodec.encode(on)
+        assertTrue(encoded.startsWith(StageTouchSettingsCodec.V2_HEADER))
+        assertEquals(on, StageTouchSettingsCodec.decode(encoded).settings)
+        assertFails { StageTouchSettingsCodec.decode(encoded.replace("hapticsEnabled=true\n", "")) }
+        assertFails { StageTouchSettingsCodec.decode(encoded.replace("hapticsEnabled=true", "hapticsEnabled=maybe")) }
+        assertFails { StageTouchSettingsCodec.decode("ORBITAL-STAGE-TOUCH-V3\nhapticsEnabled=true\n") }
     }
 
     @Test fun allSupportedScalesAndAxesHaveStableRoundTrips() {
@@ -80,7 +124,7 @@ class StageTouchSettingsPersistenceTest {
             assertEquals(StageTouchSettingsLoad(
                 loaded.settings, StageTouchLoadSource.SAVED,
             ), repo.load())
-            assertTrue(readUtf8(path).startsWith(StageTouchSettingsCodec.V1_HEADER + "\n"))
+            assertTrue(readUtf8(path).startsWith(StageTouchSettingsCodec.V2_HEADER + "\n"))
         }
     }
 
@@ -145,7 +189,7 @@ class StageTouchSettingsPersistenceTest {
             )
             assertEquals(StageTouchSettingsSave.Saved, repo.save(saved))
             assertEquals(StageTouchSettingsLoad(saved, StageTouchLoadSource.SAVED), repo.load())
-            assertTrue(readUtf8(path).startsWith(StageTouchSettingsCodec.V1_HEADER))
+            assertTrue(readUtf8(path).startsWith(StageTouchSettingsCodec.V2_HEADER))
             assertEquals(1, Files.list(path.parent).use { stream ->
                 stream.filter { it.fileName.toString() == path.fileName.toString() }.count().toInt()
             })
