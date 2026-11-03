@@ -328,7 +328,9 @@ internal class Voice(private val sampleRate: Int) {
         phase = 0.0
         lowerPhase = 0.0
         upperPhase = 0.0
-        oscillatorRack.resetPhase()
+        // Deterministically decorrelate each voice's eight noise lanes across
+        // MIDI notes and allocation/retrigger order without any audio allocation.
+        oscillatorRack.resetPhase((midiNote.toLong() shl 32) xor order)
         integrator1 = 0.0
         integrator2 = 0.0
         ladder.reset()
