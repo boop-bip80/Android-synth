@@ -120,17 +120,23 @@ if len(nodes) == 1:
             print(l+(r-l)//3, t+(b-t)//3, l+2*(r-l)//3, t+2*(b-t)//3)
 PY
 )"
+gesture_pid=
 if [[ -n "$gesture" ]]; then
   read -r x1 y1 x2 y2 <<< "$gesture"
-  timeout 10s adb shell input swipe "$x1" "$y1" "$x2" "$y2" 500
-  printf 'gesture=real_accessible_canvas_swipe\n' >> "$summary"
+  # Screenshot WHILE a finger is held; otherwise the effect fades to its idle glow.
+  timeout 10s adb shell input swipe "$x1" "$y1" "$x2" "$y2" 1800 > artifacts/immersive-gesture.txt 2>&1 &
+  gesture_pid=$!
+  sleep 0.35
+  printf 'gesture=live_accessible_canvas_swipe\n' >> "$summary"
 else
   printf 'gesture=skipped_canvas_semantics_merged\n' >> "$summary"
 fi
 
 printf 'capture\n' > "$phase"
-sleep 1
 timeout 15s adb exec-out screencap -p > artifacts/orbital-immersive-emulator.png
+if [[ -n "$gesture_pid" ]]; then
+  wait "$gesture_pid"
+fi
 test -s artifacts/orbital-immersive-emulator.png
 test "$(file -b --mime-type artifacts/orbital-immersive-emulator.png)" = image/png
 python3 - artifacts/orbital-immersive-emulator.png artifacts/orbital-emulator.png <<'PY'
