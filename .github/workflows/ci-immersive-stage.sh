@@ -165,7 +165,7 @@ PY
     break
   fi
   printf 'capture_attempt_%s=failed\n' "$capture_attempt" >> "$summary"
-  timeout 8s adb devices -l > "artifacts/immersive-capture-attempt-$capture_attempt-adb.txt" 2>&1 || true
+  timeout 8s adb devices -l >> "$summary" 2>&1 || true
   sleep 2
 done
 if [[ "$captured" != 1 ]]; then
