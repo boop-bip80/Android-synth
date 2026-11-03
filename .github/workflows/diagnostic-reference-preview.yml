@@ -1,0 +1,65 @@
+name: Diagnostic - original Orbital UI reference preview
+
+on:
+  push:
+    branches:
+      - diagnostic/reference-preview-20261103
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    name: Render source reference PNG to auditable compact JPEG
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resize actual repository PNG and stream proof pixels as UTF-8
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet Pillow
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import io
+          import os
+          from PIL import Image, ImageOps
+
+          path = "design/orbital-ui-reference.png"
+          assert os.path.isfile(path), "Original generated reference is missing"
+          with open(path, "rb") as source:
+              blob = source.read()
+          assert blob[:8] == b"\x89PNG\r\n\x1a\n", "Original reference is not a PNG"
+          image = Image.open(io.BytesIO(blob))
+          source_dimensions = image.size
+          image = ImageOps.exif_transpose(image).convert("RGB")
+          image.thumbnail((700, 1400), Image.Resampling.LANCZOS)
+          stream = io.BytesIO()
+          image.save(stream, format="JPEG", quality=47, optimize=True, progressive=True)
+          jpeg = stream.getvalue()
+          assert jpeg[:3] == b"\xff\xd8\xff"
+          assert len(jpeg) > 4096, "Preview unexpectedly small"
+          os.makedirs("artifacts", exist_ok=True)
+          with open("artifacts/orbital-reference-preview.jpg", "wb") as output:
+              output.write(jpeg)
+          encoded = base64.b64encode(jpeg).decode("ascii")
+          print(
+              f"REFERENCE_JPEG_BEGIN source_dimensions={source_dimensions} "
+              f"preview_dimensions={image.size} original_sha256={hashlib.sha256(blob).hexdigest()} "
+              f"jpeg_sha256={hashlib.sha256(jpeg).hexdigest()} "
+              f"jpeg_bytes={len(jpeg)} base64_characters={len(encoded)}"
+          )
+          for offset in range(0, len(encoded), 512):
+              print(f"REFERENCE_B64_{offset//512:04d}:{encoded[offset:offset + 512]}")
+          print("REFERENCE_JPEG_END")
+          PY
+      - name: Keep the same actual resized reference as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbital-original-ui-reference-preview
+          path: artifacts/orbital-reference-preview.jpg
+          if-no-files-found: error
+          retention-days: 7
