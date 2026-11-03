@@ -3,8 +3,6 @@ package com.orbital.synth.ui
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color as PixelColor
-import android.os.ParcelFileDescriptor
-import android.os.SystemClock
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -121,25 +119,14 @@ class ReferenceSoundHeroCaptureTest {
         compose.onNodeWithTag("referenceMiniMod").assertExists()
         compose.onNodeWithTag("heroPixelFixtureSentinel").assertExists()
         compose.waitForIdle()
-        val deadline = SystemClock.uptimeMillis() + 12_000L
-        while (!compose.activity.hasWindowFocus() &&
-            SystemClock.uptimeMillis() < deadline
-        ) {
-            Thread.sleep(120L)
-        }
-        if (!compose.activity.hasWindowFocus()) {
-            // A fresh API35 Pixel Launcher can ANR while instrumentation is
-            // drawing our real fixture. Recover ONLY that known external OS
-            // window, as the separate strict stage screenshot lane does.
-            // Do not force focus or accept a non-foreground Activity silently.
-            val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-            fun shell(cmd: String): String {
-                val descriptor = automation.executeShellCommand(cmd)
-                return ParcelFileDescriptor.AutoCloseInputStream(descriptor)
-                    .bufferedReader().use { it.readText() }
-            }
+        val foregroundAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        var foreground = awaitMainActivityForeground(foregroundAutomation)
+        if (!foreground.isRealMainActivityForeground) {
+            // Recover ONLY a foregrounded Pixel Launcher ANR, never a synth ANR.
+            // WindowManager focus AND the active accessibility root must agree
+            // on our real displayed MainActivity before any screenshot is valid.
             fun externalLauncherAnr(): Boolean {
-                val dump = shell("dumpsys window")
+                val dump = foregroundShell(foregroundAutomation, "dumpsys window")
                 val current = dump.lineSequence()
                     .firstOrNull { it.contains("mCurrentFocus=") }.orEmpty()
                 return dump.contains(
@@ -148,15 +135,19 @@ class ReferenceSoundHeroCaptureTest {
             }
             if (externalLauncherAnr()) {
                 println("REFERENCE_HERO_EXTERNAL_PIXEL_LAUNCHER_ANR_RECOVERY_BACK")
-                shell("input keyevent KEYCODE_BACK")
+                foregroundShell(foregroundAutomation, "input keyevent KEYCODE_BACK")
                 Thread.sleep(500L)
-                if (!compose.activity.hasWindowFocus() && externalLauncherAnr()) {
+                if (!probeMainActivityForeground(foregroundAutomation).isRealMainActivityForeground &&
+                    externalLauncherAnr()
+                ) {
                     println("REFERENCE_HERO_EXTERNAL_PIXEL_LAUNCHER_ANR_RECOVERY_STOP")
-                    shell("am force-stop com.google.android.apps.nexuslauncher")
+                    foregroundShell(
+                        foregroundAutomation,
+                        "am force-stop com.google.android.apps.nexuslauncher",
+                    )
                 }
-                // Reorder the EXISTING MainActivity instance. A fresh
-                // replacement Activity would lack our magenta sentinel and
-                // fail the still-strict SurfaceFlinger pixel provenance check.
+                // Reorder the EXISTING MainActivity: a replacement lacking
+                // the magenta sentinel still fails the real-frame pixel check.
                 compose.activity.runOnUiThread {
                     compose.activity.startActivity(
                         Intent(compose.activity, MainActivity::class.java).apply {
@@ -164,35 +155,16 @@ class ReferenceSoundHeroCaptureTest {
                         },
                     )
                 }
-                val recoveryDeadline = SystemClock.uptimeMillis() + 8_000L
-                while (!compose.activity.hasWindowFocus() &&
-                    SystemClock.uptimeMillis() < recoveryDeadline
-                ) Thread.sleep(120L)
+                foreground = awaitMainActivityForeground(foregroundAutomation, timeoutMs = 8_000L)
             }
         }
-        if (!compose.activity.hasWindowFocus()) {
-            val details = runCatching {
-                val descriptor = InstrumentationRegistry.getInstrumentation()
-                    .uiAutomation.executeShellCommand("dumpsys window")
-                val matches = mutableListOf<String>()
-                ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { reader ->
-                    reader.forEachLine { line ->
-                        if (matches.size < 16 && (
-                            line.contains("mCurrentFocus") ||
-                            line.contains("mFocusedApp") ||
-                            line.contains("Window #")
-                        )) {
-                            matches.add(line.trim())
-                        }
-                    }
-                }
-                matches.joinToString(" | ").take(1100)
-            }.getOrElse { "dumpsys unavailable: " + it.javaClass.simpleName }
+        if (!foreground.isRealMainActivityForeground) {
             throw AssertionError(
-                "Real MainActivity screenshot fixture never gained window focus; " +
-                    "decorShown=" + compose.activity.window.decorView.isShown +
+                "Real MainActivity screenshot fixture lacks OS-authoritative focus; " +
+                    "decorFocus=" + compose.activity.hasWindowFocus() +
+                    " decorShown=" + compose.activity.window.decorView.isShown +
                     " width=" + compose.activity.window.decorView.width +
-                    " focusedWindows=" + details,
+                    " observed=" + foreground,
             )
         }
         println("REFERENCE_HERO_SCREENSHOT_FOCUS_VERIFIED MainActivity")

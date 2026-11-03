@@ -1,8 +1,6 @@
 package com.orbital.synth.ui
 
 import android.content.Intent
-import android.os.ParcelFileDescriptor
-import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.assertIsDisplayed
@@ -41,32 +39,29 @@ class ReferenceSoundHostIntegrationTest {
         compose.waitUntil(10_000L) { audio.isRunning }
         // Actual Android window focus is required before treating this as
         // genuine visible-app pixel proof (Compose nodes alone are insufficient).
-        val deadline = SystemClock.uptimeMillis() + 12_000L
-        while (!compose.activity.hasWindowFocus() &&
-            SystemClock.uptimeMillis() < deadline) {
-            Thread.sleep(120L)
-        }
-        if (!compose.activity.hasWindowFocus()) {
-            // Do not confuse an unrelated Pixel Launcher ANR overlay with a
-            // broken synth window, or accept unfocused Compose pixel captures.
-            val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-            fun shell(command: String): String {
-                val descriptor = automation.executeShellCommand(command)
-                return ParcelFileDescriptor.AutoCloseInputStream(descriptor)
-                    .bufferedReader().use { it.readText() }
-            }
-            val focused = shell("dumpsys window").lineSequence()
-                .firstOrNull { it.contains("mCurrentFocus=") }.orEmpty()
+        val foregroundAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        var foreground = awaitMainActivityForeground(foregroundAutomation)
+        if (!foreground.isRealMainActivityForeground) {
+            // An unrelated Pixel Launcher ANR is the ONLY recoverable overlay.
+            // The OS focus and active accessibility window must BOTH identify
+            // our actual MainActivity before any audio/pixel checks can pass.
+            val focused = foregroundShell(foregroundAutomation, "dumpsys window")
+                .lineSequence().firstOrNull { it.contains("mCurrentFocus=") }.orEmpty()
             if (!focused.contains("com.orbital.synth.MainActivity") &&
                 focused.contains("Application Not Responding: com.google.android.apps.nexuslauncher")
             ) {
-                shell("input keyevent KEYCODE_BACK")
+                foregroundShell(foregroundAutomation, "input keyevent KEYCODE_BACK")
                 Thread.sleep(450L)
-                if (!compose.activity.hasWindowFocus()) {
-                    val afterBack = shell("dumpsys window")
+                if (!probeMainActivityForeground(foregroundAutomation)
+                        .isRealMainActivityForeground
+                ) {
+                    val afterBack = foregroundShell(foregroundAutomation, "dumpsys window")
                     if (afterBack.contains(
                         "Application Not Responding: com.google.android.apps.nexuslauncher",
-                    )) shell("am force-stop com.google.android.apps.nexuslauncher")
+                    )) foregroundShell(
+                        foregroundAutomation,
+                        "am force-stop com.google.android.apps.nexuslauncher",
+                    )
                 }
                 compose.activity.runOnUiThread {
                     compose.activity.startActivity(
@@ -75,13 +70,14 @@ class ReferenceSoundHostIntegrationTest {
                         },
                     )
                 }
-                val recoveryDeadline = SystemClock.uptimeMillis() + 8_000L
-                while (!compose.activity.hasWindowFocus() &&
-                    SystemClock.uptimeMillis() < recoveryDeadline) Thread.sleep(120L)
+                foreground = awaitMainActivityForeground(foregroundAutomation, timeoutMs = 8_000L)
             }
         }
-        assertTrue("Production MainActivity never acquired real window focus",
-            compose.activity.hasWindowFocus())
+        assertTrue(
+            "Production MainActivity lacks OS-authoritative foreground focus; " +
+                "decorFocus=${compose.activity.hasWindowFocus()} observed=$foreground",
+            foreground.isRealMainActivityForeground,
+        )
         compose.onNodeWithTag("referenceSoundHero").assertExists()
         compose.onNodeWithTag("referenceSoundHeroOrb").assertIsDisplayed()
         compose.onNodeWithTag("orbitalPlasmaField").assertExists()
