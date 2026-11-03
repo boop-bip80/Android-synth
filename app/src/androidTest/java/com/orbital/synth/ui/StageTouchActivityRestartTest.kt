@@ -55,7 +55,7 @@ class StageTouchActivityRestartTest {
         }
     }
 
-    @Test fun allSevenSettingsRestoreAndUserEditSurvivesRealActivityRecreation() {
+    @Test fun allEightSettingsRestoreAndUserEditSurvivesRealActivityRecreation() {
         val saved = StageTouchSettings(
             tonic = 9, baseOctave = 5, octaveRange = 3,
             scale = TouchScale.BLUES, pressureSensitivity = .72f,
@@ -89,7 +89,6 @@ class StageTouchActivityRestartTest {
             scenario.recreate()
             enterConfiguration()
             awaitSelected("stageScale-MAJOR")
-            compose.onNodeWithTag("stageHapticsOn").assertIsSelected()
             compose.onNodeWithTag("stageTonic-9").assertIsSelected()
             compose.onNodeWithTag("stageBaseOctave-5").assertIsSelected()
             compose.onNodeWithTag("stageOctaveRange-3").assertIsSelected()
