@@ -121,6 +121,9 @@ class OrbitalScreenTest {
         checkKeyboard("SOUND")
         Log.i("OrbitalCompactTest", "full-width: clicking Tab FX")
         compose.onNodeWithContentDescription("Tab FX").performClick()
+        Log.i("OrbitalCompactTest", "full-width: before waitForIdle after FX switch")
+        compose.waitForIdle()
+        Log.i("OrbitalCompactTest", "full-width: waitForIdle after FX switch returned")
         checkKeyboard("FX")
     }
 
