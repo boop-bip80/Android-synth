@@ -112,11 +112,9 @@ class UserPatchRepository internal constructor(
             )
         }
         safe(PatchFailureKind.INVALID_DATA) {
-            val used = store.storedIds()
-            val base = UserPatchIds.baseForName(cleanName)
-            val id = UserPatchIds.uniqueForName(cleanName, used)
             val patch = SynthPatch(
-                id = id, name = cleanName, description = description,
+                id = UserPatchIds.baseForName(cleanName),
+                name = cleanName, description = description,
                 tags = tags.toSet(), parameters = snapshotParameters().toMap(),
                 oscillatorSlots = snapshotOscillators().toList(),
                 modulationRoutes = snapshotModulationRoutes().toList(),
@@ -127,8 +125,7 @@ class UserPatchRepository internal constructor(
                     it.copy(values = it.values.toList())
                 },
             )
-            store.save(patch)
-            PatchOutcome.Success(SavedUserPatch(patch, id != base))
+            saveUniqueNewPatch(cleanName, patch)
         }
     }
 
@@ -170,12 +167,10 @@ class UserPatchRepository internal constructor(
     suspend fun importPatchText(text: String): PatchOutcome<SavedUserPatch> = onIo {
         safe(PatchFailureKind.INVALID_FORMAT) {
             val incoming = PatchCodec.decode(text)
-            val used = store.storedIds()
-            val base = UserPatchIds.baseForName(incoming.name)
-            val id = UserPatchIds.uniqueForName(incoming.name, used)
-            val patch = incoming.copy(id = id)
-            store.save(patch)
-            PatchOutcome.Success(SavedUserPatch(patch, id != base))
+            saveUniqueNewPatch(
+                incoming.name,
+                incoming.copy(id = UserPatchIds.baseForName(incoming.name)),
+            )
         }
     }
 
@@ -214,6 +209,28 @@ class UserPatchRepository internal constructor(
             if (!store.delete(id)) notFound(id)
             else PatchOutcome.Success(true)
         }
+    }
+
+    /**
+     * Filename scanning is only an optimization: another repository/process can
+     * choose the same ID after the scan. Exclusively publish each candidate,
+     * retrying collisions without ever replacing an existing on-disk patch.
+     */
+    private fun saveUniqueNewPatch(
+        name: String,
+        prototype: SynthPatch,
+    ): PatchOutcome<SavedUserPatch> {
+        val base = UserPatchIds.baseForName(name)
+        val used = store.storedIds().toMutableSet()
+        repeat(10_000) {
+            val id = UserPatchIds.uniqueForName(name, used)
+            val candidate = prototype.copy(id = id)
+            if (store.saveNew(candidate)) {
+                return PatchOutcome.Success(SavedUserPatch(candidate, id != base))
+            }
+            used += id
+        }
+        throw IllegalStateException("User patch ID allocation collided too often")
     }
 
     private fun resolve(id: String): PatchOutcome<SynthPatch> {
