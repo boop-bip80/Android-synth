@@ -228,6 +228,7 @@ jobs:
             artifacts/focus-bootstrap-*.txt
             artifacts/oscillator-*.xml
             artifacts/oscillator-*-dump.txt
+            artifacts/immersive-exit-*.txt
             artifacts/immersive-gesture.txt
             artifacts/immersive-activity-launch.txt
             artifacts/immersive-window-state.txt

@@ -107,9 +107,15 @@ PY
   read -r x y <<< "$target"
   # Bounded ADB retries cover an emulator input-service stall without
   # treating a failed injection as a successful mode transition.
-  local attempt
+  local attempt output_file
+  output_file=/dev/null
+  if [[ "$2" == 'Exit immersive performance' ]]; then
+    output_file=artifacts/immersive-exit-adb-input.txt
+    printf 'exit_tap_x=%s\nexit_tap_y=%s\nsource_hierarchy=%s\n' \
+      "$x" "$y" "$1" >> "$summary"
+  fi
   for attempt in 1 2; do
-    if timeout 8s adb shell input tap "$x" "$y"; then
+    if timeout 8s adb shell input tap "$x" "$y" > "$output_file" 2>&1; then
       return 0
     fi
     printf 'tap_retry=%s label=%s\n' "$attempt" "$2" >> "$summary"
@@ -251,10 +257,53 @@ PY
 printf 'foreground=verified\nscreenshot_sha256=%s\n' \
   "$(sha256sum artifacts/orbital-immersive-emulator.png | cut -d' ' -f1)" >> "$summary"
 
-printf 'exit\n' > "$phase"
-tap_action artifacts/immersive-stage.xml 'Exit immersive performance'
-sleep 2
-dump_ui returned
+printf 'exit-verify-fresh-accessibility\n' > "$phase"
+# Do not reuse the Stage hierarchy captured before the real gesture. The
+# tap must target the currently visible native Android accessibility bounds.
+dump_ui pre-exit
+verify_ui artifacts/immersive-pre-exit.xml stage
+python3 - artifacts/immersive-stage.xml artifacts/immersive-pre-exit.xml \
+  > artifacts/immersive-exit-bounds.txt <<'PY'
+import re,sys,xml.etree.ElementTree as ET
+label="Exit immersive performance"
+for tag,path in zip(("old-stage", "fresh-pre-exit"),sys.argv[1:]):
+    nodes=[n for n in ET.parse(path).iter("node") if n.attrib.get("content-desc")==label]
+    if len(nodes)!=1:raise SystemExit(f"{tag}: expected exactly one EXIT, found {len(nodes)}")
+    attrs=nodes[0].attrib
+    match=re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",attrs.get("bounds",""))
+    if not match:raise SystemExit(f"{tag}: invalid bounds {attrs}")
+    l,t,r,b=map(int,match.groups())
+    if r<=l or b<=t:raise SystemExit(f"{tag}: empty bounds")
+    print(f"{tag}: bounds=[{l},{t}][{r},{b}] center=({(l+r)//2},{(t+b)//2}) "
+          f"clickable={attrs.get('clickable')} enabled={attrs.get('enabled')} package={attrs.get('package')}")
+PY
+printf 'exit-inject-fresh-android-tap\n' > "$phase"
+timeout 12s adb logcat -d -t 1200 -v threadtime > artifacts/immersive-exit-before-logcat.txt 2>&1 || true
+tap_action artifacts/immersive-pre-exit.xml 'Exit immersive performance'
+timeout 12s adb shell dumpsys input > artifacts/immersive-exit-dumpsys-input.txt 2>&1 || true
+timeout 12s adb shell dumpsys window > artifacts/immersive-exit-window-after-tap.txt 2>&1 || true
+
+# Bounded genuine OS accessibility polling covers delayed input delivery,
+# but NEVER interprets a still-visible EXIT as success.
+printf 'exit-poll-return-to-sound\n' > "$phase"
+exit_reached=0
+for exit_attempt in 1 2 3 4 5; do
+  sleep 1
+  dump_ui "exit-return-$exit_attempt"
+  returned_xml="artifacts/immersive-exit-return-$exit_attempt.xml"
+  if verify_ui "$returned_xml" normal; then
+    cp "$returned_xml" artifacts/immersive-returned.xml
+    printf 'exit_verified_on_poll=%s\n' "$exit_attempt" >> "$summary"
+    exit_reached=1
+    break
+  fi
+  printf 'exit_poll_%s=still_not_normal_SOUND\n' "$exit_attempt" >> "$summary"
+done
+timeout 12s adb logcat -d -t 2800 -v threadtime > artifacts/immersive-exit-after-logcat.txt 2>&1 || true
+if [[ "$exit_reached" != 1 ]]; then
+  echo 'Real EXIT tap did not return to SOUND after five fresh UiAutomator polls.' >&2
+  exit 1
+fi
 verify_ui artifacts/immersive-returned.xml normal
 printf 'enter=PASS\nkeyboard_hidden=PASS\nactual_png=PASS\nexit=PASS\n' >> "$summary"
 printf 'complete\n' > "$phase"
