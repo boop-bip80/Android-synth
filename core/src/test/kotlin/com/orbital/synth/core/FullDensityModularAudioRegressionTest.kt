@@ -21,8 +21,8 @@ import kotlin.math.abs
  * hardware profiler is required before making realtime performance promises.
  */
 class FullDensityModularAudioRegressionTest {
-    private fun fullyProgrammedSynth(): OrbitalSynth = OrbitalSynth(
-        sampleRate = 8_000, maxVoices = 16,
+    private fun fullyProgrammedSynth(sampleRate: Int = 8_000): OrbitalSynth = OrbitalSynth(
+        sampleRate = sampleRate, maxVoices = 16,
     ).apply {
         setParameter(ParameterId.WAVE, .37f)
         setParameter(ParameterId.MORPH, .24f)
@@ -134,6 +134,44 @@ class FullDensityModularAudioRegressionTest {
         }
         assertTrue(whole.modulationRoute(63).enabled)
         assertEquals(StepDirection.PING_PONG, whole.modulationSteps.direction)
+    }
+
+    /**
+     * The default 8 kHz full-capacity regression is cheap enough to run often.
+     * This bounded companion checks the same 16-voice/8-osc/8-LFO/64-route/6-FX
+     * configuration at standard audio device rates. It is intentionally an
+     * offline PCM correctness test, not a realtime CPU/thermal benchmark.
+     */
+    @Test fun fullDensityGraphIsStableAtFortyFourAndFortyEightKilohertz() {
+        for (rate in intArrayOf(44_100, 48_000)) {
+            val wholeSynth = fullyProgrammedSynth(rate)
+            val blockSynth = fullyProgrammedSynth(rate)
+            for (note in 48..63) {
+                wholeSynth.noteOn(note, .68f)
+                blockSynth.noteOn(note, .68f)
+            }
+
+            val frames = 1_536
+            val whole = FloatArray(frames * 2)
+            val piecewise = FloatArray(whole.size)
+            val scratch = FloatArray(256 * 2)
+            wholeSynth.renderStereo(whole, frames)
+            repeat(frames / 256) { chunk ->
+                blockSynth.renderStereo(scratch, 256)
+                System.arraycopy(scratch, 0, piecewise, chunk * scratch.size, scratch.size)
+            }
+
+            assertEquals("All voices must survive at sample rate " + rate, 16, wholeSynth.activeVoiceCount)
+            assertEquals("All chunked voices must survive at sample rate " + rate, 16, blockSynth.activeVoiceCount)
+            assertTrue("Full-density PCM must be audible at sample rate " + rate,
+                whole.any { abs(it) > .005f })
+            assertArrayEquals(
+                "Full-density offline PCM must be callback-size independent at sample rate " + rate,
+                whole, piecewise, 0.00001f,
+            )
+            assertTrue("Full-density PCM must be finite and bounded at sample rate " + rate,
+                whole.all { it.isFinite() && abs(it) <= 1.00001f })
+        }
     }
 
     @Test fun denseGraphCanBeEditedWhilePlayingWithoutStuckVoicesOrNaN() {
