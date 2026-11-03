@@ -31,6 +31,15 @@ internal class MidiSourcePitchBendOwnership(private val deliver: (Int) -> Unit) 
         deliver(clamped)
     }
 
+    /**
+     * MIDI CC121 resets this port/channel's bend to center. The reset is the
+     * latest expression event for our global-bend synth, but the saved bends
+     * of other connected ports remain available if this port disconnects.
+     */
+    fun onControllerReset(sourceId: Long, channel: Int) {
+        onBend(sourceId, channel, 8_192)
+    }
+
     @Synchronized
     fun onDisconnect(sourceId: Long) {
         require(sourceId > 0L) { "MIDI port source ID must be positive" }
