@@ -11,6 +11,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -77,15 +79,33 @@ class OscillatorNoisePanelTest {
                 }
             }
         }
-        compose.onNodeWithTag("oscillatorNoiseCanvas").performScrollTo()
-            .performTouchInput {
-                click(Offset(center.x * 1.6f, center.y * .4f))
-            }
+        val canvas = compose.onNodeWithTag("oscillatorNoiseCanvas")
+            .performScrollTo().assertIsDisplayed()
+        val canvasBounds = canvas.fetchSemanticsNode().boundsInRoot
+        val rootBounds = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        val intended = Offset(
+            canvasBounds.left + canvasBounds.width * .8f,
+            canvasBounds.top + canvasBounds.height * .2f,
+        )
+        assertTrue("XY tap would be outside viewport; pad=$canvasBounds, root=$rootBounds, target=$intended",
+            intended.x in rootBounds.left..rootBounds.right &&
+                intended.y in rootBounds.top..rootBounds.bottom)
+
+        // Distinguish an inert hit target from an off-center clipped touch.
+        canvas.performTouchInput { click(center) }
         compose.waitForIdle()
         compose.runOnIdle {
-            assertTrue("XY color should be 0.8, was ${slots[0].noiseColor}",
+            assertTrue("Even CENTER tap did not dispatch to noise pad; color=${slots[0].noiseColor}, pad=$canvasBounds, root=$rootBounds",
+                slots[0].noiseColor in 0.45f..0.55f)
+        }
+        canvas.performTouchInput {
+            click(Offset(center.x * 1.6f, center.y * .4f))
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertTrue("XY color should be 0.8, was ${slots[0].noiseColor}; pad=$canvasBounds, root=$rootBounds",
                 slots[0].noiseColor in 0.73f..0.87f)
-            assertTrue("XY mix should be 0.8, was ${slots[0].noiseLevel}",
+            assertTrue("XY mix should be 0.8, was ${slots[0].noiseLevel}; pad=$canvasBounds, root=$rootBounds",
                 slots[0].noiseLevel in 0.73f..0.87f)
         }
         compose.onNodeWithTag("oscillatorWave3").performScrollTo().performClick()
