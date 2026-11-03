@@ -166,6 +166,149 @@ class LiveModulationIntegrationTest {
         assertArrayEquals("Silent LFO clock must not depend on block size", a, b, 0.0001f)
     }
 
+    @Test fun routedCutoffChangesActualFilterPcmAcrossAllFiveEngines() {
+        for (engine in 0..4) {
+            val dry = synth().apply {
+                setParameter(ParameterId.ENGINE, engine / 4f)
+                setParameter(ParameterId.CUTOFF, 0.76f)
+                setParameter(ParameterId.RESONANCE, 0.2f)
+            }
+            val routed = synth().apply {
+                setParameter(ParameterId.ENGINE, engine / 4f)
+                setParameter(ParameterId.CUTOFF, 0.76f)
+                setParameter(ParameterId.RESONANCE, 0.2f)
+                setModulationRoute(0, ModSource.TOUCH_X, ModDestination.CUTOFF, -0.60f)
+                setModulationSource(ModSource.TOUCH_X, 1f)
+            }
+            dry.noteOn(60)
+            routed.noteOn(60)
+            val baseline = FloatArray(4_096 * 2)
+            val affected = FloatArray(baseline.size)
+            dry.renderStereo(baseline, 4_096)
+            routed.renderStereo(affected, 4_096)
+            assertTrue("Engine $engine cutoff route must change the filtered PCM",
+                pcmDifference(baseline, affected) > 1.0)
+            assertBounded(affected)
+        }
+    }
+
+    @Test fun resonanceHasItsOwnAudibleRouteWithoutCutoffChanges() {
+        val dry = synth().apply {
+            setParameter(ParameterId.CUTOFF, 0.55f)
+            setParameter(ParameterId.RESONANCE, 0.04f)
+        }
+        val routed = synth().apply {
+            setParameter(ParameterId.CUTOFF, 0.55f)
+            setParameter(ParameterId.RESONANCE, 0.04f)
+            setModulationRoute(0, ModSource.TOUCH_PRESSURE, ModDestination.RESONANCE, 0.85f)
+            setModulationSource(ModSource.TOUCH_PRESSURE, 1f)
+        }
+        dry.noteOn(62)
+        routed.noteOn(62)
+        val plain = FloatArray(8_192)
+        val shaped = FloatArray(plain.size)
+        dry.renderStereo(plain, plain.size / 2)
+        routed.renderStereo(shaped, shaped.size / 2)
+        assertTrue("Resonance route must change actual filter poles",
+            pcmDifference(plain, shaped) > 1.0)
+        assertBounded(shaped)
+    }
+
+    @Test fun ampAndPanRoutesCanMuteAndBalanceLiveStereo() {
+        val muted = synth().apply {
+            setModulationRoute(0, ModSource.TOUCH_X, ModDestination.AMP, -0.5f)
+            setModulationSource(ModSource.TOUCH_X, 1f)
+        }
+        muted.noteOn(60)
+        val silence = FloatArray(4_096)
+        muted.renderStereo(silence, silence.size / 2)
+        assertTrue("An AMP=0 cable must mute the dry stereo path",
+            silence.all { abs(it) < 0.000001f })
+
+        val panned = synth().apply {
+            setModulationRoute(0, ModSource.TOUCH_Y, ModDestination.PAN, 0.5f)
+            setModulationSource(ModSource.TOUCH_Y, 1f)
+        }
+        panned.noteOn(60)
+        val audio = FloatArray(4_096)
+        panned.renderStereo(audio, audio.size / 2)
+        var left = 0.0
+        var right = 0.0
+        for (frame in 0 until audio.size / 2) {
+            left += abs(audio[frame * 2].toDouble())
+            right += abs(audio[frame * 2 + 1].toDouble())
+        }
+        assertTrue("Full right PAN route must silence the left channel", left < 0.0001)
+        assertTrue("Full right PAN route must preserve audible right channel", right > 1.0)
+        assertBounded(audio)
+    }
+
+    @Test fun filterRoutesRespectClearedParityAndVariableRenderBlockSize() {
+        val reference = synth()
+        val removed = synth().apply {
+            setModulationRoute(0, ModSource.LFO1, ModDestination.CUTOFF, 0.7f)
+            clearModulationRoute(0)
+        }
+        reference.noteOn(69)
+        removed.noteOn(69)
+        val a = FloatArray(4_096)
+        val b = FloatArray(a.size)
+        reference.renderStereo(a, a.size / 2)
+        removed.renderStereo(b, b.size / 2)
+        assertArrayEquals("Cleared filter routes must leave baseline PCM bit-exact", a, b, 0f)
+
+        val large = synth()
+        val chunks = synth()
+        for (machine in arrayOf(large, chunks)) {
+            machine.setParameter(ParameterId.CUTOFF, 0.62f)
+            machine.setParameter(ParameterId.RESONANCE, 0.18f)
+            machine.setModulationRoute(0, ModSource.LFO1, ModDestination.CUTOFF, -0.37f)
+            machine.setModulationRoute(1, ModSource.LFO2, ModDestination.RESONANCE, 0.54f)
+            machine.setModulationLfo(0, true, LfoShape.TRIANGLE, rateHz = 6f)
+            machine.setModulationLfo(1, true, LfoShape.SINE, rateHz = 8f)
+            machine.noteOn(63)
+        }
+        val whole = FloatArray(4_800 * 2)
+        val small = FloatArray(96 * 2)
+        val assembled = FloatArray(whole.size)
+        large.renderStereo(whole, 4_800)
+        repeat(50) { block ->
+            chunks.renderStereo(small, 96)
+            System.arraycopy(small, 0, assembled, block * small.size, small.size)
+        }
+        assertArrayEquals("Filter modulation must be invariant to audio callback size",
+            whole, assembled, 0.0001f)
+        assertBounded(whole)
+    }
+
+    @Test fun allSixtyFourModulationCablesSaturateSafelyDuringTouchFrenzy() {
+        val machine = synth()
+        machine.setParameter(ParameterId.CUTOFF, 0.5f)
+        machine.setParameter(ParameterId.RESONANCE, 0.4f)
+        for (slot in 0 until machine.modulationRouteCount) {
+            val destination = if (slot % 2 == 0)
+                ModDestination.CUTOFF else ModDestination.RESONANCE
+            machine.setModulationRoute(slot, ModSource.TOUCH_X, destination,
+                if (slot % 3 == 0) -4f else 4f)
+        }
+        machine.noteOn(69)
+        val audio = FloatArray(256 * 2)
+        repeat(40) { block ->
+            machine.setModulationSource(ModSource.TOUCH_X, if (block % 2 == 0) 1f else -1f)
+            machine.renderStereo(audio, 256)
+            assertBounded(audio)
+        }
+        for (slot in 0 until machine.modulationRouteCount) machine.clearModulationRoute(slot)
+        machine.renderStereo(audio, 256)
+        assertBounded(audio)
+    }
+
+    private fun pcmDifference(a: FloatArray, b: FloatArray): Double {
+        var sum = 0.0
+        for (index in a.indices) sum += abs((a[index] - b[index]).toDouble())
+        return sum
+    }
+
     private fun upwardCrossings(buffer: FloatArray, startFrame: Int, endFrame: Int): Int {
         var count = 0
         for (i in startFrame + 1 until endFrame) {
