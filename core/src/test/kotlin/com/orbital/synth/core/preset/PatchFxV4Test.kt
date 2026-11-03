@@ -1,0 +1,209 @@
+package com.orbital.synth.core.preset
+
+import com.orbital.synth.core.ModulationLfoConfig
+import com.orbital.synth.core.ModulationRouteConfig
+import com.orbital.synth.core.OrbitalSynth
+import com.orbital.synth.core.OscillatorSlot
+import com.orbital.synth.core.dsp.processing.FxModuleConfig
+import com.orbital.synth.core.dsp.processing.FxModuleType
+import com.orbital.synth.core.dsp.processing.LfoShape
+import com.orbital.synth.core.dsp.processing.ModCurve
+import com.orbital.synth.core.dsp.processing.ModDestination
+import com.orbital.synth.core.dsp.processing.ModSource
+import org.junit.Assert.*
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import kotlin.math.abs
+
+class PatchFxV4Test {
+    @get:Rule val temporaryFolder = TemporaryFolder()
+
+    private val fxLayers = listOf(
+        FxModuleConfig(FxModuleType.SATURATION, true, .88f, .79f, .38f, .12f),
+        // A disabled module must retain all of its editable settings and position.
+        FxModuleConfig(FxModuleType.DELAY, false, .67f, .55f, .25f, .9f),
+        FxModuleConfig(FxModuleType.CHORUS, true, .41f, .61f, .75f, 1f),
+        FxModuleConfig(FxModuleType.TREMOLO, true, .54f, .48f, .8f, .5f),
+        FxModuleConfig(FxModuleType.DELAY, true, .32f, .43f, .1f, 1f),
+        FxModuleConfig(FxModuleType.SATURATION, false, .19f, .77f, .7f, 0f),
+    )
+    private val v3Route = ModulationRouteConfig(
+        true, ModSource.TOUCH_PRESSURE, ModDestination.PITCH, .36f, ModCurve.SOFT,
+    )
+    private val v3Lfo = ModulationLfoConfig(
+        true, LfoShape.TRIANGLE, 3f, 4f, true,
+    )
+
+    private fun rejects(action: () -> Unit) {
+        try {
+            action()
+            fail("Expected a corrupt FX patch to be rejected")
+        } catch (_: IllegalArgumentException) {
+            // Decoder and SynthPatch constructor explicitly reject malformed state.
+        }
+    }
+
+    @Test fun v4RoundTripsSixOrderedEffectsAndAllOlderSoundDesignFields() {
+        val patch = FactoryPatches.DEFAULT.copy(
+            id = "fx-preset-v4",
+            oscillatorSlots = listOf(OscillatorSlot(true, .7f, .3f, .25f, 7, -10f)),
+            modulationRoutes = listOf(v3Route),
+            modulationLfos = listOf(v3Lfo),
+            modulationTempoBpm = 128f,
+            fxSlots = fxLayers,
+        )
+        val encoded = PatchCodec.encode(patch)
+        assertEquals(4, PatchCodec.CURRENT_VERSION)
+        assertTrue(encoded.startsWith("ORBITAL-PATCH/4\n"))
+        assertTrue(encoded.contains("fx.0=1,SATURATION,"))
+        assertTrue(encoded.contains("fx.1=0,DELAY,"))
+        assertTrue(encoded.contains("fx.5=0,SATURATION,"))
+        assertTrue(encoded.contains("mod.tempo=128.0\n"))
+        assertEquals(6, encoded.lines().count { it.startsWith("fx.") })
+        assertEquals(patch, PatchCodec.decode(encoded))
+        assertEquals(encoded, PatchCodec.encode(PatchCodec.decode(encoded)))
+    }
+
+    @Test fun importingV1V2AndV3PreservesPreviousWireVersionsWithoutInventingFx() {
+        val v1 = FactoryPatches.DEFAULT
+        val v2 = v1.copy(
+            oscillatorSlots = listOf(OscillatorSlot(true, .5f, .3f, .2f, 0, 0f)),
+        )
+        val v3 = v2.copy(modulationRoutes = listOf(v3Route),
+            modulationLfos = listOf(v3Lfo), modulationTempoBpm = 133f)
+        for ((version, patch) in listOf(1 to v1, 2 to v2, 3 to v3)) {
+            val encoded = PatchCodec.encode(patch)
+            assertTrue(encoded.startsWith("ORBITAL-PATCH/${version}\n"))
+            val decoded = PatchCodec.decode(encoded)
+            assertEquals(patch, decoded)
+            assertTrue(decoded.fxSlots.isEmpty())
+            assertEquals(encoded, PatchCodec.encode(decoded))
+        }
+    }
+
+    @Test fun loadingNewAndOlderPatchesAlwaysReplacesAllSixFxConfigurations() {
+        val synth = OrbitalSynth()
+        synth.loadPatch(FactoryPatches.DEFAULT.copy(fxSlots = fxLayers))
+        for (index in fxLayers.indices) assertEquals(fxLayers[index], synth.fxSlot(index))
+
+        val oneFx = FxModuleConfig(FxModuleType.CHORUS, true, .58f, .7f, .3f, 1f)
+        synth.loadPatch(FactoryPatches.DEFAULT.copy(fxSlots = listOf(oneFx)))
+        assertEquals(oneFx, synth.fxSlot(0))
+        for (index in 1 until synth.fxSlotCount) {
+            assertEquals("Loading a short V4 patch must not inherit old FX in slot $index",
+                FxModuleConfig(), synth.fxSlot(index))
+        }
+
+        val olderV3 = FactoryPatches.DEFAULT.copy(modulationRoutes = listOf(v3Route))
+        synth.loadPatch(PatchCodec.decode(PatchCodec.encode(olderV3)))
+        for (index in 0 until synth.fxSlotCount) {
+            assertEquals("V3 must clear any previously configured V4 FX rack",
+                FxModuleConfig(), synth.fxSlot(index))
+        }
+    }
+
+    @Test fun diskSaveReopenAndLegacyRecallPreserveV4ThenClearToDryDefaults() {
+        val folder = temporaryFolder.newFolder("v4-fx-bank").toPath()
+        val writer = PatchDirectoryStore(folder)
+        val programmed = FactoryPatches.DEFAULT.copy(
+            id = "persisted-fx-stack", fxSlots = fxLayers,
+            modulationRoutes = listOf(v3Route), modulationTempoBpm = 109f,
+        )
+        writer.save(programmed)
+        val reopened = PatchDirectoryStore(folder)
+        val readBack = reopened.load(programmed.id)!!
+        assertEquals(programmed, readBack)
+        assertTrue(PatchCodec.encode(readBack).startsWith("ORBITAL-PATCH/4\n"))
+        val synth = OrbitalSynth()
+        synth.loadPatch(readBack)
+        for (i in fxLayers.indices) assertEquals(fxLayers[i], synth.fxSlot(i))
+        assertEquals(v3Route, synth.modulationRoute(0))
+        assertEquals(109f, synth.modulationTempoBpm, 0f)
+
+        writer.save(FactoryPatches.DEFAULT.copy(id = "persisted-v1"))
+        synth.loadPatch(PatchDirectoryStore(folder).load("persisted-v1")!!)
+        for (i in 0 until synth.fxSlotCount) assertEquals(FxModuleConfig(), synth.fxSlot(i))
+        assertFalse(synth.modulationRoute(0).enabled)
+    }
+
+    @Test fun v4FxRecallReachesRealStereoDspAndMatchesDirectEditorConfiguration() {
+        val encoded = PatchCodec.encode(FactoryPatches.DEFAULT.copy(
+            fxSlots = listOf(FxModuleConfig(
+                FxModuleType.SATURATION, enabled = true, wet = 1f, depth = .85f,
+            )),
+        ))
+        val decoded = PatchCodec.decode(encoded)
+        val recalled = OrbitalSynth()
+        val manual = OrbitalSynth()
+        recalled.loadPatch(decoded)
+        manual.loadPatch(FactoryPatches.DEFAULT)
+        manual.setFxSlot(0, decoded.fxSlots[0])
+        recalled.noteOn(69)
+        manual.noteOn(69)
+        val fromPatch = FloatArray(4_096 * 2)
+        val fromEditor = FloatArray(fromPatch.size)
+        recalled.renderStereo(fromPatch, 4_096)
+        manual.renderStereo(fromEditor, 4_096)
+        assertArrayEquals("V4 FX must restore the same live DSP signal as direct editor controls",
+            fromEditor, fromPatch, 0f)
+        var nonzero = 0.0
+        for (value in fromPatch) {
+            assertTrue(value.isFinite())
+            nonzero += abs(value.toDouble())
+        }
+        assertTrue(nonzero > 0.1)
+    }
+
+    @Test fun malformedFxKeysGapsDuplicateSlotsAndVersionsAreRejected() {
+        val v4 = PatchCodec.encode(FactoryPatches.DEFAULT.copy(
+            fxSlots = fxLayers.take(2),
+        ))
+        val originalFirst = "fx.0=1,SATURATION,0.88,0.79,0.38,0.12"
+        assertTrue(v4.contains(originalFirst))
+        rejects { PatchCodec.decode(v4.replace("fx.0=", "fx.6=")) }
+        rejects { PatchCodec.decode(v4.replace("fx.0=", "fx.-1=")) }
+        rejects { PatchCodec.decode(v4.replace("fx.0=", "fx.00=")) }
+        rejects { PatchCodec.decode(v4.replace("fx.0=", "fx.2=")) }
+        rejects { PatchCodec.decode(v4.replace("fx.1=", "fx.3=")) }
+        rejects { PatchCodec.decode(v4 + originalFirst + "\n") }
+        rejects { PatchCodec.decode(v4.replace("ORBITAL-PATCH/4", "ORBITAL-PATCH/3")) }
+        rejects { PatchCodec.decode(v4.replace("ORBITAL-PATCH/4", "ORBITAL-PATCH/5")) }
+        rejects { PatchCodec.decode(v4.replace("mod.tempo=120.0\n", "")) }
+        rejects { PatchCodec.decode(v4.replace(Regex("fx\\.[0-5]=[^\\n]*\\n"), "")) }
+    }
+
+    @Test fun malformedFxFlagsTypesFieldsAndUnsafeNumbersAreRejected() {
+        val v4 = PatchCodec.encode(FactoryPatches.DEFAULT.copy(
+            fxSlots = listOf(FxModuleConfig(FxModuleType.DELAY, true, .6f, .5f, .25f, .9f)),
+        ))
+        val line = "fx.0=1,DELAY,0.6,0.5,0.25,0.9"
+        assertTrue(v4.contains(line))
+        for (replacement in listOf(
+            "fx.0=2,DELAY,0.6,0.5,0.25,0.9",
+            "fx.0=1,NOT_AN_EFFECT,0.6,0.5,0.25,0.9",
+            "fx.0=1,DELAY,NaN,0.5,0.25,0.9",
+            "fx.0=1,DELAY,Infinity,0.5,0.25,0.9",
+            "fx.0=1,DELAY,-0.1,0.5,0.25,0.9",
+            "fx.0=1,DELAY,1.1,0.5,0.25,0.9",
+            "fx.0=1,DELAY,0.6,NaN,0.25,0.9",
+            "fx.0=1,DELAY,0.6,0.5,-.01,0.9",
+            "fx.0=1,DELAY,0.6,0.5,0.25,Infinity",
+            "fx.0=1,DELAY,0.6,0.5,0.25",
+            "fx.0=1,DELAY,0.6,0.5,0.25,0.9,EXTRA",
+        )) {
+            rejects { PatchCodec.decode(v4.replace(line, replacement)) }
+        }
+    }
+
+    @Test fun immutableFxSnapshotValidationRejectsInvalidOrOverCapacityValues() {
+        val original = FactoryPatches.DEFAULT
+        rejects { original.copy(fxSlots = List(7) { FxModuleConfig() }) }
+        rejects { original.copy(fxSlots = listOf(FxModuleConfig(wet = Float.NaN))) }
+        rejects { original.copy(fxSlots = listOf(FxModuleConfig(wet = -0.01f))) }
+        rejects { original.copy(fxSlots = listOf(FxModuleConfig(wet = 1.01f))) }
+        rejects { original.copy(fxSlots = listOf(FxModuleConfig(depth = Float.POSITIVE_INFINITY))) }
+        rejects { original.copy(fxSlots = listOf(FxModuleConfig(rate = Float.NEGATIVE_INFINITY))) }
+        rejects { original.copy(fxSlots = listOf(FxModuleConfig(stereo = 2f))) }
+    }
+}
