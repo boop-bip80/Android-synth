@@ -159,6 +159,7 @@ internal class Voice(private val sampleRate: Int) {
 
     fun configureOscillatorSlot(index: Int, slot: OscillatorSlot) {
         oscillatorRack.configure(index, slot)
+        if (!active && !hasTail) oscillatorRack.primeSilentSlot(index)
     }
 
     /** Called once per render block on the audio worker, never on the UI thread. */
