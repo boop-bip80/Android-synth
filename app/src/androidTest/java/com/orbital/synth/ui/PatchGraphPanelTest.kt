@@ -283,4 +283,56 @@ class PatchGraphPanelTest {
             .assertTextContains("1 STEP ROUTES (1 DORMANT)", substring = true)
     }
 
+    @Test fun pagedRoute64AndFxStageFiveRemainAccessibleWithoutNestedHorizontalScroll() {
+        val routes = mutableStateOf(List(64) { ModulationRouteConfig() })
+        val fx = mutableStateOf(listOf(
+            FxModuleConfig(FxModuleType.CHORUS, true, .5f),
+            FxModuleConfig(FxModuleType.DELAY, true, .4f),
+            FxModuleConfig(FxModuleType.REVERB, true, .4f),
+            FxModuleConfig(FxModuleType.PHASER, true, .4f),
+            FxModuleConfig(FxModuleType.BITCRUSH, true, .7f),
+            FxModuleConfig(FxModuleType.TREMOLO, true, .4f),
+        ))
+        compose.setContent {
+            MaterialTheme {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    PatchGraphPanel(
+                        oscillators = List(8) { OscillatorSlot() },
+                        lfos = List(8) { ModulationLfoConfig() },
+                        routes = routes.value,
+                        fxSlots = fx.value,
+                        onRouteChange = { index, config ->
+                            routes.value = routes.value.toMutableList().apply { set(index, config) }
+                        },
+                        onRouteClear = {},
+                        onMoveFxSlot = { from, to ->
+                            fx.value = fx.value.toMutableList().apply { add(to, removeAt(from)) }
+                        },
+                    )
+                }
+            }
+        }
+        repeat(7) {
+            compose.onNodeWithTag("patchRoutePageNext").performScrollTo().performClick()
+        }
+        compose.onNodeWithTag("patchRoutePageStatus")
+            .assertTextContains("BANK 8 / 8", substring = true)
+        compose.onNodeWithTag("patchRoute63").performScrollTo().performClick()
+        compose.onNodeWithTag("patchGraphRouteEditor").performScrollTo()
+        compose.onNodeWithTag("patchGraphDepthSlider")
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(1.25f) }
+        compose.runOnIdle {
+            assertTrue(routes.value[63].enabled)
+            assertTrue(routes.value[63].depth > 1f)
+            assertTrue(routes.value.take(63).all { it == ModulationRouteConfig() })
+        }
+        compose.onNodeWithTag("patchFx4").performScrollTo().performClick()
+        compose.onNodeWithTag("patchFxMoveLeft").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(FxModuleType.BITCRUSH, fx.value[3].type)
+            assertEquals(FxModuleType.PHASER, fx.value[4].type)
+            assertEquals(6, fx.value.size)
+        }
+    }
+
 }
