@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -96,7 +97,9 @@ fun PatchGraphPanel(
     modifier: Modifier = Modifier,
     onOscillatorSlotChange: ((Int, OscillatorSlot) -> Unit)? = null,
 ) {
-    val routeBank = List(64) { routes.getOrNull(it) ?: ModulationRouteConfig() }
+    val routeBank = remember(routes) {
+        List(64) { routes.getOrNull(it) ?: ModulationRouteConfig() }
+    }
     val graph = remember(oscillators, lfos, routes, fxSlots) {
         PatchGraphUiModel.build(oscillators, lfos, routes, fxSlots)
     }
@@ -477,41 +480,58 @@ fun PatchGraphPanel(
 
         Text("CORE VOICE + EIGHT OPTIONAL OSCILLATOR LAYERS",
             color = OrbitalPalette.Text, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                .testTag("patchGraphOscillatorChoices"),
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        Column(
+            Modifier.fillMaxWidth().testTag("patchGraphOscillatorChoices"),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            repeat(8) { index ->
-                val config = oscillators.getOrNull(index) ?: OscillatorSlot()
-                PatchChip(
-                    label = "OSC " + (index + 1),
-                    selected = config.enabled,
-                    tint = if (config.enabled) OrbitalPalette.Cyan else OrbitalPalette.Muted,
-                    description = "Toggle live oscillator layer " + (index + 1) +
-                        if (config.enabled) ", engaged" else ", bypassed",
-                    tag = "patchOscillator" + index,
-                    enabled = onOscillatorSlotChange != null,
-                ) { toggleOscillator(index) }
+            repeat(2) { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    repeat(4) { column ->
+                        val index = row * 4 + column
+                        val config = oscillators.getOrNull(index) ?: OscillatorSlot()
+                        Box(Modifier.weight(1f)) {
+                            PatchChip(
+                                label = "OSC " + (index + 1),
+                                selected = config.enabled,
+                                tint = if (config.enabled) OrbitalPalette.Cyan else OrbitalPalette.Muted,
+                                description = "Toggle live oscillator layer " + (index + 1) +
+                                    if (config.enabled) ", engaged" else ", bypassed",
+                                tag = "patchOscillator" + index,
+                                fill = true,
+                                enabled = onOscillatorSlotChange != null,
+                            ) { toggleOscillator(index) }
+                        }
+                    }
+                }
             }
         }
 
         Text("PATCH A SOURCE INTO REAL MODULATION BUS", color = OrbitalPalette.Text,
             fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-            .testTag("patchGraphLfoChoices"),
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        Column(
+            Modifier.fillMaxWidth().testTag("patchGraphLfoChoices"),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            PatchGraphUiModel.lfoSources.forEachIndexed { i, item ->
-                PatchChip(
-                    label = "LFO " + (i + 1),
-                    selected = source == item,
-                    tint = OrbitalPalette.Violet,
-                    description = "Select LFO " + (i + 1) + " as patch source",
-                    tag = "patchLfo" + i,
-                ) {
-                    source = item
-                    notice = "Selected LFO " + (i + 1) + ". Choose a live target below."
+            repeat(2) { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    repeat(4) { column ->
+                        val index = row * 4 + column
+                        val item = PatchGraphUiModel.lfoSources[index]
+                        Box(Modifier.weight(1f)) {
+                            PatchChip(
+                                label = "LFO " + (index + 1),
+                                selected = source == item,
+                                tint = OrbitalPalette.Violet,
+                                description = "Select LFO " + (index + 1) + " as patch source",
+                                tag = "patchLfo" + index,
+                                fill = true,
+                            ) {
+                                source = item
+                                notice = "Selected LFO " + (index + 1) +
+                                    ". Choose a live target below."
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -802,6 +822,7 @@ private fun PatchChip(
         enabled = enabled,
         modifier = Modifier
             .then(if (fill) Modifier.fillMaxWidth() else Modifier.widthIn(min = 50.dp))
+            .heightIn(min = 48.dp)
             .border(
                 if (selected) 1.4.dp else .6.dp,
                 if (selected) OrbitalPalette.Gold else tint.copy(alpha = .50f),
