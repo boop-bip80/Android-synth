@@ -1,0 +1,199 @@
+name: Publish verified Android emulator screenshots
+
+# A CI artifact ZIP expires after 14 days. This workflow snapshots selected
+# *actual* Android API35 framebuffers into the repository only after all five
+# Android CI jobs pass for the exact, still-current main commit.
+on:
+  workflow_run:
+    workflows:
+      - Android — build, JVM tests and emulator
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Persist genuine emulator PNGs from green main
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+      SOURCE_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Refuse stale or non-main CI provenance
+        id: freshness
+        shell: bash
+        run: |
+          set -euo pipefail
+          local_sha="$(git rev-parse HEAD)"
+          remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [[ "$local_sha" != "$SOURCE_SHA" || "$remote_sha" != "$SOURCE_SHA" ]]; then
+            echo "Stale successful CI: source=$SOURCE_SHA local=$local_sha remote=$remote_sha"
+            echo "fresh=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "fresh=true" >> "$GITHUB_OUTPUT"
+
+      - name: Download successful general screenshots
+        if: steps.freshness.outputs.fresh == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: orbital-api35-general-emulator-screenshot
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/orbital-capture/general
+
+      - name: Download successful compact screenshots
+        if: steps.freshness.outputs.fresh == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: orbital-api35-compact-emulator-screenshot
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/orbital-capture/compact
+
+      - name: Download successful stage screenshots
+        if: steps.freshness.outputs.fresh == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: orbital-api35-stage-emulator-screenshot
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/orbital-capture/stage
+
+      - name: Download successful visuals screenshots
+        if: steps.freshness.outputs.fresh == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: orbital-api35-visuals-emulator-screenshot
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/orbital-capture/visuals
+
+      - name: Validate every real PNG and record checksums
+        if: steps.freshness.outputs.fresh == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import shutil
+          import struct
+          import zlib
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "orbital-capture"
+          output = Path("docs/screenshots")
+          output.mkdir(parents=True, exist_ok=True)
+          wanted = (
+              ("general", "orbital-emulator.png", "orbital-portrait.png", "Normal portrait"),
+              ("compact", "compact-350-sound.png", "orbital-compact.png", "360 x 350dp compact SOUND"),
+              ("stage", "orbital-focus-held-note.png", "orbital-focus-held-note.png", "FOCUS live held-note"),
+              ("visuals", "orbital-oscillator-workbench.png", "orbital-oscillator-workbench.png", "OSC1 editing"),
+              ("visuals", "orbital-landscape-emulator.png", "orbital-landscape.png", "Landscape"),
+          )
+          rows = []
+          for suite, source_name, target_name, label in wanted:
+              source = root / suite / source_name
+              data = source.read_bytes()  # No fallback or illustrative art.
+              if not 4_096 <= len(data) <= 10_000_000:
+                  raise SystemExit(f"{source}: implausible screenshot size")
+              if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+                  raise SystemExit(f"{source}: not an Android PNG")
+              width, height = struct.unpack(">II", data[16:24])
+              if width < 300 or height < 300:
+                  raise SystemExit(f"{source}: invalid display geometry {width}x{height}")
+              # Parse every PNG chunk and validate CRC, rather than trusting a
+              # filename or an upload-artifact success notice.
+              pos = 8
+              seen_end = False
+              while pos < len(data):
+                  if pos + 12 > len(data):
+                      raise SystemExit(f"{source}: truncated PNG chunk")
+                  chunk_length = struct.unpack(">I", data[pos:pos+4])[0]
+                  end = pos + chunk_length + 12
+                  if end > len(data):
+                      raise SystemExit(f"{source}: chunk exceeds file")
+                  kind = data[pos+4:pos+8]
+                  expected_crc = struct.unpack(">I", data[end-4:end])[0]
+                  if zlib.crc32(data[pos+4:end-4]) & 0xFFFFFFFF != expected_crc:
+                      raise SystemExit(f"{source}: failed PNG CRC")
+                  if kind == b"IEND":
+                      seen_end = True
+                      if pos + 12 != len(data):
+                          raise SystemExit(f"{source}: data follows IEND")
+                  pos = end
+              if not seen_end:
+                  raise SystemExit(f"{source}: no PNG IEND")
+              target = output / target_name
+              shutil.copyfile(source, target)
+              digest = hashlib.sha256(data).hexdigest()
+              rows.append(f"| {label} | [{target_name}]({target_name}) | {width} x {height} | `{digest}` |")
+              print(f"{label}: {width}x{height}, {len(data)} bytes, sha256={digest}")
+
+          sha = os.environ["SOURCE_SHA"]
+          run_id = os.environ["SOURCE_RUN_ID"]
+          run_number = os.environ["SOURCE_RUN_NUMBER"]
+          provenance = [
+              "# Real ORBITAL emulator framebuffers",
+              "",
+              "These images are genuine screenshots captured by Android API 35 x86_64",
+              "from the debug APK in the same five-job fully successful GitHub Actions run.",
+              "They are not the generated concept reference or a claim of physical-device testing.",
+              "",
+              f"- Verified source commit: [`{sha}`](https://github.com/boop-bip80/Android-synth/commit/{sha})",
+              f"- Successful CI: [run #{run_number}](https://github.com/boop-bip80/Android-synth/actions/runs/{run_id})",
+              "- Source artifact names: orbital-api35-general-emulator-screenshot,",
+              "  orbital-api35-compact-emulator-screenshot,",
+              "  orbital-api35-stage-emulator-screenshot,",
+              "  orbital-api35-visuals-emulator-screenshot.",
+              "",
+              "| Actual app state | File | Pixels | SHA-256 |",
+              "| --- | --- | ---: | --- |",
+              *rows,
+              "",
+              "The concept design remains at [design/orbital-ui-reference.png](../../design/orbital-ui-reference.png).",
+              "Physical Android audio latency, thermals, MIDI and accessibility remain separate device-level gates.",
+              "",
+          ]
+          (output / "PROVENANCE.md").write_text("\n".join(provenance), encoding="utf-8")
+          PY
+
+      - name: Publish only if main still equals fully tested source
+        if: steps.freshness.outputs.fresh == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [[ "$remote_sha" != "$SOURCE_SHA" ]]; then
+            echo "Main advanced during screenshot verification; refusing stale publication."
+            exit 0
+          fi
+          git add docs/screenshots/
+          if git diff --cached --quiet; then
+            echo "Exact verified screenshots already published."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs(screenshots): persist genuine API35 images for $SOURCE_SHA"
+          # Normal fast-forward push only; a concurrent main update rejects
+          # this commit. GITHUB_TOKEN pushes do not recursively trigger CI.
+          git push origin HEAD:refs/heads/main
