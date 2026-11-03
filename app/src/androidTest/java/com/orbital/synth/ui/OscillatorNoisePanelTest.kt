@@ -82,8 +82,8 @@ class OscillatorNoisePanelTest {
                 click(Offset(size.width * .8f, size.height * .2f))
             }
         compose.runOnIdle {
-            assertTrue(slots[0].noiseColor in .73f...87f)
-            assertTrue(slots[0].noiseLevel in .73f...87f)
+            assertTrue(slots[0].noiseColor in 0.73f..0.87f)
+            assertTrue(slots[0].noiseLevel in 0.73f..0.87f)
         }
         compose.onNodeWithTag("oscillatorWave3").performScrollTo().performClick()
         compose.runOnIdle {
@@ -114,7 +114,7 @@ class OscillatorNoisePanelTest {
         compose.onNodeWithTag("oscillatorNoiseColor").performScrollTo().assertExists()
             .performSemanticsAction(SemanticsActions.SetProgress) { it(.5f) }
         compose.runOnIdle {
-            assertTrue(slots[0].noiseLevel in .88f...96f)
+            assertTrue(slots[0].noiseLevel in 0.88f..0.96f)
             assertEquals(.5f, slots[0].noiseColor, .01f)
         }
     }
