@@ -21,6 +21,11 @@ class MidiSourcePitchBendOwnershipTest {
                 owner.onBend(sourceId, channel, value)
             }
 
+            override fun onSourceControlChange(sourceId: Long, channel: Int, controller: Int, value: Int) {
+                if (controller == 121) owner.onControllerReset(sourceId, channel)
+                onControlChange(channel, controller, value)
+            }
+
             override fun onSourceDisconnected(sourceId: Long) {
                 owner.onDisconnect(sourceId)
             }
@@ -126,5 +131,65 @@ class MidiSourcePitchBendOwnershipTest {
         bend(legacyPort, 4, 9_000)
         legacyPort.close()
         assertEquals(listOf(9_000), legacyBends)
+    }
+
+
+    @Test
+    fun cc121CentersWinningPortChannelWhilePreservingSurvivingControllerBend() {
+        val h = Harness()
+        val usb = h.port(601L)
+        val bluetooth = h.port(602L)
+        bend(bluetooth, 1, 6_000)
+        bend(usb, 2, 14_000)
+        // MIDI channel 3 Reset All Controllers must center only this source.
+        usb.feed(byteArrayOf(0xB2.toByte(), 121, 0))
+        assertEquals(listOf(6_000, 14_000, 8_192), h.applied)
+        usb.close()
+        assertEquals(6_000, h.applied.last()) // B's last expression survives A.
+        bluetooth.close()
+        assertEquals(8_192, h.applied.last())
+    }
+
+    @Test
+    fun cc121FromPreviouslyUnbentPortWinsGloballyButDoesNotEraseOtherPortState() {
+        val h = Harness()
+        val other = h.port(701L)
+        val resetter = h.port(702L)
+        bend(other, 0, 15_000)
+        resetter.feed(byteArrayOf(0xB0.toByte(), 121, 0))
+        assertEquals(listOf(15_000, 8_192), h.applied)
+        resetter.close()
+        assertEquals(15_000, h.applied.last())
+        other.close()
+        assertEquals(8_192, h.applied.last())
+    }
+
+    @Test
+    fun cc121AfterDisconnectIsIgnoredAndLegacyControlCallbacksRemainSingle() {
+        val h = Harness()
+        val port = h.port(801L)
+        bend(port, 3, 3_000)
+        port.close()
+        port.feed(byteArrayOf(0xB3.toByte(), 121, 0))
+        assertEquals(listOf(3_000, 8_192), h.applied)
+
+        val controls = mutableListOf<String>()
+        val awareDefault = object : SourceAwareMidiMessageListener {
+            override fun onControlChange(channel: Int, controller: Int, value: Int) {
+                controls += "aware:$channel:$controller:$value"
+            }
+        }
+        val legacy = object : MidiMessageListener {
+            override fun onControlChange(channel: Int, controller: Int, value: Int) {
+                controls += "legacy:$channel:$controller:$value"
+            }
+        }
+        val awarePort = MidiPortSession(MidiSourceRouter(802L, awareDefault))
+        val legacyPort = MidiPortSession(MidiSourceRouter(803L, legacy))
+        awarePort.feed(byteArrayOf(0xB2.toByte(), 121, 0))
+        legacyPort.feed(byteArrayOf(0xB1.toByte(), 121, 0))
+        assertEquals(listOf("aware:2:121:0", "legacy:1:121:0"), controls)
+        awarePort.close()
+        legacyPort.close()
     }
 }
