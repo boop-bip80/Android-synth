@@ -75,6 +75,7 @@ fun ReferenceSoundControls(
     audioRms: Float = 0f,
     compact: Boolean = false,
     showExpressionRibbon: Boolean = true,
+    synthSampleRate: Int = 48_000,
 ) {
     fun param(id: ParameterId): Float =
         ReferenceSoundUiModel.normalized(parameters[id] ?: .5f)
@@ -114,17 +115,30 @@ fun ReferenceSoundControls(
                 OrbitalPalette.Violet, OrbitalPalette.Cyan,
             )
             ReferenceSoundUiModel.knobOrder.forEachIndexed { index, id ->
+                val value = ReferenceSoundValuePresentation.format(
+                    id, param(id), synthSampleRate,
+                )
+                val fullLabel = when (id) {
+                    ParameterId.FX_AMOUNT -> "FX AMOUNT"
+                    else -> id.name
+                }
+                val visualLabel = if (compact) when (id) {
+                    ParameterId.RESONANCE -> "RESO"
+                    ParameterId.FX_AMOUNT -> "FX MIX"
+                    else -> fullLabel
+                } else fullLabel
                 ReferenceNeonKnob(
-                    label = when (id) {
-                        ParameterId.FX_AMOUNT -> "FX AMOUNT"
-                        else -> id.name
-                    },
+                    label = fullLabel,
                     value = param(id),
                     tint = tints[index],
                     tag = "referenceKnob" + id.name,
                     onValueChange = { onParameterChange(id, it) },
                     modifier = Modifier.weight(1f),
                     diameter = if (compact) 48.dp else 51.dp,
+                    visualLabel = visualLabel,
+                    displayValue = value.visual,
+                    spokenValue = value.spoken,
+                    compactTypography = compact,
                 )
             }
         }
@@ -435,6 +449,10 @@ fun ReferenceNeonKnob(
     onValueChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
     diameter: Dp = 51.dp,
+    visualLabel: String = label,
+    displayValue: String? = null,
+    spokenValue: String? = null,
+    compactTypography: Boolean = false,
 ) {
     val safe = ReferenceSoundUiModel.normalized(value)
     val update by rememberUpdatedState(onValueChange)
@@ -450,8 +468,8 @@ fun ReferenceNeonKnob(
                 .size(diameter)
                 .testTag(tag)
                 .semantics {
-                    contentDescription = label + ", normalized " +
-                        (safe * 100f).roundToInt() + " percent"
+                    contentDescription = label + ", " + (spokenValue ?:
+                        ("normalized " + (safe * 100f).roundToInt() + " percent"))
                     progressBarRangeInfo = ProgressBarRangeInfo(safe, 0f..1f)
                     setProgress { next ->
                         update(ReferenceSoundUiModel.normalized(next))
@@ -528,20 +546,23 @@ fun ReferenceNeonKnob(
                 center = Offset(center.x - radius * .2f, center.y - radius * .2f))
         }
         Text(
-            label,
-            color = OrbitalPalette.Text,
-            fontSize = 8.sp,
+            visualLabel,
+            modifier = Modifier.testTag(tag + "Label"),
+            color = Color(0xFFE8F3FF),
+            fontSize = if (compactTypography) 9.sp else 10.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            letterSpacing = .3.sp,
+            letterSpacing = .15.sp,
         )
         Text(
-            "%.2f".format(safe),
+            displayValue ?: "%.2f".format(java.util.Locale.US, safe),
+            modifier = Modifier.testTag(tag + "Value"),
             color = tint,
-            fontSize = 9.sp,
+            fontSize = if (compactTypography) 9.5.sp else 10.sp,
             fontFamily = FontFamily.Monospace,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -574,8 +595,10 @@ private fun ReferenceMiniSignal(
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(title, color = OrbitalPalette.Text, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-            Text(caption, color = tint, fontSize = 7.sp, maxLines = 1,
+            Text(title, color = Color(0xFFE8F3FF),
+                fontSize = if (height <= 64.dp) 9.sp else 10.sp,
+                fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(caption, color = tint, fontSize = 9.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         }
         Canvas(Modifier.fillMaxWidth().height(if (height <= 64.dp) 29.dp else 45.dp)) {
