@@ -232,29 +232,29 @@ compact_logcat_pid=$!
 # must enumerate every other declared @Test, including the two opt-in STEP
 # process phases (which will be executed for real in a new RESTART emulator).
 stage_class=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest
-printf 'suite=%s\\nshards=2\\nshard_index=%s\\nexclusive_stage_class=%s\\n' \\
+printf 'suite=%s\nshards=2\nshard_index=%s\nexclusive_stage_class=%s\n' \
   "$ORBITAL_TEST_SUITE" "$shard_index" "$stage_class" > artifacts/instrumentation-suite.txt
-printf '%s\\n' 'discover-all-non-stage-androidx-tests' > artifacts/emulator-phase.txt
+printf '%s\n' 'discover-all-non-stage-androidx-tests' > artifacts/emulator-phase.txt
 timeout 120s adb install -r "$app_apk" > artifacts/general-manifest-app-install.txt
 timeout 120s adb install -r "$instrumentation_apk" > artifacts/general-manifest-test-install.txt
-timeout 180s adb shell am instrument -w -r \\
-  -e log true -e notClass "$stage_class" \\
-  com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \\
+timeout 180s adb shell am instrument -w -r \
+  -e log true -e notClass "$stage_class" \
+  com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
   | tee artifacts/general-runner-discovery.txt
-python3 .github/workflows/ci-verify-android-shards.py manifest \\
+python3 .github/workflows/ci-verify-android-shards.py manifest \
   artifacts/general-runner-discovery.txt artifacts/general-shard-manifest.tsv
 
 # Each job owns one real AndroidJUnitRunner shard and real Gradle UTP XML.
 # Exclusion of any other class or a failure in either runner is fatal. The
 # aggregate required gate later compares the disjoint XML union to the full
 # runner-discovered manifest from both independently booted devices.
-printf '%s\\n' 'instrumentation-shard-${shard_index}' > artifacts/emulator-phase.txt
-timeout 30m gradle :app:connectedDebugAndroidTest \\
-  -Pandroid.testInstrumentationRunnerArguments.notClass="$stage_class" \\
-  -Pandroid.testInstrumentationRunnerArguments.numShards=2 \\
-  -Pandroid.testInstrumentationRunnerArguments.shardIndex="$shard_index" \\
+printf '%s\n' "instrumentation-shard-${shard_index}" > artifacts/emulator-phase.txt
+timeout 30m gradle :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.notClass="$stage_class" \
+  -Pandroid.testInstrumentationRunnerArguments.numShards=2 \
+  -Pandroid.testInstrumentationRunnerArguments.shardIndex="$shard_index" \
   --stacktrace --no-daemon --console=plain
-python3 .github/workflows/ci-verify-android-shards.py results \\
+python3 .github/workflows/ci-verify-android-shards.py results \
   app/build/outputs/androidTest-results/connected/debug artifacts/general-shard-results.tsv
 
 # Android Gradle Plugin's connected test runner may remove the target APK
