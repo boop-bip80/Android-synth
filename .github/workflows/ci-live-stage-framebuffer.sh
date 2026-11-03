@@ -13,6 +13,15 @@ finish() {
   local result=$?
   trap - EXIT
   set +e
+  # Preserve pre-crash evidence: Android may vanish before a postmortem adb call.
+  if [[ -n "${stage_logcat_pid:-}" ]]; then
+    kill "$stage_logcat_pid" 2>/dev/null || true
+    wait "$stage_logcat_pid" 2>/dev/null || true
+  fi
+  if [[ -n "${stage_monitor_pid:-}" ]]; then
+    kill "$stage_monitor_pid" 2>/dev/null || true
+    wait "$stage_monitor_pid" 2>/dev/null || true
+  fi
   printf 'exit=%s\nphase=%s\n' "$result" "$(cat "$phase" 2>/dev/null)" >> "$summary"
   timeout 15s adb logcat -d -t 1200 -v threadtime > artifacts/held-stage-capture-logcat.txt 2>&1
   exit "$result"
@@ -58,6 +67,32 @@ read -r screen_w screen_h <<< "$dimensions"
 printf 'focus=MainActivity\ndisplay=%sx%s\n' "$screen_w" "$screen_h" >> "$summary"
 
 printf 'instrument-real-held-touch-and-pcm\n' > "$phase"
+# Stream real logcat *before* instrumentation. Postmortem adb logcat is empty if
+# the emulator dies or exits, so the existing trap alone cannot explain a 255.
+timeout 240s adb logcat -v threadtime > artifacts/held-stage-live-logcat.txt 2>&1 &
+stage_logcat_pid=$!
+# Sample only the host's memory/QEMU state. This does not touch Android's UI,
+# audio worker, screenshot pixels or instrumentation assertions.
+(
+  for sample in {1..48}; do
+    printf 'sample=%s utc=%s\n' "$sample" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [[ -r /sys/fs/cgroup/memory.current ]]; then
+      printf 'memory.current='
+      cat /sys/fs/cgroup/memory.current
+    fi
+    if [[ -r /sys/fs/cgroup/memory.events ]]; then
+      printf 'memory.events:\n'
+      cat /sys/fs/cgroup/memory.events
+    fi
+    printf 'host-memory:\n'
+    free -m 2>&1
+    printf 'qemu-process-pid-ppid-rss-kib:\n'
+    ps -eo pid,ppid,rss,comm | awk 'NR==1 || $4 ~ /emulator|qemu-system/'
+    sleep 5
+  done
+) > artifacts/held-stage-host-memory.txt 2>&1 &
+stage_monitor_pid=$!
+printf 'live_logcat_pid=%s\nhost_sampler_pid=%s\n' "$stage_logcat_pid" "$stage_monitor_pid" >> "$summary"
 timeout 210s adb shell am instrument -w -r \
   -e class 'com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest#photographsVividStageDuringRealAudioTrackHeldNoteAndReleasesSafely' \
   com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
