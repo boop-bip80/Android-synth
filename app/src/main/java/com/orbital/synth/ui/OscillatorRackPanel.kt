@@ -247,7 +247,7 @@ fun OscillatorRackPanel(
                     onClick = {
                         onSlotChange(
                             selected,
-                            layer.copy(coarseSemitones = (layer.coarseSemitones - 1).coerceAtLeast(-24)),
+                            layer.copy(coarseSemitones = (layer.coarseSemitones - 1).coerceAtLeast(-48)),
                         )
                     },
                     modifier = Modifier.testTag("oscillatorCoarseDown"),
@@ -263,7 +263,7 @@ fun OscillatorRackPanel(
                     onClick = {
                         onSlotChange(
                             selected,
-                            layer.copy(coarseSemitones = (layer.coarseSemitones + 1).coerceAtMost(24)),
+                            layer.copy(coarseSemitones = (layer.coarseSemitones + 1).coerceAtMost(48)),
                         )
                     },
                     modifier = Modifier.testTag("oscillatorCoarseUp"),
