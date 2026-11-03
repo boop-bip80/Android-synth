@@ -266,8 +266,7 @@ class ReferenceSoundHeroTest {
                     ParameterId.MORPH to .42f,
                     ParameterId.MOVEMENT to .52f,
                 ),
-                lfos = emptyList(),
-                routes = emptyList(),
+                lfos = emptyList(), routes = emptyList(),
                 patchName = "SAME DISPLAY NAME",
                 patchId = patchId,
                 onParameterChange = { id, _ -> recorded.add(patchId to id) },
@@ -277,27 +276,139 @@ class ReferenceSoundHeroTest {
                 },
             )
         }
-        compose.onNodeWithTag("referenceSoundHeroOrb").performTouchInput {
+        val field = compose.onNodeWithTag("referenceSoundHeroOrb")
+        // First establish non-vacuous XY movement on the OLD patch.
+        field.performTouchInput {
             val width = center.x * 2f
             val height = center.y * 2f
-            // Pointer A holds overlaid ribbon; pointer B taps the 48dp
-            // NEXT PATCH button while A is STILL DOWN.
             down(0, Offset(width * .68f, height * .76f))
+            moveTo(0, Offset(width * .62f, height * .82f))
+        }
+        compose.runOnIdle {
+            assertTrue("The old ribbon finger must first edit old sound",
+                recorded.any { it.first == "factory:1" })
+        }
+        // A remains HELD. Second pointer presses NEXT PATCH button.
+        field.performTouchInput {
+            val width = center.x * 2f
+            val height = center.y * 2f
             down(1, Offset(width * .21f, height * .36f))
             up(1)
-            // A now moves far enough to trigger a drag recognizer; it must
-            // not mutate the new patch after the navigation transaction.
-            moveTo(0, Offset(width * .27f, height * .92f))
-            up(0)
         }
         compose.runOnIdle {
             assertEquals(1, navCount)
             assertEquals("factory:2", patchId)
-            assertFalse(
-                "Old XY touch cannot edit a newly selected patch: $recorded",
-                recorded.any { it.first == "factory:2" },
+        }
+        field.performTouchInput {
+            val width = center.x * 2f
+            val height = center.y * 2f
+            moveTo(0, Offset(width * .27f, height * .92f))
+            up(0)
+        }
+        compose.runOnIdle {
+            assertFalse("Stale held XY edited freshly loaded patch: $recorded",
+                recorded.any { it.first == "factory:2" })
+        }
+    }
+
+    @Test fun heldXyFingerCannotWriteNewEngineAfterSecondFingerOpensEngine() {
+        var engineName by mutableStateOf("SYNTH ENGINE A")
+        var navCount = 0
+        val recorded = mutableListOf<String>()
+        compose.setContent {
+            ReferenceSoundHero(
+                parameters = mapOf(
+                    ParameterId.MORPH to .32f,
+                    ParameterId.MOVEMENT to .51f,
+                ),
+                lfos = emptyList(), routes = emptyList(),
+                engineName = engineName,
+                onParameterChange = { _, _ -> recorded.add(engineName) },
+                onOpenEngine = {
+                    navCount++
+                    engineName = "SYNTH ENGINE B"
+                },
             )
         }
+        val field = compose.onNodeWithTag("referenceSoundHeroOrb")
+        field.performTouchInput {
+            val width = center.x * 2f
+            val height = center.y * 2f
+            down(0, Offset(width * .68f, height * .76f))
+            moveTo(0, Offset(width * .60f, height * .85f))
+        }
+        compose.runOnIdle {
+            assertTrue(recorded.any { it == "SYNTH ENGINE A" })
+        }
+        field.performTouchInput {
+            val width = center.x * 2f
+            val height = center.y * 2f
+            // ENGINE has a >=48dp hit box in top RIGHT.
+            down(1, Offset(width * .82f, height * .14f))
+            up(1)
+        }
+        compose.runOnIdle {
+            assertEquals(1, navCount)
+            assertEquals("SYNTH ENGINE B", engineName)
+        }
+        field.performTouchInput {
+            val width = center.x * 2f
+            val height = center.y * 2f
+            moveTo(0, Offset(width * .16f, height * .95f))
+            up(0)
+        }
+        compose.runOnIdle {
+            assertFalse("Old XY gesture wrote new engine's parameters: $recorded",
+                recorded.any { it == "SYNTH ENGINE B" })
+        }
+    }
+
+    @Test fun patchSwitchCannotLetCanceledOldOrbPointerDarkenFreshFinger() {
+        var patchId by mutableStateOf("A")
+        compose.setContent {
+            ReferenceSoundHero(
+                parameters = mapOf(ParameterId.MORPH to .45f),
+                lfos = emptyList(), routes = emptyList(),
+                patchId = patchId,
+                onParameterChange = { _, _ -> },
+                onNextPatch = { patchId = "B" },
+            )
+        }
+        val field = compose.onNodeWithTag("referenceSoundHeroOrb")
+        val orb = compose.onNodeWithTag("referenceHeroOrbInput")
+        field.performTouchInput {
+            val width = center.x * 2f
+            val height = center.y * 2f
+            down(0, Offset(width * .64f, height * .55f))
+        }
+        compose.waitForIdle()
+        assertEquals("Touch engaged",
+            orb.fetchSemanticsNode().config[SemanticsProperties.StateDescription])
+        field.performTouchInput {
+            val width = center.x * 2f
+            val height = center.y * 2f
+            down(1, Offset(width * .21f, height * .36f))
+            up(1)
+        }
+        compose.runOnIdle { assertEquals("B", patchId) }
+        // While stale finger 0 is still held, an independent new finger 2
+        // enters the *new patch*. Old pointer cancellation must not clear it.
+        field.performTouchInput {
+            val width = center.x * 2f
+            val height = center.y * 2f
+            down(2, Offset(width * .73f, height * .58f))
+        }
+        compose.waitForIdle()
+        assertEquals("Touch engaged",
+            orb.fetchSemanticsNode().config[SemanticsProperties.StateDescription])
+        field.performTouchInput { up(0) }
+        compose.waitForIdle()
+        assertEquals("Touch engaged",
+            orb.fetchSemanticsNode().config[SemanticsProperties.StateDescription])
+        field.performTouchInput { up(2) }
+        compose.waitForIdle()
+        assertEquals("Touch ready",
+            orb.fetchSemanticsNode().config[SemanticsProperties.StateDescription])
     }
 
 }

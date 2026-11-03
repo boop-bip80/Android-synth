@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -117,6 +118,7 @@ fun ReferenceSoundHero(
     val gate = remember { ReferenceHeroGestureGate() }
     var navigationEpoch by remember { mutableIntStateOf(0) }
     var fingerPressed by remember { mutableStateOf(false) }
+    var fingerSession by remember { mutableLongStateOf(0L) }
     var touchX by remember { mutableFloatStateOf(.5f) }
     var touchY by remember { mutableFloatStateOf(.5f) }
     val height: Dp = if (compact) 230.dp else 278.dp
@@ -124,6 +126,7 @@ fun ReferenceSoundHero(
 
     fun haltGestureAndNavigate(action: () -> Unit) {
         gate.invalidate() // Suppress held-finger moves before patch mutation.
+        fingerSession++ // Old coroutine cleanup must not darken a NEW finger.
         navigationEpoch++
         fingerPressed = false
         action()
@@ -198,6 +201,8 @@ fun ReferenceSoundHero(
                         awaitEachGesture {
                             val first = awaitFirstDown(requireUnconsumed = false)
                             val ownerTicket = gate.ticket()
+                            fingerSession++
+                            val ownerSession = fingerSession
                             fingerPressed = true
                             try {
                                 if (gate.allows(ownerTicket)) update(
@@ -221,7 +226,9 @@ fun ReferenceSoundHero(
                                     owner.consume()
                                 }
                             } finally {
-                                fingerPressed = false
+                                if (fingerSession == ownerSession && gate.allows(ownerTicket)) {
+                                    fingerPressed = false
+                                }
                             }
                         }
                     },
