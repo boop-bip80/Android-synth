@@ -3,6 +3,9 @@ package com.orbital.synth.ui
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -164,7 +167,8 @@ class PatchCableTraceCardTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchCableTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("patchCableTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     PatchGraphPanel(
                         oscillators = emptyList(),
                         lfos = lfos,
@@ -180,6 +184,7 @@ class PatchCableTraceCardTest {
                         },
                         onMoveFxSlot = { _, _ -> },
                     )
+                    }
                 }
             }
         }

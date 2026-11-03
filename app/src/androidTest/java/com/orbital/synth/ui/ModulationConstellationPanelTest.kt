@@ -2,6 +2,9 @@ package com.orbital.synth.ui
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -38,7 +41,8 @@ class ModulationConstellationPanelTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("modulationTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("modulationTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     ModulationConstellationPanel(
                         lfos = List(8) { ModulationLfoConfig(enabled = it == 0) },
                         routes = List(64) { if (it == 0) first else ModulationRouteConfig() },
@@ -50,6 +54,7 @@ class ModulationConstellationPanelTest {
                         },
                         onTempoChange = {},
                     )
+                    }
                 }
             }
         }
@@ -72,7 +77,8 @@ class ModulationConstellationPanelTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("modulationTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("modulationTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     ModulationConstellationPanel(
                         lfos = List(8) { ModulationLfoConfig(enabled = it == 0) },
                         routes = List(64) { if (it == 0) selected else ModulationRouteConfig() },
@@ -82,6 +88,7 @@ class ModulationConstellationPanelTest {
                         onRouteClear = {},
                         onTempoChange = {},
                     )
+                    }
                 }
             }
         }
@@ -110,7 +117,8 @@ class ModulationConstellationPanelTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("modulationTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("modulationTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     ModulationConstellationPanel(
                         lfos = List(8) { ModulationLfoConfig() },
                         routes = List(64) { ModulationRouteConfig() },
@@ -123,6 +131,7 @@ class ModulationConstellationPanelTest {
                         onStepChange = { livePattern = it },
                         stepPlayhead = 3,
                     )
+                    }
                 }
             }
         }
@@ -147,7 +156,8 @@ class ModulationConstellationPanelTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("modulationTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("modulationTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     ModulationConstellationPanel(
                         lfos = List(8) { ModulationLfoConfig() },
                         routes = List(64) { ModulationRouteConfig() },
@@ -157,6 +167,7 @@ class ModulationConstellationPanelTest {
                         onRouteClear = {},
                         onTempoChange = {},
                     )
+                    }
                 }
             }
         }

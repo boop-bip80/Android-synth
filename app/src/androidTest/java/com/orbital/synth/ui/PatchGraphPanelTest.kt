@@ -2,6 +2,9 @@ package com.orbital.synth.ui
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -55,7 +58,8 @@ class PatchGraphPanelTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("patchGraphTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     PatchGraphPanel(
                         oscillators = List(8) { OscillatorSlot() },
                         lfos = List(8) { ModulationLfoConfig(enabled = true) },
@@ -71,6 +75,7 @@ class PatchGraphPanelTest {
                         },
                         onMoveFxSlot = { _, _ -> },
                     )
+                    }
                 }
             }
         }
@@ -105,7 +110,8 @@ class PatchGraphPanelTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("patchGraphTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     PatchGraphPanel(
                         oscillators = emptyList(),
                         lfos = List(8) { ModulationLfoConfig() },
@@ -119,6 +125,7 @@ class PatchGraphPanelTest {
                             }
                         },
                     )
+                    }
                 }
             }
         }
@@ -138,7 +145,8 @@ class PatchGraphPanelTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("patchGraphTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     PatchGraphPanel(
                         oscillators = layers.value,
                         lfos = List(8) { ModulationLfoConfig() },
@@ -151,6 +159,7 @@ class PatchGraphPanelTest {
                             layers.value = layers.value.toMutableList().apply { set(index, config) }
                         },
                     )
+                    }
                 }
             }
         }
@@ -177,7 +186,8 @@ class PatchGraphPanelTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("patchGraphTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     PatchGraphPanel(
                         oscillators = emptyList(),
                         lfos = List(8) { ModulationLfoConfig() },
@@ -191,6 +201,7 @@ class PatchGraphPanelTest {
                             }
                         },
                     )
+                    }
                 }
             }
         }
@@ -221,7 +232,8 @@ class PatchGraphPanelTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("patchGraphTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     PatchGraphPanel(
                         oscillators = emptyList(),
                         lfos = List(8) { ModulationLfoConfig(enabled = true) },
@@ -235,6 +247,7 @@ class PatchGraphPanelTest {
                         onRouteClear = {},
                         onMoveFxSlot = { _, _ -> },
                     )
+                    }
                 }
             }
         }
@@ -274,7 +287,8 @@ class PatchGraphPanelTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("patchGraphTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     PatchGraphPanel(
                         oscillators = emptyList(),
                         lfos = List(8) { ModulationLfoConfig() },
@@ -287,6 +301,7 @@ class PatchGraphPanelTest {
                         onMoveFxSlot = { _, _ -> },
                         stepConfig = step.value,
                     )
+                    }
                 }
             }
         }
@@ -319,7 +334,8 @@ class PatchGraphPanelTest {
         val scroll = ScrollState(0)
         compose.setContent {
             MaterialTheme {
-                Column(Modifier.widthIn(max = 360.dp).verticalScroll(scroll).testTag("patchGraphTestViewport")) {
+                Box(Modifier.widthIn(max = 360.dp).fillMaxHeight().testTag("patchGraphTestViewport")) {
+                    Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     PatchGraphPanel(
                         oscillators = List(8) { OscillatorSlot() },
                         lfos = List(8) { ModulationLfoConfig() },
@@ -333,6 +349,7 @@ class PatchGraphPanelTest {
                             fx.value = fx.value.toMutableList().apply { add(to, removeAt(from)) }
                         },
                     )
+                    }
                 }
             }
         }
