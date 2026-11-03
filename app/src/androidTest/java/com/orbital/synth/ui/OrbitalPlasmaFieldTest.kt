@@ -63,7 +63,7 @@ class OrbitalPlasmaFieldTest {
         val luminous = quiet.luminousPixels(minChannel = 36)
         assertTrue(
             "Idle plasma must have genuinely luminous visible Android pixels; " +
-                "count=" + luminous + " ROI=" + quietAgain.regionLabel(),
+                "count=" + luminous + " ROI=" + quiet.regionLabel(),
             luminous > 15,
         )
         // A cold Android compositor can show an in-flight initial GPU
