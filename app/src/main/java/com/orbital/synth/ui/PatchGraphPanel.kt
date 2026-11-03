@@ -223,7 +223,7 @@ fun PatchGraphPanel(
         Text(
             "8 OSC LAYERS  •  8 LFO SOURCES" +
                 (if (stepConfig != null) " + STEP" else "") + "  •  " + fxSlots.size +
-                " ORDERED FX  /  " + graph.liveRouteCount + " LIVE BUSES",
+                " ORDERED FX  /  " + graph.liveRouteCount + " CONFIGURED DSP ROUTES",
             color = OrbitalPalette.Muted,
             fontSize = 10.sp,
             fontFamily = FontFamily.Monospace,
