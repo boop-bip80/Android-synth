@@ -8,6 +8,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,12 +39,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -57,6 +62,8 @@ import com.orbital.synth.core.dsp.processing.LfoShape
 import com.orbital.synth.core.dsp.processing.ModCurve
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
+import com.orbital.synth.core.dsp.processing.StepDirection
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
@@ -77,6 +84,11 @@ fun ModulationConstellationPanel(
     onRouteClear: (Int) -> Unit,
     onTempoChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    /** Null means the host has not yet connected the real DSP sequencer. */
+    stepConfig: ModulationStepConfig? = null,
+    onStepChange: ((ModulationStepConfig) -> Unit)? = null,
+    /** Audio-worker playhead; never a guessed UI animation counter. */
+    stepPlayhead: Int = 0,
 ) {
     val lanes = List(8) { lfos.getOrNull(it) ?: ModulationLfoConfig() }
     val patch = List(64) { routes.getOrNull(it) ?: ModulationRouteConfig() }
@@ -148,6 +160,10 @@ fun ModulationConstellationPanel(
             lanes.forEachIndexed { index, config ->
                 LfoCard(index, config) { onLfoChange(index, it) }
             }
+        }
+
+        if (stepConfig != null && onStepChange != null) {
+            StepRhythmPanel(stepConfig, stepPlayhead, onStepChange)
         }
 
         Text("PATCH BAY  /  SELECT ANY OF 64 ROUTES", color = OrbitalPalette.Text,
