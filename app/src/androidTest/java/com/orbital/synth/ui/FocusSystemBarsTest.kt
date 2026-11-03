@@ -98,6 +98,54 @@ class FocusSystemBarsTest {
         "window={$window} activity={$activity} input={$input} accessibility={$activeRoot}"
     }.getOrElse { "window focus dump unavailable: ${it.javaClass.simpleName}: ${it.message}" }
 
+    /**
+     * Android's first immersive session teaches the user how to restore navigation:
+     * AOSP creates an ImmersiveModeConfirmation SystemUI window with an OK button.
+     * In a fresh emulator this trusted overlay steals focus and covers the top edge.
+     *
+     * A real user must acknowledge the education. For this instrumentation test,
+     * click ONLY that exact foreground Android system window's own button through
+     * UiAutomation, as a user would. Never dismiss other system prompts or app ANRs,
+     * and NEVER bypass the overlay by editing secure settings.
+     */
+    private fun acknowledgeFirstRunSystemImmersiveEducation(): Boolean {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val windowDump = automation.executeShellCommand("dumpsys window")
+        val promptOwnsFocus =
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(windowDump)
+                .bufferedReader().use { stream ->
+                    stream.lineSequence().any {
+                        "mCurrentFocus=" in it && "ImmersiveModeConfirmation" in it
+                    }
+                }
+        if (!promptOwnsFocus) return false
+
+        val root = automation.rootInActiveWindow ?: return false
+        val pending = java.util.ArrayDeque<android.view.accessibility.AccessibilityNodeInfo>()
+        pending.add(root)
+        var traversed = 0
+        while (pending.isNotEmpty() && traversed++ < 100) {
+            val node = pending.removeFirst()
+            val isButton = node.className?.toString() == "android.widget.Button"
+            val buttonId = node.viewIdResourceName.orEmpty()
+            val buttonText = node.text?.toString()?.trim()?.lowercase().orEmpty()
+            if (isButton && node.isClickable &&
+                (buttonId == "com.android.systemui:id/ok" ||
+                    buttonText == "got it" || buttonText == "ok")) {
+                val acknowledged = node.performAction(
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK,
+                )
+                println("ORBITAL_SYSTEM_IMMERSIVE_CONFIRMATION acknowledged=$acknowledged buttonId=$buttonId")
+                return acknowledged
+            }
+            for (index in 0 until node.childCount) {
+                node.getChild(index)?.let(pending::addLast)
+            }
+        }
+        println("ORBITAL_SYSTEM_IMMERSIVE_CONFIRMATION exact focused overlay present but OK button not accessible")
+        return false
+    }
+
     private fun behavior(): Int {
         var value = Int.MIN_VALUE
         compose.activityRule.scenario.onActivity { activity ->
@@ -158,6 +206,15 @@ class FocusSystemBarsTest {
             val focusedBeforeCapture = appHasWindowFocus()
             val barsBeforeCapture = bars()
             if (!focusedBeforeCapture || barsBeforeCapture != Bars(false, false)) {
+                // On first-entry Android itself displays an immersive navigation
+                // tutorial. Acknowledge only that identified, user-facing prompt
+                // before demanding a genuine foreground + black-edge screenshot.
+                if (!focusedBeforeCapture && attempts <= 4 &&
+                    acknowledgeFirstRunSystemImmersiveEducation()) {
+                    latestEvidence = "attempt=$attempts acknowledged Android immersive navigation tutorial"
+                    Thread.sleep(300L)
+                    continue
+                }
                 latestEvidence =
                     "attempt=$attempts rejected: foregroundFocus=$focusedBeforeCapture " +
                         "windowBars=$barsBeforeCapture"
