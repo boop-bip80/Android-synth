@@ -103,17 +103,25 @@ internal object NativeCanvasPixelCapture {
         decorScreenX: Int,
         decorScreenY: Int,
         expectedForegroundPackage: String,
+        windowIsFocused: Boolean,
         columns: Int = 48,
         rows: Int = 48,
     ): NativeCanvasPixelEvidence {
         require(columns in 8..128 && rows in 8..128)
 
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        // Accessibility may expose no active root during a valid foreground
+        // Compose frame on API35. The real Activity's input window focus is
+        // required even when the Accessibility node tree is temporarily null.
+        assertTrue(
+            "Refusing framebuffer proof: measured Activity window lacks focus",
+            windowIsFocused,
+        )
         val foreground = automation.rootInActiveWindow?.packageName?.toString()
         assertTrue(
             "Native framebuffer foreground mismatch: root=" + foreground +
                 " activity=" + expectedForegroundPackage,
-            foreground == expectedForegroundPackage,
+            foreground == null || foreground == expectedForegroundPackage,
         )
 
         var screenshot: Bitmap? = null
@@ -154,5 +162,42 @@ internal object NativeCanvasPixelCapture {
         } finally {
             frame.recycle()
         }
+    }
+
+    /**
+     * Acquire two genuinely stable live compositor frames before attributing
+     * later differences to PCM or touch. Initial Surface/AGSL presentation
+     * can differ between consecutive system screenshots on a cold emulator.
+     * No unstable baseline is accepted; timeouts fail the assertion.
+     */
+    fun awaitStableSilentFrame(
+        initial: NativeCanvasPixelEvidence,
+        takeNext: () -> NativeCanvasPixelEvidence,
+        meaningfulChanges: (
+            NativeCanvasPixelEvidence,
+            NativeCanvasPixelEvidence,
+        ) -> Int,
+        maxQuietChangesExclusive: Int = 24,
+        maxFollowups: Int = 8,
+    ): Pair<NativeCanvasPixelEvidence, Int> {
+        require(maxFollowups in 1..12)
+        var previous = initial
+        var lastDrift = -1
+        for (attempt in 1..maxFollowups) {
+            Thread.sleep(150L)
+            val next = takeNext()
+            val drift = meaningfulChanges(previous, next)
+            if (drift < maxQuietChangesExclusive) {
+                return next to drift
+            }
+            lastDrift = drift
+            previous = next
+        }
+        throw AssertionError(
+            "Real Android silent framebuffer failed to settle after " +
+                maxFollowups + " follow-ups; last meaningful-pixel drift=" +
+                lastDrift + " (must stay <" + maxQuietChangesExclusive +
+                "). Cannot claim sound-to-pixel proof.",
+        )
     }
 }
