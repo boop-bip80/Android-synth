@@ -29,6 +29,7 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
     private val targetGain = FloatArray(SLOT_COUNT)
     private val currentRatio = DoubleArray(SLOT_COUNT) { 1.0 }
     private val targetRatio = DoubleArray(SLOT_COUNT) { 1.0 }
+    private val mipCeilingRatio = DoubleArray(SLOT_COUNT) { 1.0 }
     private val mipLevel = IntArray(SLOT_COUNT)
     private val mipFade = FloatArray(SLOT_COUNT)
 
@@ -50,6 +51,11 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
         targetRatio[index] = 2.0.pow(
             (slot.coarseSemitones.toDouble() * 100.0 + slot.fineCents.toDouble()) / 1200.0
         )
+        // Freeze a conservative harmonic ceiling for the lifetime of this edit.
+        // Re-evaluating a decaying currentRatio at every render-block boundary
+        // would select brighter mip tables sooner in 256-frame blocks than in a
+        // single 8192-frame block, changing audio based on callback buffer size.
+        mipCeilingRatio[index] = max(currentRatio[index], targetRatio[index])
         if (targetGain[index] > 0f || currentGain[index] > 0f) hasLayers = true
     }
 
@@ -61,7 +67,7 @@ internal class LayeredOscillatorRack(private val sampleRate: Int) {
         if (!hasLayers) return
         for (i in 0 until SLOT_COUNT) {
             if (targetGain[i] <= 0f && currentGain[i] <= 0f) continue
-            val highestHz = highestBaseHz * max(currentRatio[i], targetRatio[i])
+            val highestHz = highestBaseHz * mipCeilingRatio[i]
             mipLevel[i] = WavetableBank.levelForFrequency(highestHz, sampleRate)
             mipFade[i] = WavetableBank.fadeToLowerLevel(highestHz, sampleRate, mipLevel[i])
         }
