@@ -128,8 +128,7 @@ internal fun ImmersiveStage(
                 .fillMaxSize()
                 .testTag("immersiveCanvas")
                 .semantics {
-                    contentDescription =
-                        "Keyboardless immersive touch instrument; play and sculpt sound by moving your fingers"
+                    contentDescription = "Immersive sound field"
                 }
                 .pointerInput(mapper) {
                     // awaitEachGesture completes only after every pointer is up.
