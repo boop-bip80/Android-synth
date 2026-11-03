@@ -1,6 +1,12 @@
 package com.orbital.synth.preset
 
 import com.orbital.synth.core.OscillatorSlot
+import com.orbital.synth.core.ModulationRouteConfig
+import com.orbital.synth.core.ModulationLfoConfig
+import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModDestination
+import com.orbital.synth.core.dsp.processing.ModCurve
+import com.orbital.synth.core.dsp.processing.LfoShape
 
 import com.orbital.synth.core.preset.FactoryPresets
 import com.orbital.synth.core.preset.PatchCodec
@@ -209,4 +215,46 @@ class UserPatchRepositoryTest {
         failure(repository.listUser(), PatchFailureKind.INVALID_FORMAT)
         failure(repository.load("user-broken"), PatchFailureKind.INVALID_FORMAT)
     }
+    @Test fun v3UserPatchSaveOverwriteAndImportPreserveModulationState() = runBlocking {
+        val folder = temp.newFolder("modulation-patches").toPath()
+        var route = ModulationRouteConfig(
+            true, ModSource.TOUCH_PRESSURE, ModDestination.MORPH,
+            0.7f, ModCurve.SOFT,
+        )
+        var lfo = ModulationLfoConfig(
+            true, LfoShape.SAMPLE_HOLD, 3.5f, 4f, true,
+        )
+        var tempo = 136f
+        val repository = UserPatchRepository(
+            PatchDirectoryStore(folder),
+            { mapOf("CUTOFF" to .65f) },
+            {},
+            Dispatchers.Unconfined,
+            snapshotModulationRoutes = { listOf(route) },
+            snapshotModulationLfos = { listOf(lfo) },
+            snapshotModulationTempo = { tempo },
+        )
+        val first = success(repository.saveCurrentAs("Satellite Sweep"))
+        assertEquals(listOf(route), first.patch.modulationRoutes)
+        assertEquals(listOf(lfo), first.patch.modulationLfos)
+        assertEquals(136f, first.patch.modulationTempoBpm, 0f)
+        val exported = success(repository.exportPatchText(first.patch.id))
+        assertTrue(exported.startsWith("ORBITAL-PATCH/3\n"))
+        assertEquals(first.patch, PatchCodec.decode(exported))
+
+        // A subsequent edit must not retroactively change earlier saved snapshots.
+        route = route.copy(destination = ModDestination.PITCH, depth = -.35f)
+        lfo = lfo.copy(shape = LfoShape.TRIANGLE, rateHz = 6f)
+        tempo = 98f
+        val replaced = success(repository.overwriteCurrent(first.patch.id))
+        assertEquals(listOf(route), replaced.modulationRoutes)
+        assertEquals(listOf(lfo), replaced.modulationLfos)
+        assertEquals(98f, replaced.modulationTempoBpm, 0f)
+        assertEquals(replaced, success(repository.load(first.patch.id)))
+        val second = success(repository.importPatchText(exported))
+        assertEquals(first.patch.modulationRoutes, second.patch.modulationRoutes)
+        assertEquals(first.patch.modulationLfos, second.patch.modulationLfos)
+        assertEquals(first.patch.modulationTempoBpm, second.patch.modulationTempoBpm, 0f)
+    }
+
 }

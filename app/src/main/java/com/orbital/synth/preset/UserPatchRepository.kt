@@ -3,6 +3,8 @@ package com.orbital.synth.preset
 import android.content.Context
 import com.orbital.synth.core.OrbitalSynth
 import com.orbital.synth.core.OscillatorSlot
+import com.orbital.synth.core.ModulationLfoConfig
+import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.ParameterId
 import com.orbital.synth.core.preset.FactoryPresets
 import com.orbital.synth.core.preset.PatchCodec
@@ -46,6 +48,9 @@ class UserPatchRepository internal constructor(
     private val applyPatch: (SynthPatch) -> Unit,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val snapshotOscillators: () -> List<OscillatorSlot> = { emptyList() },
+    private val snapshotModulationRoutes: () -> List<ModulationRouteConfig> = { emptyList() },
+    private val snapshotModulationLfos: () -> List<ModulationLfoConfig> = { emptyList() },
+    private val snapshotModulationTempo: () -> Float = { 120f },
 ) {
     constructor(context: Context, synth: OrbitalSynth) : this(
         PatchDirectoryStore(
@@ -56,6 +61,13 @@ class UserPatchRepository internal constructor(
         snapshotOscillators = {
             List(synth.oscillatorSlotCount) { index -> synth.oscillatorSlot(index) }
         },
+        snapshotModulationRoutes = {
+            List(synth.modulationRouteCount) { index -> synth.modulationRoute(index) }
+        },
+        snapshotModulationLfos = {
+            List(synth.modulationLfoCount) { index -> synth.modulationLfo(index) }
+        },
+        snapshotModulationTempo = { synth.modulationTempoBpm },
     )
 
     private val mutex = Mutex()
@@ -99,6 +111,9 @@ class UserPatchRepository internal constructor(
                 id = id, name = cleanName, description = description,
                 tags = tags.toSet(), parameters = snapshotParameters().toMap(),
                 oscillatorSlots = snapshotOscillators().toList(),
+                modulationRoutes = snapshotModulationRoutes().toList(),
+                modulationLfos = snapshotModulationLfos().toList(),
+                modulationTempoBpm = snapshotModulationTempo(),
             )
             store.save(patch)
             PatchOutcome.Success(SavedUserPatch(patch, id != base))
@@ -122,6 +137,9 @@ class UserPatchRepository internal constructor(
                 tags = tags?.toSet() ?: current.tags,
                 parameters = snapshotParameters().toMap(),
                 oscillatorSlots = snapshotOscillators().toList(),
+                modulationRoutes = snapshotModulationRoutes().toList(),
+                modulationLfos = snapshotModulationLfos().toList(),
+                modulationTempoBpm = snapshotModulationTempo(),
             )
             store.save(patch)
             PatchOutcome.Success(patch)
@@ -145,7 +163,7 @@ class UserPatchRepository internal constructor(
         }
     }
 
-    /** Export as V1 for legacy patches, V2 for patches with editable oscillator slots. */
+    /** Export V1/V2 legacy or V3 modular patches, preserving the loaded format's data. */
     suspend fun exportPatchText(id: String): PatchOutcome<String> = onIo {
         safe(PatchFailureKind.INVALID_FORMAT) {
             when (val resolved = resolve(id)) {
