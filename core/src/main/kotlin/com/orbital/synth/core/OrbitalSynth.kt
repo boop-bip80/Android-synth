@@ -33,8 +33,9 @@ import kotlin.math.sqrt
  *
  * [noteOn], [noteOff], [allNotesOff], [setVoiceMode], [setPitchBend] and [setParameter]
  * are safe to call from UI/MIDI threads. Only a single dedicated audio thread should
- * call [renderStereo]. Incoming notes/mode events are applied in order at block boundaries;
- * controls and pitch bend are atomic latest-value snapshots.
+ * call [renderStereo]. Incoming notes/mode events preserve FIFO order within an input generation;
+ * a global panic invalidates older notes immediately at the next render block.
+ * Controls and pitch bend are atomic latest-value snapshots.
  *
  * The sample loop performs no allocation, lock acquisition, I/O or Android interaction.
  */
@@ -108,6 +109,16 @@ class OrbitalSynth(
     private var filterControlFrame = 0
     private var wasFilterRoutingActive = false
     private val events = ConcurrentLinkedQueue<Event>()
+    // Only note/source events reserve slots; hostile MIDI floods cannot retain an
+    // unbounded queue or strand releases behind millions of stale note-ons.
+    private val maxPendingNoteEvents = 2_048
+    private val pendingNoteEvents = AtomicInteger(0)
+    internal val pendingNoteEventCount: Int get() = pendingNoteEvents.get()
+    // Odd generations accept notes. Even generations are closed on overload
+    // until the audio worker releases all held voices at its next block.
+    private val noteInputEpoch = AtomicLong(1L)
+    // Worker-only generation; no allocation/lock is needed to process panic.
+    private var renderedNoteEpoch = 1L
     // Preallocate every held-key record. Render-thread event handling uses primitive
     // storage only: source IDs never create maps/objects or acquire locks in audio.
     // Under a hostile >capacity note-on flood, excess ons are ignored atomically
@@ -176,18 +187,48 @@ class OrbitalSynth(
 
     val voiceMode: VoiceMode get() = playbackMode
 
+    /**
+     * MIDI/touch events reserve one of 2048 queue slots BEFORE allocating a
+     * command. Saturation closes the input generation and forces a worker-owned
+     * global release next render block. A raced producer that never enqueues
+     * returns its reservation exactly once; stale enqueued commands are tagged
+     * and discarded by the worker without any source ownership side effect.
+     */
+    private inline fun offerNoteEvent(create: (Long) -> Event) {
+        while (true) {
+            val epoch = noteInputEpoch.get()
+            if ((epoch and 1L) == 0L) return
+            val pending = pendingNoteEvents.get()
+            if (pending >= maxPendingNoteEvents) {
+                if (noteInputEpoch.compareAndSet(epoch, epoch + 1L)) return
+                continue
+            }
+            if (!pendingNoteEvents.compareAndSet(pending, pending + 1)) continue
+            var enqueued = false
+            try {
+                if (noteInputEpoch.get() == epoch) {
+                    enqueued = events.offer(create(epoch))
+                }
+            } finally {
+                if (!enqueued) pendingNoteEvents.decrementAndGet()
+            }
+            return
+        }
+    }
+
     /** Backward-compatible, untagged note: only an untagged note-off can release it. */
     fun noteOn(note: Int, velocity: Float = 1f) {
         if (note !in 0..127 || !velocity.isFinite()) return
         if (velocity <= 0f) {
             noteOff(note)
         } else {
-            events.offer(Event.NoteOn(note, velocity.coerceIn(0f, 1f)))
+            val level = velocity.coerceIn(0f, 1f)
+            offerNoteEvent { epoch -> Event.NoteOn(note, level, epoch = epoch) }
         }
     }
 
     fun noteOff(note: Int) {
-        if (note in 0..127) events.offer(Event.NoteOff(note))
+        if (note in 0..127) offerNoteEvent { epoch -> Event.NoteOff(note, epoch = epoch) }
     }
 
     /**
@@ -201,24 +242,37 @@ class OrbitalSynth(
         if (velocity <= 0f) {
             noteOff(sourceId, channel, note)
         } else {
-            events.offer(Event.NoteOn(note, velocity.coerceIn(0f, 1f), sourceId, channel, true))
+            val level = velocity.coerceIn(0f, 1f)
+            offerNoteEvent { epoch -> Event.NoteOn(
+                note, level, sourceId, channel, true, epoch
+            ) }
         }
     }
 
     fun noteOff(sourceId: Long, channel: Int, note: Int) {
         if (channel in 0..15 && note in 0..127) {
-            events.offer(Event.NoteOff(note, sourceId, channel, true))
+            offerNoteEvent { epoch -> Event.NoteOff(note, sourceId, channel, true, epoch) }
         }
     }
 
-    /** Gracefully release all sources/legacy voices (lifecycle stop and panic). */
+    /**
+     * A global note panic increments the generation ATOMICALLY. Notes queued
+     * before this call are stale, notes queued afterward are new and audible.
+     * The render worker releases every active hold at the next block boundary,
+     * regardless of how deep the pending FIFO is; no queue.clear() or audio
+     * callback allocation is permitted.
+     */
     fun allNotesOff() {
-        events.offer(Event.AllNotesOff)
+        while (true) {
+            val epoch = noteInputEpoch.get()
+            if ((epoch and 1L) == 0L) return // overload already has a panic pending
+            if (noteInputEpoch.compareAndSet(epoch, epoch + 2L)) return
+        }
     }
 
     /** Gracefully release only keys belonging to this source, across all channels. */
     fun allNotesOff(sourceId: Long) {
-        events.offer(Event.SourceAllNotesOff(sourceId))
+        offerNoteEvent { epoch -> Event.SourceAllNotesOff(sourceId, epoch) }
     }
 
     /** POLY layers notes, MONO retriggers, and LEGATO retunes an already-held voice. */
@@ -674,29 +728,70 @@ class OrbitalSynth(
         activeVoiceCount = active
     }
 
+    /** Worker only. Panic is independent of the FIFO and touches no locks or heap. */
+    private fun releaseAllHeldNotes() {
+        holdActive.fill(false)
+        holdVoice.fill(-1)
+        voiceHold.fill(-1)
+        previousFrequency = null
+        for (voice in voices) voice.noteOff()
+    }
+
+    private fun synchronizeNoteEpoch() {
+        val observed = noteInputEpoch.get()
+        if (observed == renderedNoteEpoch) return
+        releaseAllHeldNotes()
+        // A full queue closes an even epoch. Only the worker can reopen it,
+        // once EVERY old voice has received its emergency note-off.
+        if ((observed and 1L) == 0L) {
+            noteInputEpoch.compareAndSet(observed, observed + 1L)
+        }
+        // A producer may overload again WHILE we release. Never record an
+        // even/closed epoch as handled: otherwise admission would stay closed
+        // forever because the next callback would see no generation change.
+        val afterRelease = noteInputEpoch.get()
+        renderedNoteEpoch = if ((afterRelease and 1L) == 0L) {
+            afterRelease - 1L
+        } else afterRelease
+    }
+
+    private fun noteEventStillCurrent(epoch: Long): Boolean {
+        val observed = noteInputEpoch.get()
+        if (observed != epoch || (observed and 1L) == 0L) return false
+        // Global panic may occur while draining this very block. Apply the
+        // release before any new-generation note, then accept that fresh note.
+        if (renderedNoteEpoch != observed) synchronizeNoteEpoch()
+        return renderedNoteEpoch == epoch && noteInputEpoch.get() == epoch
+    }
+
     private fun drainEvents(glideSec: Double, wave: Float, morph: Float) {
-        // Bound callback work under hostile MIDI event floods; defer overflow to next block.
+        // Global/overload panic is applied BEFORE even the oldest queued MIDI
+        // event. Note FIFO work remains strictly capped at 512 per callback.
+        synchronizeNoteEpoch()
         for (index in 0 until 512) {
             when (val event = events.poll() ?: break) {
                 is Event.NoteOn -> {
+                    pendingNoteEvents.decrementAndGet()
+                    if (!noteEventStillCurrent(event.epoch)) continue
                     liveModulation.onNoteOn()
                     handleNoteOn(
                         event.note, event.velocity, event.sourceId, event.channel, event.tagged,
                         glideSec, wave, morph
                     )
                 }
-                is Event.NoteOff -> handleNoteOff(
-                    event.note, event.sourceId, event.channel, event.tagged, glideSec, wave, morph
-                )
-                Event.AllNotesOff -> {
-                    holdActive.fill(false)
-                    holdVoice.fill(-1)
-                    voiceHold.fill(-1)
-                    previousFrequency = null
-                    for (voice in voices) voice.noteOff()
+                is Event.NoteOff -> {
+                    pendingNoteEvents.decrementAndGet()
+                    if (!noteEventStillCurrent(event.epoch)) continue
+                    handleNoteOff(
+                        event.note, event.sourceId, event.channel, event.tagged,
+                        glideSec, wave, morph
+                    )
                 }
-                is Event.SourceAllNotesOff ->
+                is Event.SourceAllNotesOff -> {
+                    pendingNoteEvents.decrementAndGet()
+                    if (!noteEventStillCurrent(event.epoch)) continue
                     handleSourceAllNotesOff(event.sourceId, glideSec, wave, morph)
+                }
                 is Event.Mode -> changeMode(event.mode, glideSec, wave, morph)
                 is Event.MoveFxSlot -> {
                     if (event.patchEpoch == fxPatchEpoch.get()) {
@@ -1051,19 +1146,20 @@ class OrbitalSynth(
     private sealed interface Event {
         data class NoteOn(
             val note: Int, val velocity: Float,
-            val sourceId: Long = 0L, val channel: Int = 0, val tagged: Boolean = false
+            val sourceId: Long = 0L, val channel: Int = 0, val tagged: Boolean = false,
+            val epoch: Long,
         ) : Event
         data class NoteOff(
             val note: Int, val sourceId: Long = 0L,
-            val channel: Int = 0, val tagged: Boolean = false
+            val channel: Int = 0, val tagged: Boolean = false,
+            val epoch: Long,
         ) : Event
         data class Mode(val mode: VoiceMode) : Event
         data class MoveFxSlot(
             val from: Int, val to: Int, val patchEpoch: Int, val ticket: Long,
         ) : Event
         data object ResetFxRackHistory : Event
-        data class SourceAllNotesOff(val sourceId: Long) : Event
-        data object AllNotesOff : Event
+        data class SourceAllNotesOff(val sourceId: Long, val epoch: Long) : Event
     }
 
     companion object {
