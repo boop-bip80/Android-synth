@@ -1,8 +1,9 @@
 name: Publish verified ORBITAL debug prerelease
 
-# Explicit opt-in only. Never auto-publish an APK merely because a build ran.
-# This creates an immutable, SHA-addressed *developer* prerelease, not a
-# Play-signed release or proof of physical-device latency/performance.
+# Explicit opt-in only: manual dispatch OR a successful main source commit
+# whose message begins exactly [publish-debug-apk]. Ordinary merges and PRs
+# never publish. This creates an immutable, SHA-addressed *developer* APK,
+# not a Play-signed release or physical-device latency/performance certificate.
 on:
   workflow_dispatch:
     inputs:
@@ -10,21 +11,38 @@ on:
         description: "Fully successful five-job Android main CI run ID"
         required: true
         type: string
+  workflow_run:
+    workflows:
+      - Android — build, JVM tests and emulator
+    types: [completed]
 
 permissions:
   contents: read
 
+# Serializes repeated attempts for a given source without cancelling publishing.
+concurrency:
+  group: orbital-debug-prerelease-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: Publish one successful main debug APK
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       startsWith(github.event.workflow_run.head_commit.message, '[publish-debug-apk]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
       actions: read
     env:
-      VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
+      VERIFIED_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.verified_run_id }}
+      SOURCE_EVENT_SHA: ${{ github.event.workflow_run.head_sha || '' }}
     steps:
       - name: Checkout current main for SHA validation
         uses: actions/checkout@v4
@@ -83,6 +101,19 @@ jobs:
 
           source_sha="$(jq -r .head_sha <<< "$run_json")"
           [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
+            # Defense in depth: re-fetch the immutable source run, rather than
+            # trusting the event payload alone to grant publication authority.
+            [[ "$SOURCE_EVENT_SHA" == "$source_sha" ]] || {
+              echo "Workflow event/source run SHA mismatch." >&2
+              exit 1
+            }
+            jq -e '.head_commit.message | startswith("[publish-debug-apk]")' \
+              <<< "$run_json" >/dev/null || {
+                echo "Source main commit did not opt in to automatic debug APK publication." >&2
+                exit 1
+              }
+          fi
           local_sha="$(git rev-parse HEAD)"
           remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
           if [[ "$local_sha" != "$remote_sha" ]]; then
