@@ -9,7 +9,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -93,8 +92,8 @@ class ReferenceSoundControlsTest {
             }
         compose.runOnIdle {
             assertTrue("pointer callback must be live", calls >= 1)
-            assertTrue("morph must be near pointer x", morph in .72f.. .78f)
-            assertTrue("movement must map upward from touch", movement in .72f.. .78f)
+            assertTrue("morph must be near pointer x", morph in 0.72f..0.78f)
+            assertTrue("movement must map upward from touch", movement in 0.72f..0.78f)
         }
     }
 
