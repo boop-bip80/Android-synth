@@ -15,8 +15,6 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // Keep every instrumentation case, but clear app state after each isolated invocation.
-        testInstrumentationRunnerArguments["clearPackageData"] = "true"
     }
 
     buildTypes {
