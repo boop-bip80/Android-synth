@@ -32,10 +32,16 @@ class OrbitalPlasmaFieldTest {
             .assertIsDisplayed().fetchSemanticsNode().boundsInWindow
         val origin = IntArray(2)
         val focused = BooleanArray(1)
-        compose.runOnIdle {
-            val window = compose.activity.window.decorView
-            window.getLocationOnScreen(origin)
-            focused[0] = window.hasWindowFocus()
+        // Some API35 launches present Compose semantics just before focus
+        // arrives. A background Activity is never accepted as pixel proof.
+        for (attempt in 1..8) {
+            compose.runOnIdle {
+                val window = compose.activity.window.decorView
+                window.getLocationOnScreen(origin)
+                focused[0] = window.hasWindowFocus()
+            }
+            if (focused[0]) break
+            Thread.sleep(150L)
         }
         return NativeCanvasPixelCapture.capture(
             nodeBoundsInWindow = bounds,
@@ -118,7 +124,14 @@ class OrbitalPlasmaFieldTest {
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        val visible = realOrb()
+        // Require actual painted orb pixels after initial AGSL presentation,
+        // not a screenshot of a transient black compositor buffer.
+        var visible = realOrb()
+        for (attempt in 1..8) {
+            if (visible.luminousPixels(minChannel = 36) > 15) break
+            Thread.sleep(150L)
+            visible = realOrb()
+        }
         val luminous = visible.luminousPixels(minChannel = 36)
         assertTrue(
             "Invalid telemetry made the real AGSL Canvas blank or nonrendering; " +
