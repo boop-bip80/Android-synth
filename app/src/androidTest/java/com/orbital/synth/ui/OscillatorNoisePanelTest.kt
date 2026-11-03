@@ -77,18 +77,25 @@ class OscillatorNoisePanelTest {
             }
         }
         compose.onNodeWithTag("oscillatorNoiseCanvas").performScrollTo()
-            .performTouchInput {
-                click(Offset(center.x * 1.6f, center.y * .4f))
-            }
+        // Allow scroll positioning and pointer-input gesture recognizers to
+        // settle before asserting the real XY canvas touch response.
+        compose.waitForIdle()
+        compose.onNodeWithTag("oscillatorNoiseCanvas").performTouchInput {
+            click(Offset(center.x * 1.6f, center.y * .4f))
+        }
         compose.runOnIdle {
-            assertTrue(slots[0].noiseColor in 0.73f..0.87f)
-            assertTrue(slots[0].noiseLevel in 0.73f..0.87f)
+            assertEquals("XY pad X must publish 80% noise color",
+                .8f, slots[0].noiseColor, .07f)
+            assertEquals("XY pad Y must publish 80% noise blend",
+                .8f, slots[0].noiseLevel, .07f)
         }
         compose.onNodeWithTag("oscillatorWave3").performScrollTo().performClick()
         compose.runOnIdle {
             assertEquals(.75f, slots[0].waveform, 0f)
-            assertTrue(slots[0].noiseLevel > .7f)
-            assertTrue(slots[0].noiseColor > .7f)
+            assertTrue("Wave chip lost noise blend: " + slots[0].noiseLevel,
+                slots[0].noiseLevel > .7f)
+            assertTrue("Wave chip lost noise color: " + slots[0].noiseColor,
+                slots[0].noiseColor > .7f)
         }
     }
 
