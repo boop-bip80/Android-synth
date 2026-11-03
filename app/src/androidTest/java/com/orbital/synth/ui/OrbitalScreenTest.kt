@@ -389,6 +389,37 @@ class OrbitalScreenTest {
         }
     }
 
+    @Test fun physicalPortraitViewportKeepsAllFourMiniPlotsAboveTheKeys() {
+        // Measure actual device/layout pixels. A semantic node can exist while
+        // every painted pixel is clipped by the fixed performance keybed.
+        val density = compose.activity.resources.displayMetrics.density
+        val widthPx = compose.activity.resources.displayMetrics.widthPixels
+        assertTrue("Requires a physical Android phone-size viewport", widthPx >= 600)
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(presetCount = 8),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+            )
+        }
+        val editor = compose.onNodeWithTag("referenceSoundEditorViewport")
+            .fetchSemanticsNode().boundsInRoot
+        val mini = compose.onNodeWithTag("referenceMiniSignals")
+            .fetchSemanticsNode().boundsInRoot
+        val keybed = compose.onNodeWithTag("referencePerformanceKeybed")
+            .fetchSemanticsNode().boundsInRoot
+        val orb = compose.onNodeWithTag("referenceSoundHeroOrb")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("Audio mini plots must be fully inside unscrolled editor viewport: mini=$mini editor=$editor",
+            mini.height >= 60f * density && mini.top >= editor.top &&
+                mini.bottom <= editor.bottom - 2f * density)
+        assertTrue("All four mini plots must finish before playable keys: mini=$mini keyboard=$keybed",
+            mini.bottom <= keybed.top - 2f * density)
+        assertTrue("Plasma artwork must stay visible at scroll offset zero: orb=$orb editor=$editor",
+            orb.top >= editor.top && orb.bottom <= editor.bottom)
+    }
+
     @Test fun compactPortraitReferenceHeroKeepsOverlayControlsAndKeysLegible() {
         val density = compose.activity.resources.displayMetrics.density
         var previousPatchRequests = 0

@@ -29,21 +29,26 @@ class OscillatorWorkbenchCaptureTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test fun capturesRunningOscillatorEditorAfterUserConfiguration() {
+        // Portrait SOUND deliberately leads with the reference hero. An OSC
+        // rack only exists after a real, reachable advanced-editor tap.
+        compose.onNodeWithTag("referenceSoundAdvancedToggle").performScrollTo()
+            .assertIsDisplayed().performClick()
         compose.onNodeWithTag("oscillatorRack").assertExists()
+        compose.onNodeWithContentDescription("Oscillator 1, active").assertExists()
 
-        // Compose's actual scroll semantics locate a deeply nested workbench
-        // without screen-size-specific ADB swipe coordinates.
-        compose.onNodeWithTag("oscillatorEnable").performScrollTo()
+        // Add the NEXT independent audible oscillator using the same on-screen
+        // control a phone user sees (not fixture state or synthetic callbacks).
+        compose.onNodeWithTag("oscillatorAdd").performScrollTo()
             .assertIsDisplayed().performClick()
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Oscillator 1, active").assertExists()
+        compose.onNodeWithContentDescription("Oscillator 2, active").assertExists()
 
         // Display the real wave editor and change the actual synth parameter.
         compose.onNodeWithTag("oscillatorWave2").performScrollTo()
             .assertIsDisplayed().performClick()
         compose.waitForIdle()
         compose.onNodeWithTag("oscillatorWave2").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Oscillator 1, active").assertExists()
+        compose.onNodeWithContentDescription("Oscillator 2, active").assertExists()
 
         // UiAutomation samples Android's actual display, not Compose's
         // testing render buffer; PNG bytes come from the running emulator.

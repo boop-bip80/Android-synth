@@ -173,14 +173,23 @@ fun ReferencePerformanceKeybed(
                     // Pointer ID owns one unique token, not merely a MIDI
                     // note integer: cancellation never releases another owner.
                     val pointerToNote = mutableMapOf<PointerId, Pair<Int, Long>>()
+                    // A recognizer replaced after octave/host panic must never
+                    // interpret an already-down finger's MOVE as a new strike.
+                    // Share the proven fresh-down fence with the legacy piano.
+                    val freshPointers = PianoFreshPointerAdmission()
                     try {
                         while (true) {
                             // Initial pass prevents a scrolling ancestor from
                             // stealing an active musical finger gesture.
                             val event = awaitPointerEvent(PointerEventPass.Initial)
                             for (change in event.changes) {
+                                val admitted = freshPointers.observe(
+                                    change.id.value,
+                                    change.pressed,
+                                    change.previousPressed,
+                                )
                                 val previous = pointerToNote[change.id]
-                                val keyIndex = if (change.pressed) {
+                                val keyIndex = if (change.pressed && admitted) {
                                     ReferenceKeybedUiModel.keyAt(
                                         change.position.x, change.position.y,
                                         size.width.toFloat(), size.height.toFloat(),
@@ -201,7 +210,7 @@ fun ReferencePerformanceKeybed(
                                 }
                                 if (next == null) touchPoints.remove(change.id)
                                 else touchPoints[change.id] = change.position
-                                if (change.pressed || previous != null) change.consume()
+                                if ((change.pressed && admitted) || previous != null) change.consume()
                             }
                         }
                     } finally {

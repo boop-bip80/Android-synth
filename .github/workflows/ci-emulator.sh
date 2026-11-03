@@ -10,14 +10,25 @@ printf '%s\n' 'initializing' > artifacts/emulator-phase.txt
 display_overridden=0
 original_font_scale=null
 compact_logcat_pid=
+general_host_sampler_pid=
+general_full_logcat_pid=
 
 collect_diagnostics() {
   local status=$?
   trap - EXIT
   set +e
-  if [[ -n "$compact_logcat_pid" ]]; then
-    kill "$compact_logcat_pid" >/dev/null 2>&1 || true
-    wait "$compact_logcat_pid" >/dev/null 2>&1 || true
+  for diagnostic_pid in "$compact_logcat_pid" "$general_full_logcat_pid" "$general_host_sampler_pid"; do
+    if [[ -n "$diagnostic_pid" ]]; then
+      kill "$diagnostic_pid" >/dev/null 2>&1 || true
+      wait "$diagnostic_pid" >/dev/null 2>&1 || true
+    fi
+  done
+  # Keep the last 20 MB of continuous pre-crash logcat, bounded for GitHub
+  # artifact retention while preserving the events immediately before death.
+  full_logcat=artifacts/emulator-full-logcat.txt
+  if [[ -s "$full_logcat" ]] && (( $(stat -c%s "$full_logcat") > 20000000 )); then
+    tail -c 20000000 "$full_logcat" > "${full_logcat}.tail"
+    mv "${full_logcat}.tail" "$full_logcat"
   fi
   if [[ "$display_overridden" == 1 ]]; then
     timeout 10s adb shell wm size reset >/dev/null 2>&1
@@ -159,6 +170,51 @@ fi
 
 # Fail immediately if any JUnit instrumentation test fails.
 printf '%s\n' 'instrumentation' > artifacts/emulator-phase.txt
+# The job precompiled these exact APK files before QEMU boot. Assert that
+# source binaries remain present, then record hashes for crash diagnostics;
+# Gradle's connectedDebugAndroidTest still installs/runs the entire suite.
+app_apk=app/build/outputs/apk/debug/app-debug.apk
+instrumentation_apk=app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+[[ -s "$app_apk" && -s "$instrumentation_apk" ]] || {
+  echo 'GENERAL pre-QEMU test APK inputs missing; refuse fake connected-test success.' >&2
+  exit 1
+}
+printf 'run=%s\nsource=%s\napp_sha256=%s\ntest_apk_sha256=%s\n' \
+  "$GITHUB_RUN_ID" "$GITHUB_SHA" \
+  "$(sha256sum "$app_apk" | cut -d' ' -f1)" \
+  "$(sha256sum "$instrumentation_apk" | cut -d' ' -f1)" \
+  > artifacts/emulator-apk-preflight.txt
+# Sample host memory, cgroup OOM counters, free disk and QEMU/Gradle RSS
+# throughout connected tests. This is best-effort instrumentation only; an
+# emulator or test failure still fails the unchanged Gradle connected task.
+(
+  set +e
+  while :; do
+    printf '\n=== host-sample %s phase=%s ===\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(cat artifacts/emulator-phase.txt 2>/dev/null)"
+    free -m
+    for cgroup_file in \
+      /sys/fs/cgroup/memory.current \
+      /sys/fs/cgroup/memory.max \
+      /sys/fs/cgroup/memory.events \
+      /sys/fs/cgroup/memory.swap.current \
+      /sys/fs/cgroup/memory.swap.max; do
+      if [[ -r "$cgroup_file" ]]; then
+        printf '%s: ' "$cgroup_file"
+        tr '\n' ' ' < "$cgroup_file"
+        printf '\n'
+      fi
+    done
+    ps -eo pid,ppid,comm,rss,vsz,etime --sort=-rss | head -n 24
+    df -h . /tmp | tail -n 3
+    sleep 5
+  done
+) > artifacts/emulator-host-memory.txt 2>&1 &
+general_host_sampler_pid=$!
+# Stream a second, full Android logcat BEFORE instrumentation starts: a
+# postmortem adb logcat cannot recover when QEMU/TCP 5554 disappears.
+timeout 35m adb logcat -v threadtime > artifacts/emulator-full-logcat.txt 2>&1 &
+general_full_logcat_pid=$!
 # Start BEFORE the failing test; background logcat retains the last device
 # messages even if emulator-5554 vanishes before EXIT diagnostics can query it.
 adb logcat -v threadtime -s OrbitalCompactTest:I AndroidRuntime:E ActivityManager:W SurfaceFlinger:E HWUI:E libc:F DEBUG:E '*:S' > artifacts/compact-test-live-logcat.txt 2>&1 &

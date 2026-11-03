@@ -314,28 +314,90 @@ fun ReferenceExpressionRibbon(
             drawLine(violet.copy(alpha = .075f), Offset(0f, py), Offset(width, py),
                 strokeWidth = .7f)
         }
-        val gradient = Brush.horizontalGradient(
-            listOf(violet.copy(alpha = .8f), cyan, gold.copy(alpha = .78f), violet),
-        )
+
+        // Volumetric *parameter-illustration*, not an invented FFT. Transparent
+        // mesh ribbons overlap like refracted light under glass; both their
+        // geometry and brightness come only from MORPH, MOVEMENT and accepted
+        // post-AudioTrack RMS. Rendering stays outside the audio worker.
         val energyGlow = .82f + .18f * liveEnergy
+        val spectralBrush = Brush.horizontalGradient(
+            listOf(
+                violet.copy(alpha = .80f),
+                cyan.copy(alpha = .98f),
+                gold.copy(alpha = .92f),
+                Color(0xFF52EFFF),
+                violet.copy(alpha = .82f),
+            ),
+        )
+        val layerColors = listOf(
+            Color(0xFFB15DFF), Color(0xFF28D9FF), Color(0xFFFFC579),
+            Color(0xFF6B8FFF), Color(0xFF37CFFF),
+        )
         for (layer in 0..4) {
             val path = Path()
-            val segments = 76
+            val volume = Path()
+            val segments = 96
+            val thickness = height * (.033f + (layer % 3) * .010f +
+                .014f * liveEnergy)
             for (index in 0..segments) {
                 val u = index / segments.toFloat()
                 val ordinate = ReferenceSoundUiModel.ribbonAt(u, layer, x, y)
                 val point = Offset(u * width, ordinate * height)
                 if (index == 0) path.moveTo(point.x, point.y)
                 else path.lineTo(point.x, point.y)
+                val outer = thickness * (.65f + .35f * (1f -
+                    abs(2f * u - 1f))) * (1f + .12f * sin(u * 15f + layer))
+                if (index == 0) volume.moveTo(point.x, point.y - outer)
+                else volume.lineTo(point.x, point.y - outer)
             }
-            drawPath(path, gradient,
-                style = Stroke(width = (7f + 2f * liveEnergy) * energyGlow,
+            for (index in segments downTo 0) {
+                val u = index / segments.toFloat()
+                val ordinate = ReferenceSoundUiModel.ribbonAt(u, layer, x, y)
+                val outer = thickness * (.65f + .35f * (1f -
+                    abs(2f * u - 1f))) * (1f + .12f * sin(u * 15f + layer))
+                volume.lineTo(u * width, ordinate * height + outer)
+            }
+            volume.close()
+            val tint = layerColors[layer]
+            val volumetricBrush = Brush.horizontalGradient(
+                listOf(
+                    tint.copy(alpha = .12f),
+                    tint.copy(alpha = .64f),
+                    if (layer == 2) gold.copy(alpha = .85f)
+                    else Color(0xFF89E9FF).copy(alpha = .64f),
+                    tint.copy(alpha = .61f),
+                    tint.copy(alpha = .11f),
+                ),
+            )
+            drawPath(volume, volumetricBrush, alpha = .41f * energyGlow)
+            drawPath(path, tint.copy(alpha = .13f),
+                style = Stroke(width = (22f + liveEnergy * 7f),
+                    cap = StrokeCap.Round))
+            drawPath(path, spectralBrush,
+                style = Stroke(width = (8f + 2f * liveEnergy),
                     cap = StrokeCap.Round),
-                alpha = .085f)
-            drawPath(path, gradient,
-                style = Stroke(width = if (layer == 2) 2.25f else 1.25f,
+                alpha = .19f * energyGlow)
+            drawPath(path, spectralBrush,
+                style = Stroke(width = if (layer == 2) 2.7f else 1.55f,
                     cap = StrokeCap.Round),
-                alpha = if (layer == 2) .94f else .49f)
+                alpha = if (layer == 2) .96f else .75f)
+        }
+        // Sparse glints are anchored to the same deterministic ribbon curves.
+        // They are honest design particles, not purported spectral bins.
+        repeat(22) { spark ->
+            val u = .035f + spark * .043f
+            val layer = spark % 5
+            val pt = Offset(width * u,
+                ReferenceSoundUiModel.ribbonAt(u, layer, x, y) * height)
+            val tint = if (spark % 5 == 2) gold else if (spark % 3 == 0)
+                Color.White else cyan
+            if (spark % 6 == 0) {
+                drawCircle(tint.copy(alpha = .17f + liveEnergy * .10f),
+                    radius = 5.dp.toPx(), center = pt)
+            }
+            drawCircle(tint.copy(alpha = if (spark % 6 == 0) .94f else .44f),
+                radius = if (spark % 6 == 0) 1.5.dp.toPx()
+                else .65.dp.toPx(), center = pt)
         }
         val node = Offset(width * x, height * (1f - y))
         drawCircle(
@@ -437,7 +499,21 @@ fun ReferenceNeonKnob(
             drawArc(tint, 135f, 270f * safe, false,
                 topLeft = topLeft, size = arcSize,
                 style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
-            drawCircle(Color(0xFF0B111D), radius * .69f)
+            // Brushed-glass inner bezel and tiny cold specular highlight give
+            // the five functional macros physical depth without new controls.
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(Color(0xFF2C3D54), Color(0xFF101725),
+                        Color(0xFF050814)),
+                    center = Offset(center.x - radius * .17f,
+                        center.y - radius * .22f),
+                    radius = radius * .99f,
+                ),
+                radius = radius * .69f,
+            )
+            drawCircle(Color(0xFF96AED8).copy(alpha = .17f),
+                radius = radius * .61f,
+                style = Stroke(width = .7.dp.toPx()))
             drawCircle(tint.copy(alpha = .26f), radius * .70f,
                 style = Stroke(width = .8.dp.toPx()))
             val angle = (135f + 270f * safe) * PI.toFloat() / 180f

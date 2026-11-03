@@ -343,8 +343,7 @@ fun OrbitalScreen(
         // Exactly one dense portrait SOUND hero must show all 4 authentic
         // configuration mini plots ABOVE the anchored chromatic keyboard.
         // Reclaim shell whitespace, not plasma pixels or 48dp touch targets.
-        val referencePortrait = selectedTab == Tab.SOUND &&
-            !compactHeight && compactOrbitLayout
+        val referencePortrait = selectedTab == Tab.SOUND && !compactHeight
         Column(
             Modifier.fillMaxSize().padding(
                 horizontal = if (compactHeight) 8.dp else 12.dp,
@@ -438,6 +437,7 @@ fun OrbitalScreen(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .testTag("referenceSoundEditorViewport")
                 .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .42f), RoundedCornerShape(19.dp))
                 .background(
                     Brush.verticalGradient(

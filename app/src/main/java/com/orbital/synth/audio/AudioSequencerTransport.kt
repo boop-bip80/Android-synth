@@ -9,6 +9,8 @@ import com.orbital.synth.core.music.StepPattern
 import com.orbital.synth.core.music.StepSequencer
 import com.orbital.synth.core.music.TimedNoteEvent
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToLong
 
@@ -62,6 +64,12 @@ internal class AudioSequencerTransport(
     )
     private val renderer = SampleAccurateSequencerRenderer(renderFrames, noteOn, noteOff)
     private val commands = ConcurrentLinkedQueue<Command>()
+    // 128 consumed per render block. Bound accepted edits to 16 buffers at
+    // 192 frames/48 kHz so rapid STEP taps cannot grow memory indefinitely.
+    private val maxPendingEdits = 2_048
+    private val pendingEdits = AtomicInteger(0)
+    internal val pendingEditCount: Int get() = pendingEdits.get()
+
     // Only UI/producer threads take this lock. The audio worker never locks.
     private val toggleSubmissionLock = Any()
     private val nextStepToggleId = AtomicLong(0L)
@@ -69,6 +77,9 @@ internal class AudioSequencerTransport(
     private var anchorSample = 0L
 
     @Volatile private var desiredPlaying = false
+    // Preserve even a sub-buffer STOP->PLAY edge: every explicit stop must
+    // reset held notes and sequencer phase before a new requested start.
+    private val stopRequested = AtomicBoolean(false)
     @Volatile private var playingSnapshot = false
     @Volatile private var playheadSnapshot = -1
     @Volatile private var tempoSnapshot = factory.bpm.toInt()
@@ -89,14 +100,19 @@ internal class AudioSequencerTransport(
     val tempo: Int get() = tempoSnapshot
     val enabledSteps: Set<Int> get() = patternSnapshot.enabledSteps
 
+    /**
+     * PLAY/STOP is a latest-value transport request, never a FIFO UI edit.
+     * In particular STOP releases every sequencer-owned note on the NEXT
+     * render block even if thousands of unrelated STEP edits are pending.
+     */
     fun setPlaying(value: Boolean) {
         desiredPlaying = value
-        commands.offer(Command.Play(value))
+        if (!value) stopRequested.set(true)
     }
 
-    fun setTempo(bpm: Int) {
-        if (bpm in 20..300) commands.offer(Command.Tempo(bpm))
-    }
+    /** False signals an invalid or overloaded edit; no accepted edit is dropped. */
+    fun setTempo(bpm: Int): Boolean =
+        bpm in 20..300 && offerEdit { Command.Tempo(bpm) }
 
     /** Returns an acknowledgement ticket for optimistic UI reconciliation. */
     fun setStepEnabled(index: Int, value: Boolean): Long? {
@@ -106,16 +122,15 @@ internal class AudioSequencerTransport(
             // Ticket allocation and queue insertion must have the same order,
             // even if independent UI producers submit edits concurrently.
             val ticket = nextStepToggleId.incrementAndGet()
-            commands.offer(Command.StepEnabled(index, value, snapshot.revision, ticket))
-            ticket
+            if (offerEdit { Command.StepEnabled(index, value, snapshot.revision, ticket) }) ticket
+            else null
         }
     }
 
     /** Resize an editable grid from 1 to 64 steps, retaining in-range notes. */
     fun setStepCount(steps: Int): Boolean {
         if (steps !in 1..64) return false
-        commands.offer(Command.Resize(steps, patternSnapshot.revision))
-        return true
+        return offerEdit { Command.Resize(steps, patternSnapshot.revision) }
     }
 
     /**
@@ -130,8 +145,7 @@ internal class AudioSequencerTransport(
         } catch (_: IllegalArgumentException) {
             return false
         }
-        commands.offer(Command.StepNotes(index, step, snapshot.revision))
-        return true
+        return offerEdit { Command.StepNotes(index, step, snapshot.revision) }
     }
 
     /**
@@ -158,8 +172,7 @@ internal class AudioSequencerTransport(
         } catch (_: IllegalArgumentException) {
             return false
         }
-        commands.offer(Command.LoadPattern(id, name, frozen, bpm, swing, enabledSteps?.toSet()))
-        return true
+        return offerEdit { Command.LoadPattern(id, name, frozen, bpm, swing, enabledSteps?.toSet()) }
     }
 
     /**
@@ -168,8 +181,28 @@ internal class AudioSequencerTransport(
      */
     fun selectFactoryPattern(id: String): Boolean {
         val selected = FactoryPatterns.byId(id) ?: return false
-        commands.offer(Command.SelectFactoryPattern(selected))
-        return true
+        return offerEdit { Command.SelectFactoryPattern(selected) }
+    }
+
+    /**
+     * All noncritical edits reserve one slot before offer. An overloaded caller
+     * is explicitly rejected; already accepted edits remain FIFO and retain
+     * revision/ticket semantics. This avoids dropping acknowledged STEP state.
+     */
+    private inline fun offerEdit(command: () -> Command): Boolean {
+        while (true) {
+            val pending = pendingEdits.get()
+            if (pending >= maxPendingEdits) return false
+            if (pendingEdits.compareAndSet(pending, pending + 1)) break
+        }
+        var enqueued = false
+        try {
+            commands.offer(command())
+            enqueued = true
+            return true
+        } finally {
+            if (!enqueued) pendingEdits.decrementAndGet()
+        }
     }
 
     fun onWorkerStart() {
@@ -195,17 +228,22 @@ internal class AudioSequencerTransport(
     }
 
     private fun drainCommands() {
+        // STOP must not sit behind a backlog of accepted STEP operations.
+        // The worker alone mutates StepSequencer and owns note-off callbacks.
+        val forceStop = stopRequested.getAndSet(false)
+        if ((forceStop || !desiredPlaying) && sequencer.isPlaying) {
+            releaseHeldNotes(sequencer.stop())
+        }
+        if (desiredPlaying && !sequencer.isPlaying) {
+            sequencer.start()
+            anchorSample = sequencer.cursorSample
+        }
+
         // Bound command processing during rapid slider/step edits.
         for (index in 0 until 128) {
-            when (val command = commands.poll() ?: break) {
-                is Command.Play -> {
-                    if (command.value && !sequencer.isPlaying) {
-                        sequencer.start()
-                        anchorSample = sequencer.cursorSample
-                    } else if (!command.value && sequencer.isPlaying) {
-                        releaseHeldNotes(sequencer.stop())
-                    }
-                }
+            val command = commands.poll() ?: break
+            pendingEdits.decrementAndGet()
+            when (command) {
                 is Command.Tempo -> {
                     releaseHeldNotes(sequencer.configure(bpm = command.bpm.toDouble()))
                     tempoSnapshot = command.bpm
@@ -365,7 +403,6 @@ internal class AudioSequencerTransport(
         ) : Command
         data class Resize(val steps: Int, val revision: Long) : Command
         data class StepNotes(val index: Int, val step: SequencerStep, val revision: Long) : Command
-        data class Play(val value: Boolean) : Command
         data class Tempo(val bpm: Int) : Command
         data class StepEnabled(
             val index: Int, val value: Boolean, val revision: Long, val ticket: Long

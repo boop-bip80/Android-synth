@@ -73,8 +73,7 @@ class AndroidAudioOutput(
         .setOnAudioFocusChangeListener(focusListener)
         .build()
     private val renderedFrameCounter = AtomicLong(0)
-    // Lifecycle-only event counter: UI can observe even a stop/restart shorter
-    // than one frame of its 20–30Hz poll. Never touched per audio sample/block.
+    // Monotonic UI touch-session invalidation; never increments per PCM frame.
     private val performanceSessionRevision = AtomicLong(0L)
     // Submitted PCM is metered on the audio worker with no allocations or locks.
     // A snapshot allocation occurs only when a UI consumer requests one.
@@ -120,10 +119,7 @@ class AndroidAudioOutput(
 
     val isRunning: Boolean get() = running
 
-    /** A lock-free monotonic revision of real touch-voice invalidating events.
-     * Incremented on each actual new worker, stop, focus loss, or unexpected
-     * exit. UI uses this to revoke stale held fingers before the next attack.
-     */
+    /** Revoke stale touch leases across fast stop/restart and focus interruptions. */
     val performanceSessionEpoch: Long get() = performanceSessionRevision.get()
 
     /** Coherent, normalized PCM-derived meter for visual consumers (up to 30 Hz). */
@@ -249,14 +245,35 @@ class AndroidAudioOutput(
         failureRecovery.clearFatalNotice()
         playback = config.track
         visualTelemetry.begin()
+        // The previous worker has completed onWorkerStop() before start() may
+        // reach this branch. Arm the atomic input epoch before publishing
+        // running=true: a very first touch can queue into the first render block.
+        // Worker-only DSP cleanup still happens inside renderLoop.onWorkerStart().
+        performanceArp.armInputForPendingWorker()
         running = true
-        performanceSessionRevision.incrementAndGet() // actual new worker session
+        performanceSessionRevision.incrementAndGet() // actual new worker
         val workerGeneration = lifecycleGeneration
         val thread = Thread({ renderLoop(config, workerGeneration) }, "OrbitalAudioRender")
         thread.isDaemon = true
         workerThread = thread
-        thread.start()
-        true
+        try {
+            thread.start()
+            true
+        } catch (failure: RuntimeException) {
+            // No render worker started, so only this owner may release the
+            // unopened-for-playback AudioTrack. Deactivate the prearmed epoch
+            // without calling any worker-only DSP lifecycle hook on the UI.
+            Log.e("OrbitalAudio", "Audio render worker could not start", failure)
+            running = false
+            workerThread = null
+            playback = null
+            visualTelemetry.stop()
+            performanceArp.cancelPendingWorkerInput()
+            runCatching { config.track.release() }
+            focusState.cancelPlayback()
+            abandonFocusLocked()
+            false
+        }
     }
 
     /**
@@ -385,8 +402,6 @@ class AndroidAudioOutput(
                 Log.e("OrbitalAudio", "Audio render stopped unexpectedly", failure)
             }
         } finally {
-            // Unexpected worker exits revoke UI key ownership even if the
-            // bounded recovery starts a replacement within one UI poll tick.
             val unrequestedExit = unexpectedFailure || running
             running = false
             visualTelemetry.stop()

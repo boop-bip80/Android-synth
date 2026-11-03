@@ -103,6 +103,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      # GENERAL keeps Gradle's original connectedDebugAndroidTest task and its
+      # complete JUnit/UTP XML. Run its expensive Kotlin/APK prerequisites
+      # before booting QEMU, so test execution does not also compile source
+      # while the emulator occupies several GiB of runner memory.
+      - name: Precompile general test binaries before QEMU
+        if: ${{ matrix.suite == 'general' }}
+        run: gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --console=plain --stacktrace
       # Both fresh screenshot lanes consume the EXACT APKs produced by the
       # already-required host/lint job; they must not compile under live QEMU.
       - name: Download validated app APK from host build
@@ -183,6 +190,9 @@ jobs:
             artifacts/emulator-summary.txt
             artifacts/emulator-phase.txt
             artifacts/emulator-provenance.txt
+            artifacts/emulator-host-memory.txt
+            artifacts/emulator-full-logcat.txt
+            artifacts/emulator-apk-preflight.txt
             artifacts/compact-activity-launch.txt
             artifacts/compact-window-state.txt
             artifacts/audio-policy.txt
