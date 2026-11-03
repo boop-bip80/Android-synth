@@ -17,11 +17,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.fetchSemanticsNode
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.Density
@@ -106,6 +104,7 @@ class ReferenceSoundLegibilityScreenshotTest {
         val screenshot = takeRealScreenshot("orbital-legibility-411-native.png")
         assertTrue("Real full portrait framebuffer required",
             screenshot.width > 900 && screenshot.height > 1800)
+        screenshot.recycle()
     }
 
     @Test fun constrained360dpFont130ShowsTruthfulUnitsAndAllFourMiniPanels() {
@@ -134,6 +133,8 @@ class ReferenceSoundLegibilityScreenshotTest {
                                     onParameterChange = { _, _ -> },
                                     patchName = "AURORA",
                                     engineName = "ORBITAL WT",
+                                    onPreviousPatch = { },
+                                    onNextPatch = { },
                                     compact = true,
                                     synthSampleRate = 48_000,
                                     modifier = Modifier.fillMaxWidth(),
@@ -189,5 +190,6 @@ class ReferenceSoundLegibilityScreenshotTest {
         }
         assertTrue("Genuine fixture sentinel missing from real screen: $sentinelPixels",
             sentinelPixels >= 30)
+        screenshot.recycle()
     }
 }
