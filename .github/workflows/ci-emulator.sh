@@ -9,11 +9,16 @@ printf '%s\n' 'initializing' > artifacts/emulator-phase.txt
 # The EXIT trap restores both even if screenshot capture fails.
 display_overridden=0
 original_font_scale=null
+compact_logcat_pid=
 
 collect_diagnostics() {
   local status=$?
   trap - EXIT
   set +e
+  if [[ -n "$compact_logcat_pid" ]]; then
+    kill "$compact_logcat_pid" >/dev/null 2>&1 || true
+    wait "$compact_logcat_pid" >/dev/null 2>&1 || true
+  fi
   if [[ "$display_overridden" == 1 ]]; then
     timeout 10s adb shell wm size reset >/dev/null 2>&1
     if [[ "$original_font_scale" == null ]]; then
@@ -43,6 +48,25 @@ collect_diagnostics() {
     timeout 10s adb shell wm density
   } > artifacts/display-state.txt 2>&1
   timeout 15s adb exec-out screencap -p > artifacts/diagnostic-screen.png 2>/dev/null
+  # Logcat is streamed before instrumentation, so test-stage messages survive
+  # an emulator process crash when adb logcat -d is no longer available.
+  printf '\n=== ORBITAL device-side compact/graphics diagnostic log (last 180 lines) ===\n'
+  if [[ -s artifacts/compact-test-live-logcat.txt ]]; then
+    tail -n 180 artifacts/compact-test-live-logcat.txt
+  else
+    printf '%s\n' 'No streamed compact/graphics logcat was captured.'
+  fi
+  printf '\n=== Android instrumentation failure XML excerpts ===\n'
+  if [[ -d app/build/outputs/androidTest-results ]]; then
+    while IFS= read -r report; do
+      if grep -Eq '<failure|<error' "$report"; then
+        printf 'XML: %s\n' "$report"
+        grep -n -m 2 -C 3 -E '<failure|<error' "$report" | cut -c 1-400
+      fi
+    done < <(find app/build/outputs/androidTest-results -type f -name '*.xml' -print)
+  fi
+  printf '\n=== ADB device list after instrumentation (exit %s) ===\n' "$status"
+  timeout 8s adb devices -l || true
   exit "$status"
 }
 trap collect_diagnostics EXIT
@@ -135,6 +159,10 @@ fi
 
 # Fail immediately if any JUnit instrumentation test fails.
 printf '%s\n' 'instrumentation' > artifacts/emulator-phase.txt
+# Start BEFORE the failing test; background logcat retains the last device
+# messages even if emulator-5554 vanishes before EXIT diagnostics can query it.
+adb logcat -v threadtime -s OrbitalCompactTest:I AndroidRuntime:E ActivityManager:W SurfaceFlinger:E HWUI:E libc:F DEBUG:E '*:S' > artifacts/compact-test-live-logcat.txt 2>&1 &
+compact_logcat_pid=$!
 timeout 30m gradle :app:connectedDebugAndroidTest --stacktrace --no-daemon --console=plain
 
 # Android Gradle Plugin's connected test runner may remove the target APK
