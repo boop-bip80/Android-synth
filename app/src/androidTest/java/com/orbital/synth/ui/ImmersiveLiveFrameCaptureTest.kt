@@ -128,6 +128,8 @@ class ImmersiveLiveFrameCaptureTest {
             try {
                 saveRealFrame(liveBitmap, "orbital-stage-held-performance.png")
                 val live = analyzeStage(liveBitmap)
+                println("ORBITAL_LIVE_STAGE_METRICS PCM rms=" + pcm.rms + " peak=" + pcm.peak +
+                    " idle=" + idle + " live=" + live + " dimensions=" + liveBitmap.width + "x" + liveBitmap.height)
                 File(compose.activity.filesDir, "orbital-stage-live-evidence.txt").writeText(
                     "audio_running=true\n" +
                     "note_held_during_capture=true\n" +
@@ -142,9 +144,9 @@ class ImmersiveLiveFrameCaptureTest {
                     "live_colorful=" + live.colorful + "\n" +
                     "live_dimensions=" + liveBitmap.width + "x" + liveBitmap.height + "\n"
                 )
-                assertTrue("The live stage framebuffer lacks illuminated artwork",
+                assertTrue("The live stage framebuffer lacks illuminated artwork: idleVisible=" + idle.visible + " liveVisible=" + live.visible + " samples=" + live.samples,
                     live.visible >= maxOf(75, idle.visible + 20))
-                assertTrue("The held-note frame lacks vivid chromatic ribbons",
+                assertTrue("The held-note frame lacks vivid chromatic ribbons: idleColorful=" + idle.colorful + " liveColorful=" + live.colorful + " samples=" + live.samples,
                     live.colorful >= maxOf(30, idle.colorful + 10))
             } finally {
                 liveBitmap.recycle()
