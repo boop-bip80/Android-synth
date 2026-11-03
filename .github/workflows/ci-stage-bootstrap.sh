@@ -88,9 +88,50 @@ done
 timeout 8s adb shell cat /proc/meminfo > artifacts/focus-bootstrap-device-memory.txt 2>&1 || true
 sleep 2
 
+# Focused can still mean a blank SurfaceFlinger frame while Compose draws.
+# Require the REAL normal keyboard and STAGE entry from Android's current
+# accessibility hierarchy before accepting a normal-app screenshot.
+printf 'verify-live-normal-keyboard-accessibility\n' > "$phase"
+keyboard_ready=0
+for attempt in 1 2 3; do
+  if timeout 35s adb shell uiautomator dump /sdcard/orbital-baseline-normal.xml \
+       > artifacts/focus-bootstrap-normal-dump.txt 2>&1 &&
+     timeout 15s adb exec-out cat /sdcard/orbital-baseline-normal.xml \
+       > artifacts/focus-bootstrap-normal.xml &&
+     python3 - artifacts/focus-bootstrap-normal.xml <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+names = [n.attrib.get("content-desc", "") for n in ET.parse(sys.argv[1]).iter("node")]
+keyboard = sum("multitouch piano keyboard" in n.lower() for n in names)
+enter = names.count("Enter immersive performance")
+exit_count = names.count("Exit immersive performance")
+if keyboard != 1 or enter != 1 or exit_count != 0:
+    raise SystemExit(f"Normal app not genuinely interactive: keyboard={keyboard} enter={enter} exit={exit_count}")
+print("PASS real normal MainActivity keyboard+STAGE entry accessibility")
+PY
+  then
+    keyboard_ready=1
+    break
+  fi
+  printf 'normal_keyboard_retry=%s\n' "$attempt" >> "$summary"
+  sleep 2
+done
+[[ "$keyboard_ready" == 1 ]] || {
+  echo 'Focused MainActivity did not expose its genuine normal keyboard and STAGE control.' >&2
+  exit 1
+}
+printf 'normal_keyboard_accessibility=verified\n' >> "$summary"
+timeout 12s adb shell dumpsys window > artifacts/focus-bootstrap-window.txt 2>&1
+grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth/com[.]orbital[.]synth[.]MainActivity' \
+  artifacts/focus-bootstrap-window.txt || {
+    echo 'Lost real MainActivity focus after normal keyboard became accessible.' >&2
+    exit 1
+}
+sleep 2
+
 printf 'capture-genuine-normal-app-baseline\n' > "$phase"
 captured=0
-for attempt in 1 2; do
+for attempt in 1 2 3; do
   # Only bytes actually emitted by Android's current displayed framebuffer.
   if timeout 25s adb exec-out screencap -p > artifacts/orbital-emulator.png &&
      test -s artifacts/orbital-emulator.png &&
@@ -107,7 +148,10 @@ with open(sys.argv[1], "rb") as frame:
 if header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
     raise SystemExit("Missing Android screenshot PNG header")
 width, height = struct.unpack(">II", header[16:24])
-if width < 600 or height < 1000 or width >= height or size < 4096:
+# A normal multi-control keyboard view cannot be the 19-20 kB blank frame
+# returned immediately after focus in past CI runs. Keep this bound generous
+# and only for the normal UI; the genuinely black FOCUS idle PNG is separate.
+if width < 600 or height < 1000 or width >= height or size < 65536:
     raise SystemExit(f"Invalid genuine portrait baseline {width}x{height} size={size}")
 if ending != b"\x00\x00\x00\x00IEND\xaeB\x60\x82":
     raise SystemExit("Truncated genuine portrait PNG")
