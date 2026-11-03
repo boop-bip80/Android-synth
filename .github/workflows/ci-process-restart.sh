@@ -49,9 +49,48 @@ timeout 18m adb logcat -v threadtime \
   > artifacts/step-restart-full-logcat.txt 2>&1 &
 logcat_pid=$!
 
+# sys.boot_completed=1 is not proof that package-manager can install APKs.
+# Match the established GENERAL emulator readiness gate on this fresh runner.
+printf 'waiting-for-package-manager\n' > "$phase"
+pm_ready=0
+for attempt in {1..45}; do
+  if timeout 8s adb shell pm list packages com.android.settings 2>/dev/null \
+      | grep -q 'package:com.android.settings'; then
+    pm_ready=1
+    printf 'ready_after_attempt=%s\n' "$attempt" > artifacts/step-restart-package-manager-ready.txt
+    break
+  fi
+  sleep 2
+done
+[[ "$pm_ready" == 1 ]] || {
+  echo 'Fresh Android package manager failed bounded 90-second readiness gate.' >&2
+  exit 1
+}
+
+# Real APK install must succeed; bounded retries only recover cold-boot PM races
+# and retain every error for diagnostics (never skip or substitute an APK).
+install_verified_apk() {
+  local apk="$1"
+  local name="$2"
+  local attempt=0
+  local log=""
+  for attempt in 1 2 3; do
+    log="artifacts/step-restart-${name}-install-${attempt}.txt"
+    if timeout 90s adb install -r "$apk" > "$log" 2>&1 \
+        && tr -d '\r' < "$log" | grep -Fxq 'Success'; then
+      printf 'apk=%s\nverified_install_attempt=%s\n' "$apk" "$attempt" \
+        > "artifacts/step-restart-${name}-install.txt"
+      return 0
+    fi
+    echo "Attempt ${attempt}/3 failed installing validated ${name} APK; preserved ${log}" >&2
+    sleep 3
+  done
+  echo "Failed all 3 real ADB installations of validated ${name} APK." >&2
+  return 1
+}
 printf 'install-exact-apks\n' > "$phase"
-timeout 120s adb install -r "$app_apk" > artifacts/step-restart-app-install.txt
-timeout 120s adb install -r "$test_apk" > artifacts/step-restart-test-install.txt
+install_verified_apk "$app_apk" app
+install_verified_apk "$test_apk" test
 installed="$(timeout 15s adb shell pm path com.orbital.synth | tr -d '\r')"
 [[ "$installed" == *package:* ]] || {
   echo 'Production package was not installed in the fresh emulator.' >&2
