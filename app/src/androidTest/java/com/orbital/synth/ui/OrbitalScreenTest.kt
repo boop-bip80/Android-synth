@@ -28,6 +28,8 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.audio.AudioVisualSnapshot
+import java.util.concurrent.atomic.AtomicInteger
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
@@ -42,6 +44,33 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class OrbitalScreenTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test fun immersiveFieldPollsRealAudioTelemetryOnlyWhileVisible() {
+        val reads = AtomicInteger(0)
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+                onReadAudioVisual = {
+                    reads.incrementAndGet()
+                    AudioVisualSnapshot(
+                        rms = .35f, peak = .78f, transient = .42f, brightness = .55f,
+                    )
+                },
+            )
+        }
+
+        // The renderer stays disconnected from AudioTrack until STAGE is entered.
+        compose.runOnIdle { assertEquals(0, reads.get()) }
+        compose.onNodeWithTag("immersiveModeToggle").performClick()
+        compose.waitUntil(4_000L) { reads.get() >= 2 }
+        compose.onNodeWithTag("immersiveStage").assertExists()
+        compose.onNodeWithTag("immersiveVisualField").assertExists()
+        compose.onNodeWithTag("immersiveExit").performClick()
+        compose.onNodeWithTag("immersiveStage").assertDoesNotExist()
+    }
 
     @Test fun oscillatorWorkbenchEditsLiveLayersWithoutTouchingOtherVoices() {
         val liveSlots = mutableStateOf(List(8) { OscillatorSlot() })

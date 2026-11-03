@@ -46,6 +46,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.audio.AudioVisualSnapshot
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlin.math.abs
 
 /**
@@ -67,6 +70,8 @@ internal fun ImmersiveStage(
     initialPerformanceConfig: StageTouchSettings? = null,
     /** Emit only performer-initiated configuration changes for host persistence. */
     onPerformanceConfigChange: ((StageTouchSettings) -> Unit)? = null,
+    /** Meter from real Android AudioTrack output, sampled only while the stage is on-screen. */
+    audioVisualSource: (() -> AudioVisualSnapshot)? = null,
 ) {
     val mapper = remember { TouchPerformanceMapper() }
     var showConfig by remember { mutableStateOf(false) }
@@ -81,6 +86,23 @@ internal fun ImmersiveStage(
     val latestParameter = rememberUpdatedState(onParameterChange)
     val latestModulationTouch = rememberUpdatedState(onModulationTouchExpression)
     val latestPerformanceConfigChange = rememberUpdatedState(onPerformanceConfigChange)
+    val latestAudioVisualSource = rememberUpdatedState(audioVisualSource)
+    var audioVisual by remember { mutableStateOf(AudioVisualSnapshot()) }
+    // Snapshot reads do not touch the DSP engine and never run on its audio thread.
+    // No polling occurs for preview hosts without a meter, or after stage disposal.
+    LaunchedEffect(audioVisualSource != null) {
+        val silent = AudioVisualSnapshot()
+        while (isActive) {
+            val source = latestAudioVisualSource.value
+            if (source == null) {
+                if (audioVisual != silent) audioVisual = silent
+                break
+            }
+            val next = source()
+            if (next != audioVisual) audioVisual = next
+            delay(33L)
+        }
+    }
     val lastModulationTouch = remember { FloatArray(3) { Float.NaN } }
     // Dedupe minute pointer jitter before triggering Compose state invalidations.
     // Finger position and the visual renderer still update on every pointer event.
@@ -181,7 +203,9 @@ internal fun ImmersiveStage(
         // harmonic arcs. The background is truly black; visual luminance is tied
         // to the performed gesture rather than to an idle animated wallpaper.
         ImmersiveVisualField(
-            modifier = Modifier.fillMaxSize().alpha(if (touchIntensity > 0f) 1f else .16f),
+            modifier = Modifier.fillMaxSize().alpha(
+                if (touchIntensity > .01f || audioVisual.rms > .004f || audioVisual.peak > .02f) 1f else .16f
+            ),
             morph = parameter(ParameterId.MORPH),
             movement = parameter(ParameterId.MOVEMENT),
             cutoff = parameter(ParameterId.CUTOFF),
@@ -190,6 +214,10 @@ internal fun ImmersiveStage(
             touchY = touchY,
             touchIntensity = touchIntensity,
             pulse = pulse,
+            audioRms = audioVisual.rms,
+            audioPeak = audioVisual.peak,
+            audioTransient = audioVisual.transient,
+            audioBrightness = audioVisual.brightness,
         )
 
         Box(
