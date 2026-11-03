@@ -73,6 +73,9 @@ class AndroidAudioOutput(
         .setOnAudioFocusChangeListener(focusListener)
         .build()
     private val renderedFrameCounter = AtomicLong(0)
+    // Lifecycle-only event counter: UI can observe even a stop/restart shorter
+    // than one frame of its 20–30Hz poll. Never touched per audio sample/block.
+    private val performanceSessionRevision = AtomicLong(0L)
     // Submitted PCM is metered on the audio worker with no allocations or locks.
     // A snapshot allocation occurs only when a UI consumer requests one.
     private val visualTelemetry = AudioVisualTelemetry(sampleRate)
@@ -116,6 +119,12 @@ class AndroidAudioOutput(
     }
 
     val isRunning: Boolean get() = running
+
+    /** A lock-free monotonic revision of real touch-voice invalidating events.
+     * Incremented on each actual new worker, stop, focus loss, or unexpected
+     * exit. UI uses this to revoke stale held fingers before the next attack.
+     */
+    val performanceSessionEpoch: Long get() = performanceSessionRevision.get()
 
     /** Coherent, normalized PCM-derived meter for visual consumers (up to 30 Hz). */
     val audioVisualSnapshot: AudioVisualSnapshot get() = visualTelemetry.snapshot()
@@ -241,6 +250,7 @@ class AndroidAudioOutput(
         playback = config.track
         visualTelemetry.begin()
         running = true
+        performanceSessionRevision.incrementAndGet() // actual new worker session
         val workerGeneration = lifecycleGeneration
         val thread = Thread({ renderLoop(config, workerGeneration) }, "OrbitalAudioRender")
         thread.isDaemon = true
@@ -263,6 +273,7 @@ class AndroidAudioOutput(
             running = false
             visualTelemetry.stop()
             synth.allNotesOff()
+            performanceSessionRevision.incrementAndGet() // explicit stop/panic
             runCatching { playback?.pause() }
             workerThread?.interrupt()
             // Must execute under the same lock as start() requests focus: a
@@ -374,6 +385,9 @@ class AndroidAudioOutput(
                 Log.e("OrbitalAudio", "Audio render stopped unexpectedly", failure)
             }
         } finally {
+            // Unexpected worker exits revoke UI key ownership even if the
+            // bounded recovery starts a replacement within one UI poll tick.
+            val unrequestedExit = unexpectedFailure || running
             running = false
             visualTelemetry.stop()
             audioSequencer.onWorkerStop()
@@ -382,6 +396,7 @@ class AndroidAudioOutput(
             // queued beyond the transport's last block. Flush all ownership before
             // any replacement worker renders a fresh buffer.
             if (unexpectedFailure) synth.allNotesOff()
+            if (unrequestedExit) performanceSessionRevision.incrementAndGet()
             lastUnderruns = runCatching { config.track.underrunCount }.getOrDefault(lastUnderruns)
             runCatching { config.track.pause() }
             runCatching { config.track.flush() }
@@ -438,6 +453,7 @@ class AndroidAudioOutput(
             running = false
             visualTelemetry.stop()
             synth.allNotesOff()
+            performanceSessionRevision.incrementAndGet() // focus interruption
             runCatching { playback?.pause() }
             workerThread?.interrupt()
             if (!transient) abandonFocusLocked()

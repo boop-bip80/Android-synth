@@ -33,6 +33,11 @@ import java.util.concurrent.atomic.AtomicInteger
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
+import com.orbital.synth.core.dsp.processing.FxModuleConfig
+import com.orbital.synth.core.dsp.processing.FxModuleType
+import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModDestination
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import com.orbital.synth.core.music.SequencerNote
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -45,7 +50,7 @@ import org.junit.runner.RunWith
 class OrbitalScreenTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
-    @Test fun immersiveFieldPollsRealAudioTelemetryOnlyWhileVisible() {
+    @Test fun soundAndImmersivePollProvidedAudioOnlyWhileTheirRealFieldIsVisible() {
         val reads = AtomicInteger(0)
         compose.setContent {
             OrbitalScreen(
@@ -61,11 +66,18 @@ class OrbitalScreenTest {
                 },
             )
         }
-
-        // The renderer stays disconnected from AudioTrack until STAGE is entered.
-        compose.runOnIdle { assertEquals(0, reads.get()) }
-        compose.onNodeWithTag("immersiveModeToggle").performClick()
+        compose.onNodeWithTag("referenceSoundHero").assertExists()
         compose.waitUntil(4_000L) { reads.get() >= 2 }
+        compose.onNodeWithContentDescription("Tab PLAY").performClick()
+        compose.waitForIdle()
+        Thread.sleep(110L)
+        val paused = reads.get()
+        Thread.sleep(180L)
+        compose.runOnIdle {
+            assertEquals("PCM reader must cancel outside SOUND", paused, reads.get())
+        }
+        compose.onNodeWithTag("immersiveModeToggle").performClick()
+        compose.waitUntil(4_000L) { reads.get() > paused + 1 }
         compose.onNodeWithTag("immersiveStage").assertExists()
         compose.onNodeWithTag("immersiveVisualField").assertExists()
         compose.onNodeWithTag("immersiveExit").performClick()
@@ -88,6 +100,8 @@ class OrbitalScreenTest {
             )
         }
 
+        compose.onNodeWithTag("referenceSoundAdvancedToggle")
+            .performScrollTo().performClick()
         compose.onNodeWithTag("oscillatorRack").assertExists()
         compose.onNodeWithTag("oscillatorEnable").performScrollTo().performClick()
         compose.runOnIdle {
@@ -161,6 +175,77 @@ class OrbitalScreenTest {
         compose.runOnIdle { assertTrue(!cables.value[0].enabled) }
     }
 
+    @Test fun realSoundGraphOpensOnlyWithFullHostRoutesAndEditsAudibleDspSlots() {
+        val layers = mutableStateOf(List(8) { OscillatorSlot() })
+        val lfos = List(8) { ModulationLfoConfig(enabled = true) }
+        val cables = mutableStateOf(List(64) { ModulationRouteConfig() })
+        val effects = mutableStateOf(
+            List(6) { index ->
+                if (index == 0) FxModuleConfig(
+                    type = FxModuleType.CHORUS, enabled = true, wet = .51f,
+                ) else FxModuleConfig()
+            },
+        )
+        val moves = mutableListOf<Pair<Int, Int>>()
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(
+                    oscillatorSlots = layers.value,
+                    modulationLfos = lfos,
+                    modulationRoutes = cables.value,
+                    fxSlots = effects.value,
+                    modulationSteps = ModulationStepConfig(enabled = true),
+                ),
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+                onOscillatorSlotChange = { index, config ->
+                    layers.value = layers.value.toMutableList().apply { set(index, config) }
+                },
+                onModulationRouteChange = { index, config ->
+                    cables.value = cables.value.toMutableList().apply { set(index, config) }
+                },
+                onModulationRouteClear = { index ->
+                    cables.value = cables.value.toMutableList().apply {
+                        set(index, ModulationRouteConfig())
+                    }
+                },
+                onFxMoveSlot = { from, to ->
+                    moves += from to to
+                    effects.value = effects.value.toMutableList().apply {
+                        add(to, removeAt(from))
+                    }
+                },
+            )
+        }
+        // Hidden until explicitly requested: the original plasma remains
+        // first-viewport focus; this is the REAL advanced routing canvas.
+        compose.onNodeWithTag("patchGraphPanel").assertDoesNotExist()
+        compose.onNodeWithTag("referenceSoundGraphToggle")
+            .performScrollTo().performClick()
+        compose.onNodeWithTag("patchGraphPanel").assertExists()
+        compose.onNodeWithTag("patchLfo1").performScrollTo().performClick()
+        compose.onNodeWithTag("patchBusCUTOFF").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertTrue(cables.value[0].enabled)
+            assertEquals(ModSource.LFO2, cables.value[0].source)
+            assertEquals(ModDestination.CUTOFF, cables.value[0].destination)
+        }
+        compose.onNodeWithTag("patchOscillator0").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertTrue(layers.value[0].enabled)
+            assertTrue(layers.value[0].level > 0f)
+        }
+        compose.onNodeWithTag("patchFxMoveRight").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(0 to 1), moves)
+            assertEquals(FxModuleType.CHORUS, effects.value[1].type)
+        }
+        compose.onNodeWithTag("referenceSoundGraphToggle")
+            .performScrollTo().performClick()
+        compose.onNodeWithTag("patchGraphPanel").assertDoesNotExist()
+    }
+
     @Test fun tabsAndKnobsAreRealSemanticsNodes() {
         compose.setContent {
             OrbitalScreen(
@@ -173,7 +258,7 @@ class OrbitalScreenTest {
             )
         }
         compose.onNodeWithText("O R B I T A L").assertExists()
-        compose.onNodeWithContentDescription("CUTOFF").assertExists()
+        compose.onNodeWithTag("referenceKnobCUTOFF").assertExists()
         compose.onNodeWithContentDescription("Tab SEQ").performClick()
         compose.onNodeWithText("16-STEP ORBIT").assertExists()
         compose.onNodeWithContentDescription("Tab FX").performClick()
@@ -182,26 +267,29 @@ class OrbitalScreenTest {
         compose.onNodeWithText("PERFORMANCE").assertExists()
     }
 
-    @Test fun performanceKeyboardStaysVisibleAcrossTabs() {
+    @Test fun soundUsesOriginalChromaticStripsWhileOtherTabsKeepRealPiano() {
         compose.setContent {
             OrbitalScreen(
                 state = OrbitalUiState(),
-                onNoteOn = {},
-                onNoteOff = {},
+                onNoteOn = {}, onNoteOff = {},
                 onParameterChange = { _, _ -> },
-                onModeChange = {},
-                onOctaveChange = {},
+                onModeChange = {}, onOctaveChange = {},
             )
         }
-        val keyboard = compose.onNodeWithContentDescription(
-            "Multitouch piano keyboard",
-            substring = true,
+        val glass = compose.onNodeWithTag("referencePerformanceKeybed")
+        val piano = compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
         )
-        keyboard.assertIsDisplayed()
-        listOf("Tab FX", "Tab SEQ", "Tab PLAY", "Tab SOUND").forEach { tab ->
+        glass.assertIsDisplayed()
+        piano.assertDoesNotExist()
+        listOf("Tab FX", "Tab SEQ", "Tab PLAY").forEach { tab ->
             compose.onNodeWithContentDescription(tab).performClick()
-            keyboard.assertIsDisplayed()
+            piano.assertIsDisplayed()
+            glass.assertDoesNotExist()
         }
+        compose.onNodeWithContentDescription("Tab SOUND").performClick()
+        glass.assertIsDisplayed()
+        piano.assertDoesNotExist()
     }
 
     @Test fun presetArrowsAreAccessibleAndCallNavigation() {
@@ -223,9 +311,9 @@ class OrbitalScreenTest {
                 onNextPatch = { next++ },
             )
         }
-        compose.onNodeWithContentDescription("Previous factory preset").performClick()
-        compose.onNodeWithContentDescription("Next factory preset").performClick()
-        compose.onNodeWithText("PATCH 2 / 6").assertExists()
+        compose.onNodeWithTag("referenceHeroPreviousPatch").performClick()
+        compose.onNodeWithTag("referenceHeroNextPatch").performClick()
+        compose.onNodeWithTag("referenceHeroPatchName").assertExists()
         compose.runOnIdle {
             assertEquals(1, previous)
             assertEquals(1, next)
@@ -243,8 +331,8 @@ class OrbitalScreenTest {
                 onOctaveChange = {},
             )
         }
-        compose.onNodeWithContentDescription("Previous factory preset").assertIsNotEnabled()
-        compose.onNodeWithContentDescription("Next factory preset").assertIsNotEnabled()
+        compose.onNodeWithTag("referenceHeroPreviousPatch").assertDoesNotExist()
+        compose.onNodeWithTag("referenceHeroNextPatch").assertDoesNotExist()
     }
 
     @Test fun soundOrbitIsAnInteractiveExpressionSurface() {
@@ -257,7 +345,7 @@ class OrbitalScreenTest {
                 onModeChange = {}, onOctaveChange = {},
             )
         }
-        compose.onNodeWithTag("orbitalExpression").assertIsDisplayed().performTouchInput {
+        compose.onNodeWithTag("referenceHeroOrbInput").assertIsDisplayed().performTouchInput {
             down(center)
             up()
         }
@@ -265,7 +353,8 @@ class OrbitalScreenTest {
             assertTrue("Morph touch callback missing", ParameterId.MORPH in updates)
             assertTrue("Movement touch callback missing", ParameterId.MOVEMENT in updates)
             assertEquals(.5f, updates.getValue(ParameterId.MORPH), .02f)
-            assertEquals(.5f, updates.getValue(ParameterId.MOVEMENT), .02f)
+            // Orb Y folds continuously into the overlaid ribbon at 142dp.
+            assertEquals(.81f, updates.getValue(ParameterId.MOVEMENT), .04f)
         }
     }
 
@@ -279,14 +368,14 @@ class OrbitalScreenTest {
                 onModeChange = {}, onOctaveChange = {},
             )
         }
-        val orbit = compose.onNodeWithTag("orbitalExpression")
+        val orbit = compose.onNodeWithTag("referenceHeroOrbInput")
         val actions = orbit.fetchSemanticsNode().config[SemanticsActions.CustomActions].map { it.label }
         assertTrue("Increase morph" in actions)
         assertTrue("Decrease movement" in actions)
         orbit.performTouchInput {
-            down(center)
-            moveTo(Offset(center.x + 42f, center.y - 35f))
-            moveTo(Offset(center.x + 82f, center.y - 70f))
+            down(Offset(center.x * .7f, center.y * .4f))
+            moveTo(Offset(center.x + 42f, center.y * .6f))
+            moveTo(Offset(center.x + 82f, center.y * .8f))
             up()
         }
         compose.runOnIdle {
@@ -295,11 +384,12 @@ class OrbitalScreenTest {
             assertTrue("Morph should respond during a drag", morphValues.size >= 2)
             assertTrue("Movement should respond during a drag", movementValues.size >= 2)
             assertTrue("Morph must increase moving right", morphValues.last() > morphValues.first())
-            assertTrue("Movement must increase moving upward", movementValues.last() > movementValues.first())
+            assertTrue("Movement increases moving toward the seamless XY seam",
+                movementValues.last() > movementValues.first())
         }
     }
 
-    @Test fun compactSoundLayoutKeepsLabelsOutsideOrbitAndKeyboard() {
+    @Test fun compactPortraitReferenceHeroKeepsOverlayControlsAndKeysLegible() {
         val density = compose.activity.resources.displayMetrics.density
         var previousPatchRequests = 0
         compose.setContent {
@@ -316,32 +406,30 @@ class OrbitalScreenTest {
                 }
             }
         }
-
-        val bank = compose.onNodeWithTag("compactBankLabel").fetchSemanticsNode().boundsInRoot
-        val engine = compose.onNodeWithTag("compactEngineLabel").fetchSemanticsNode().boundsInRoot
-        val patch = compose.onNodeWithTag("compactPatchControls").fetchSemanticsNode().boundsInRoot
-        val orbit = compose.onNodeWithTag("compactOrbitViewport").fetchSemanticsNode().boundsInRoot
-        val hint = compose.onNodeWithTag("compactOrbitHint").fetchSemanticsNode().boundsInRoot
-        val graphToggle = compose.onNodeWithTag("compactModulationToggle").fetchSemanticsNode().boundsInRoot
-        val keyboard = compose.onNodeWithContentDescription(
-            "Multitouch piano keyboard", substring = true,
-        ).fetchSemanticsNode().boundsInRoot
-
-        assertTrue("Bank and engine captions overlap", bank.right <= engine.left)
-        assertTrue("Patch controls intersect the orbit", patch.bottom <= orbit.top)
-        assertTrue("Orbital instruction overlaps artwork", orbit.bottom <= hint.top)
-        assertTrue("Modulation control overlaps instruction", hint.bottom <= graphToggle.top)
-        assertTrue("Compact modulation control is hidden behind keyboard",
-            graphToggle.bottom <= keyboard.top)
-        assertTrue("Compact modulation control is partially clipped by the editor",
-            graphToggle.height >= 47f * density)
-        compose.onNodeWithText("MODULATION GRAPH").assertIsDisplayed()
-
-        compose.onNodeWithTag("compactModulationGraph").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Previous factory preset").performClick()
+        val orb = compose.onNodeWithTag("referenceSoundHeroOrb")
+            .fetchSemanticsNode().boundsInRoot
+        val ribbon = compose.onNodeWithTag("referenceExpressionRibbon",
+            useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val keybed = compose.onNodeWithTag("referencePerformanceKeybed")
+            .fetchSemanticsNode().boundsInRoot
+        val patch = compose.onNodeWithTag("referenceHeroPatchName")
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("PATCH label should float inside the real orb",
+            patch.top >= orb.top && patch.bottom < orb.bottom)
+        assertTrue("Real XY ribbon must visually overlay plasma",
+            ribbon.top > orb.top && ribbon.bottom <= orb.bottom + 2f)
+        assertTrue("Reference artwork must not overlap anchored playable keys",
+            orb.bottom <= keybed.top)
+        assertTrue("Chromatic touch keybed too short to play",
+            keybed.height >= 90f * density)
+        compose.onNodeWithTag("referenceKnobRack").assertExists()
+        compose.onNodeWithTag("referenceMiniSignals").assertExists()
+        compose.onNodeWithTag("compactPatchControls").assertDoesNotExist()
+        compose.onNodeWithTag("referenceHeroPreviousPatch").performClick()
         compose.runOnIdle { assertEquals(1, previousPatchRequests) }
-        compose.onNodeWithContentDescription("Show modulation graph").performClick()
-        compose.onNodeWithTag("compactModulationGraph").assertExists()
+        compose.onNodeWithTag("referenceSoundAdvancedToggle")
+            .performScrollTo().performClick()
+        compose.onNodeWithTag("referenceSoundAdvancedToggle").assertExists()
     }
 
     @Test fun keyboardExposesChromaticAccessibleActions() {
@@ -353,6 +441,7 @@ class OrbitalScreenTest {
                 onModeChange = {}, onOctaveChange = {},
             )
         }
+        compose.onNodeWithContentDescription("Tab PLAY").performClick()
         val actions = compose.onNodeWithContentDescription(
             "Multitouch piano keyboard", substring = true,
         ).fetchSemanticsNode().config[SemanticsActions.CustomActions].map { it.label }
@@ -360,6 +449,129 @@ class OrbitalScreenTest {
         assertTrue("Play C sharp 4" in actions)
         assertTrue("Play A sharp 4" in actions)
         assertTrue("Play C 5" in actions)
+    }
+
+    @Test fun heldSoundChordMustReleaseOnTabSwitchAndNewSoundKeybedCanReattack() {
+        val events = mutableListOf<String>()
+        compose.setContent {
+            OrbitalScreen(
+                state = OrbitalUiState(octave = 4),
+                onNoteOn = { events.add("ON:$it") },
+                onNoteOff = { events.add("OFF:$it") },
+                onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+            )
+        }
+        compose.onNodeWithTag("referencePerformanceKeybed").performTouchInput {
+            val width = center.x * 2f
+            down(0, Offset(width * .06f, center.y))
+            down(1, Offset(width * .59f, center.y))
+        }
+        compose.runOnIdle {
+            assertEquals(listOf("ON:60", "ON:67"), events)
+        }
+        compose.onNodeWithContentDescription("Tab PLAY").performClick()
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(listOf("ON:60", "ON:67", "OFF:60", "OFF:67"), events)
+        }
+        compose.onNodeWithTag("referencePerformanceKeybed").assertDoesNotExist()
+        compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        ).assertExists()
+        compose.onNodeWithContentDescription("Tab SOUND").performClick()
+        compose.onNodeWithTag("referencePerformanceKeybed").performTouchInput {
+            val width = center.x * 2f
+            down(2, Offset(width * .06f, center.y))
+            up(2)
+        }
+        compose.runOnIdle {
+            assertEquals(
+                listOf("ON:60", "ON:67", "OFF:60", "OFF:67", "ON:60", "OFF:60"),
+                events,
+            )
+        }
+    }
+
+    @Test fun savingToDifferentPatchIdKeepsHeldNoteButSameIdRecallEpochResetsIt() {
+        val state = mutableStateOf(OrbitalUiState(
+            activePatchId = "user:a", performanceResetEpoch = 0L, octave = 4,
+        ))
+        val on = mutableListOf<Int>()
+        val off = mutableListOf<Int>()
+        compose.setContent {
+            OrbitalScreen(
+                state = state.value,
+                onNoteOn = { on.add(it) },
+                onNoteOff = { off.add(it) },
+                onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+            )
+        }
+        val first = compose.onNodeWithTag("referencePerformanceKeybed")
+        first.performTouchInput {
+            down(0, Offset(center.x * .10f, center.y))
+        }
+        compose.runOnIdle {
+            assertEquals(listOf(60), on)
+            // SAVE AS changes identity without panicking an active voice.
+            state.value = state.value.copy(activePatchId = "user:b")
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals("Harmless save-as must not cut a held note", emptyList<Int>(), off)
+            // Selecting the SAME ID now recalls sound and panics its notes.
+            state.value = state.value.copy(performanceResetEpoch = 1L)
+        }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(listOf(60), off) }
+        compose.onNodeWithTag("referencePerformanceKeybed").performTouchInput {
+            down(1, Offset(center.x * .10f, center.y))
+            up(1)
+        }
+        compose.runOnIdle {
+            assertEquals(listOf(60, 60), on)
+            assertEquals(listOf(60, 60), off)
+        }
+    }
+
+    @Test fun audioReaderUsesLatestHostCallbackAcrossRapidKnobStateRecompositions() {
+        val state = mutableStateOf(OrbitalUiState())
+        val reads = AtomicInteger(0)
+        compose.setContent {
+            OrbitalScreen(
+                state = state.value,
+                onNoteOn = {}, onNoteOff = {},
+                onParameterChange = { _, _ -> },
+                onModeChange = {}, onOctaveChange = {},
+                onReadAudioVisual = {
+                    reads.incrementAndGet()
+                    AudioVisualSnapshot(rms = .14f, peak = .35f)
+                },
+            )
+        }
+        compose.waitUntil(4_000L) { reads.get() >= 3 }
+        val before = reads.get()
+        // A churn of host-owned knobs must NOT relaunch the PCM reader as
+        // if onReadAudioVisual were a LaunchedEffect identity key.
+        repeat(18) { i ->
+            compose.runOnIdle {
+                state.value = state.value.copy(parameters = mapOf(
+                    ParameterId.WAVE to ((i % 11) / 10f),
+                ))
+            }
+        }
+        Thread.sleep(260L)
+        val after = reads.get()
+        assertTrue("Real PCM poll silently stopped after control changes", after > before)
+        assertTrue("20Hz reader restarted excessively: before=$before after=$after",
+            after - before <= 11)
+        compose.onNodeWithContentDescription("Tab FX").performClick()
+        compose.waitForIdle()
+        Thread.sleep(90L)
+        val paused = reads.get()
+        Thread.sleep(180L)
+        assertEquals("No PCM poll while FX tab is showing", paused, reads.get())
     }
 
     @Test fun wideKeyboardExposesBothOctavesToAccessibility() {

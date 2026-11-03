@@ -87,6 +87,9 @@ class MainActivity : ComponentActivity() {
     private val pendingToggleIntents = SequencerToggleReconciler()
     /** Main-thread optimistic FX state; worker tickets prevent edits hitting old slot indices. */
     private val fxRackReconciler = FxRackHostReconciler()
+    /** UI-only acknowledgment of the audio worker session revision. A rapid
+     * stop→restart cannot disappear between 32ms polls. */
+    private var lastObservedAudioSession: Long? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -164,6 +167,17 @@ class MainActivity : ComponentActivity() {
                 while (true) {
                     val step = audioOutput.sequencerPlayhead
                     val modulationStep = synth.modulationStepPlayhead
+                    val session = audioOutput.performanceSessionEpoch
+                    val previousSession = lastObservedAudioSession
+                    if (previousSession != null && previousSession != session) {
+                        // AudioTrack stop/focus loss or bounded replacement may
+                        // complete BETWEEN UI frames. A monotonic revision does
+                        // not miss those changes, unlike an isRunning Boolean.
+                        screenState = screenState.copy(
+                            performanceResetEpoch = screenState.performanceResetEpoch + 1L,
+                        )
+                    }
+                    lastObservedAudioSession = session
                     // Factory selection is queued on the audio thread. Read the
                     // immutable snapshot only after it has actually been applied,
                     // so the active ID and enabled grid cannot belong to different patterns.
@@ -261,9 +275,15 @@ class MainActivity : ComponentActivity() {
                     },
                     onModeChange = ::updatePlayMode,
                     onOctaveChange = { octave ->
-                        audioOutput.allNotesOff(TOUCH_SOURCE_ID)
-                        synth.allNotesOff(TOUCH_SOURCE_ID)
-                        screenState = screenState.copy(octave = octave.coerceIn(0, 8))
+                        val next = octave.coerceIn(0, 8)
+                        if (next != screenState.octave) {
+                            audioOutput.allNotesOff(TOUCH_SOURCE_ID)
+                            synth.allNotesOff(TOUCH_SOURCE_ID)
+                            screenState = screenState.copy(
+                                octave = next,
+                                performanceResetEpoch = screenState.performanceResetEpoch + 1L,
+                            )
+                        }
                     },
                     onSequencerToggle = {
                         val next = !screenState.sequencerRunning
@@ -303,8 +323,14 @@ class MainActivity : ComponentActivity() {
                     onSelectPatch = ::activatePatch,
                     onSelectSequence = ::activateSequence,
                     onArpEnabledChange = { enabled ->
-                        audioOutput.setArpeggiatorEnabled(enabled)
-                        screenState = screenState.copy(arpEnabled = enabled)
+                        if (enabled != screenState.arpEnabled) {
+                            audioOutput.setArpeggiatorEnabled(enabled)
+                            screenState = screenState.copy(
+                                arpEnabled = enabled,
+                                performanceResetEpoch =
+                                    screenState.performanceResetEpoch + 1L,
+                            )
+                        }
                     },
                     onArpDirectionChange = { direction ->
                         audioOutput.setArpeggiatorDirection(
@@ -445,6 +471,7 @@ class MainActivity : ComponentActivity() {
             presetCount = patches.size,
             activePatchId = patch.id,
             patchFeedback = null,
+            performanceResetEpoch = screenState.performanceResetEpoch + 1L,
         )
     }
 
@@ -664,6 +691,7 @@ class MainActivity : ComponentActivity() {
                         presetCount = FactoryPresets.ALL.size,
                         activePatchId = patch.id,
                         patchFeedback = "Loaded ${patch.name}",
+                        performanceResetEpoch = screenState.performanceResetEpoch + 1L,
                     )
                 }
                 is PatchOutcome.Failure -> {
@@ -818,12 +846,18 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        // Explicit panic below increments UI epoch; acknowledge the matching
+        // AudioTrack epoch after stop so the poll cannot double-reset it.
         audioOutput.arpeggiatorPanic()
         synth.allNotesOff()
         audioOutput.setSequencerPlaying(false)
-        screenState = screenState.copy(sequencerRunning = false, sequencerStep = -1)
+        screenState = screenState.copy(
+            sequencerRunning = false, sequencerStep = -1,
+            performanceResetEpoch = screenState.performanceResetEpoch + 1L,
+        )
         midiManager.stop()
         audioOutput.stop()
+        lastObservedAudioSession = audioOutput.performanceSessionEpoch
         super.onStop()
     }
 
