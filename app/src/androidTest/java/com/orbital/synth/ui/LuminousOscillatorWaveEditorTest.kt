@@ -57,7 +57,7 @@ class LuminousOscillatorWaveEditorTest {
         }
         compose.onNodeWithTag("oscillatorWaveCanvas").performScrollTo()
             .performTouchInput {
-                click(Offset(size.width * .82f, size.height * .18f))
+                click(Offset((center.x * 2f) * .82f, (center.y * 2f) * .18f))
             }
         compose.waitForIdle()
         compose.runOnIdle {
@@ -91,8 +91,8 @@ class LuminousOscillatorWaveEditorTest {
         compose.onNodeWithTag("oscillatorWaveCanvas").performScrollTo()
             .performTouchInput {
                 swipe(
-                    start = Offset(size.width * .12f, size.height * .84f),
-                    end = Offset(size.width * .88f, size.height * .12f),
+                    start = Offset((center.x * 2f) * .12f, (center.y * 2f) * .84f),
+                    end = Offset((center.x * 2f) * .88f, (center.y * 2f) * .12f),
                     durationMillis = 310,
                 )
             }
@@ -107,7 +107,7 @@ class LuminousOscillatorWaveEditorTest {
 
         val afterDrag = callbacks
         compose.onNodeWithTag("oscillatorWaveCanvas").performTouchInput {
-            click(Offset(size.width * .21f, size.height * .72f))
+            click(Offset((center.x * 2f) * .21f, (center.y * 2f) * .72f))
         }
         compose.waitForIdle()
         compose.runOnIdle {
@@ -141,7 +141,7 @@ class LuminousOscillatorWaveEditorTest {
         }
 
         compose.onNodeWithTag("luminousLevelControl").performTouchInput {
-            click(Offset(size.width * .25f, size.height * .75f))
+            click(Offset((center.x * 2f) * .25f, (center.y * 2f) * .75f))
         }
         compose.waitForIdle()
         compose.runOnIdle {
