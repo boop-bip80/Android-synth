@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.MaterialTheme
 import com.orbital.synth.audio.AndroidAudioOutput
+import com.orbital.synth.audio.PerformanceTouchEpochPolicy
 import com.orbital.synth.audio.AndroidMidiManager
 import com.orbital.synth.audio.SourceAwareMidiMessageListener
 import com.orbital.synth.core.OrbitalSynth
@@ -87,6 +88,9 @@ class MainActivity : ComponentActivity() {
     private val pendingToggleIntents = SequencerToggleReconciler()
     /** Main-thread optimistic FX state; worker tickets prevent edits hitting old slot indices. */
     private val fxRackReconciler = FxRackHostReconciler()
+    /** UI-only acknowledgment of the audio worker session revision. A rapid
+     * stop→restart cannot disappear between 32ms polls. */
+    private var lastObservedAudioSession: Long? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -164,6 +168,17 @@ class MainActivity : ComponentActivity() {
                 while (true) {
                     val step = audioOutput.sequencerPlayhead
                     val modulationStep = synth.modulationStepPlayhead
+                    val session = audioOutput.performanceSessionEpoch
+                    val previousSession = lastObservedAudioSession
+                    if (previousSession != null && previousSession != session) {
+                        // AudioTrack stop/focus loss or bounded replacement may
+                        // complete BETWEEN UI frames. A monotonic revision does
+                        // not miss those changes, unlike an isRunning Boolean.
+                        screenState = screenState.copy(
+                            performanceResetEpoch = screenState.performanceResetEpoch + 1L,
+                        )
+                    }
+                    lastObservedAudioSession = session
                     // Factory selection is queued on the audio thread. Read the
                     // immutable snapshot only after it has actually been applied,
                     // so the active ID and enabled grid cannot belong to different patterns.
@@ -261,9 +276,15 @@ class MainActivity : ComponentActivity() {
                     },
                     onModeChange = ::updatePlayMode,
                     onOctaveChange = { octave ->
-                        audioOutput.allNotesOff(TOUCH_SOURCE_ID)
-                        synth.allNotesOff(TOUCH_SOURCE_ID)
-                        screenState = screenState.copy(octave = octave.coerceIn(0, 8))
+                        val next = octave.coerceIn(0, 8)
+                        if (next != screenState.octave) {
+                            audioOutput.allNotesOff(TOUCH_SOURCE_ID)
+                            synth.allNotesOff(TOUCH_SOURCE_ID)
+                            screenState = screenState.copy(
+                                octave = next,
+                                performanceResetEpoch = screenState.performanceResetEpoch + 1L,
+                            )
+                        }
                     },
                     onSequencerToggle = {
                         val next = !screenState.sequencerRunning
@@ -303,8 +324,14 @@ class MainActivity : ComponentActivity() {
                     onSelectPatch = ::activatePatch,
                     onSelectSequence = ::activateSequence,
                     onArpEnabledChange = { enabled ->
-                        audioOutput.setArpeggiatorEnabled(enabled)
-                        screenState = screenState.copy(arpEnabled = enabled)
+                        if (enabled != screenState.arpEnabled) {
+                            audioOutput.setArpeggiatorEnabled(enabled)
+                            screenState = screenState.copy(
+                                arpEnabled = enabled,
+                                performanceResetEpoch =
+                                    screenState.performanceResetEpoch + 1L,
+                            )
+                        }
                     },
                     onArpDirectionChange = { direction ->
                         audioOutput.setArpeggiatorDirection(
@@ -445,6 +472,7 @@ class MainActivity : ComponentActivity() {
             presetCount = patches.size,
             activePatchId = patch.id,
             patchFeedback = null,
+            performanceResetEpoch = screenState.performanceResetEpoch + 1L,
         )
     }
 
@@ -664,6 +692,7 @@ class MainActivity : ComponentActivity() {
                         presetCount = FactoryPresets.ALL.size,
                         activePatchId = patch.id,
                         patchFeedback = "Loaded ${patch.name}",
+                        performanceResetEpoch = screenState.performanceResetEpoch + 1L,
                     )
                 }
                 is PatchOutcome.Failure -> {
@@ -682,9 +711,8 @@ class MainActivity : ComponentActivity() {
         if (!next.waveform.isFinite() || !next.morph.isFinite() ||
             !next.level.isFinite() || !next.fineCents.isFinite() ||
             !next.noiseLevel.isFinite() || !next.noiseColor.isFinite()) return
-        // Publish the complete immutable layer so the noise blend/color edited
-        // in the live Compose workbench reach the SAME real AudioTrack synth.
-        // The old seven-argument API discarded those V6 fields.
+        // Complete immutable V6 layer: colored noise controls reach the same
+        // real AudioTrack synth without dropping any slot parameters.
         synth.setOscillatorSlot(index, next)
         screenState = screenState.copy(oscillatorSlots = oscillatorSnapshot())
     }
@@ -803,7 +831,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        if (!audioOutput.start()) {
+        val sessionBeforeStart = audioOutput.performanceSessionEpoch
+        val started = audioOutput.start()
+        // onStop already panicked/invalidated all prior physical finger leases.
+        // A synchronous, successful foreground worker start is expected and
+        // must be ACKed before a fresh finger gets canceled at the 32ms poll.
+        // Unknown extra revisions (focus interruption/worker exit) remain
+        // unacknowledged so the poll can revoke truly stale input.
+        lastObservedAudioSession = PerformanceTouchEpochPolicy.acknowledgeExpectedStart(
+            previouslyObserved = lastObservedAudioSession,
+            beforeStart = sessionBeforeStart,
+            afterStart = audioOutput.performanceSessionEpoch,
+            accepted = started,
+            running = audioOutput.isRunning,
+        )
+        if (!started) {
             Toast.makeText(
                 this,
                 "Audio output unavailable. Check your device audio settings.",
@@ -814,12 +856,18 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        // Explicit panic below increments UI epoch; acknowledge the matching
+        // AudioTrack epoch after stop so the poll cannot double-reset it.
         audioOutput.arpeggiatorPanic()
         synth.allNotesOff()
         audioOutput.setSequencerPlaying(false)
-        screenState = screenState.copy(sequencerRunning = false, sequencerStep = -1)
+        screenState = screenState.copy(
+            sequencerRunning = false, sequencerStep = -1,
+            performanceResetEpoch = screenState.performanceResetEpoch + 1L,
+        )
         midiManager.stop()
         audioOutput.stop()
+        lastObservedAudioSession = audioOutput.performanceSessionEpoch
         super.onStop()
     }
 

@@ -59,18 +59,27 @@ import sys
 import xml.etree.ElementTree as ET
 path, mode = sys.argv[1:]
 names = [n.attrib.get("content-desc", "") for n in ET.parse(path).iter("node")]
-keyboard = sum("multitouch piano keyboard" in n.lower() for n in names)
+piano = sum("multitouch piano keyboard" in n.lower() for n in names)
+chromatic = sum(n.lower().startswith(
+    "twelve live chromatic liquid-glass keys, octave ") for n in names)
 enter = names.count("Enter immersive performance")
 exit = names.count("Exit immersive performance")
 if mode == "normal":
-    if keyboard != 1 or enter != 1 or exit:
-        raise SystemExit(f"Normal screen must have keyboard+enter, no exit: {keyboard}/{enter}/{exit}")
+    # Portrait SOUND now has exactly one real chromatic performance keybed.
+    # Keep the strict on-device keyboard AND enter checks; never accept 0
+    # buttons, stale PLAY piano, or two overlapping keyboard families.
+    if piano != 0 or chromatic != 1 or enter != 1 or exit:
+        raise SystemExit(
+            f"Normal SOUND must have one chromatic keybed+enter/no legacy piano/exit: "
+            f"piano={piano} glass={chromatic} enter={enter} exit={exit}")
 elif mode == "stage":
-    if keyboard or enter or exit != 1:
-        raise SystemExit(f"Stage must hide keyboard+enter and expose exit: {keyboard}/{enter}/{exit}")
+    if piano or chromatic or enter or exit != 1:
+        raise SystemExit(
+            f"STAGE must hide BOTH keyboards+enter and expose exit: "
+            f"piano={piano} glass={chromatic} enter={enter} exit={exit}")
 else:
     raise SystemExit(f"Unknown screen {mode}")
-print(f"PASS {mode}: keyboard={keyboard} enter={enter} exit={exit}")
+print(f"PASS {mode}: piano={piano} glass={chromatic} enter={enter} exit={exit}")
 PY
 }
 tap_action() {
@@ -92,10 +101,14 @@ if not match:
 left, top, right, bottom = map(int, match.groups())
 if right <= left or bottom <= top:
     raise SystemExit(f"Empty accessible tap bounds for '{label}'")
+print(f"real_accessibility_target={label} bounds=[{left},{top}][{right},{bottom}] "
+      f"clickable={nodes[0].attrib.get('clickable')} "
+      f"enabled={nodes[0].attrib.get('enabled')}", file=sys.stderr)
 print((left + right)//2, (top + bottom)//2)
 PY
 )"
   read -r x y <<< "$target"
+  printf 'physical_tap_label=%s x=%s y=%s\n' "$2" "$x" "$y" >> "$summary"
   # Bounded ADB retries cover an emulator input-service stall without
   # treating a failed injection as a successful mode transition.
   local attempt
@@ -242,10 +255,54 @@ PY
 printf 'foreground=verified\nscreenshot_sha256=%s\n' \
   "$(sha256sum artifacts/orbital-immersive-emulator.png | cut -d' ' -f1)" >> "$summary"
 
+# The first physical ADB tap may be reported as delivered even when Android's
+# input dispatcher missed it during SurfaceFlinger frame capture. Never infer
+# success from shell exit 0: require the actual returned accessibility tree.
+# The optional second tap is also genuine input at freshly measured EXIT bounds.
 printf 'exit\n' > "$phase"
-tap_action artifacts/immersive-stage.xml 'Exit immersive performance'
-sleep 2
-dump_ui returned
+exit_verified=0
+for exit_attempt in 1 2; do
+  printf 'exit_attempt=%s\n' "$exit_attempt" >> "$summary"
+  printf 'exit_focus_%s\n' "$exit_attempt" > "$phase"
+  if ! timeout 12s adb shell dumpsys window > artifacts/immersive-window-state.txt 2>&1; then
+    echo "Cannot prove focused foreground before physical EXIT tap $exit_attempt." >&2
+    exit 1
+  fi
+  focus="$(grep -m1 'mCurrentFocus=' artifacts/immersive-window-state.txt || true)"
+  printf 'exit_focus_attempt_%s=%s\n' "$exit_attempt" "$focus" >> "$summary"
+  if ! grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth/com[.]orbital[.]synth[.]MainActivity' artifacts/immersive-window-state.txt; then
+    echo "MainActivity lost real window focus before physical EXIT tap $exit_attempt: $focus" >&2
+    exit 1
+  fi
+  dump_ui "exit-before-$exit_attempt"
+  verify_ui "artifacts/immersive-exit-before-$exit_attempt.xml" stage
+  tap_action "artifacts/immersive-exit-before-$exit_attempt.xml" 'Exit immersive performance'
+  sleep 2
+  dump_ui "exit-after-$exit_attempt"
+  after_xml="artifacts/immersive-exit-after-$exit_attempt.xml"
+  if verify_ui "$after_xml" normal >> "$summary" 2>&1; then
+    # Keep the conventional returned XML as durable successful provenance.
+    cp "$after_xml" artifacts/immersive-returned.xml
+    exit_verified=1
+    printf 'real_exit_verified_after_taps=%s\n' "$exit_attempt" >> "$summary"
+    break
+  fi
+  # Accept ONLY the previous real STAGE layout as a retryable missed tap.
+  # A launcher, dialog, no keyboard, extra keybed or another unknown screen
+  # fails closed; a second transient stage does not count as success.
+  if ! verify_ui "$after_xml" stage >> "$summary" 2>&1; then
+    echo "Unexpected foreground/layout after physical EXIT tap $exit_attempt." >&2
+    exit 1
+  fi
+  printf 'physical_exit_tap_%s=delivered_but_stage_still_visible\n' "$exit_attempt" >> "$summary"
+  if [[ "$exit_attempt" == 1 ]]; then
+    echo 'First real EXIT tap left STAGE visible; retrying once at fresh live accessibility bounds.' >&2
+  fi
+done
+if [[ "$exit_verified" != 1 ]]; then
+  echo 'Both measured real EXIT taps left STAGE visible; strict return proof FAILED.' >&2
+  exit 1
+fi
 verify_ui artifacts/immersive-returned.xml normal
 printf 'enter=PASS\nkeyboard_hidden=PASS\nactual_png=PASS\nexit=PASS\n' >> "$summary"
 printf 'complete\n' > "$phase"

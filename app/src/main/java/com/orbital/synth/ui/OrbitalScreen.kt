@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -115,6 +116,8 @@ data class OrbitalUiState(
     val fxSlots: List<FxModuleConfig> = emptyList(),
     /** User-adjusted performance layout, reused when the keyboardless stage reopens. */
     val stageTouchSettings: StageTouchSettings? = null,
+    /** Changes only when the host invalidates live touch voice ownership. */
+    val performanceResetEpoch: Long = 0L,
     val octave: Int = 4,
     val sequencerRunning: Boolean = false,
     val enabledSteps: Set<Int> = emptySet(),
@@ -201,7 +204,25 @@ fun OrbitalScreen(
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var immersiveMode by remember { mutableStateOf(false) }
-    var compactGraphExpanded by remember { mutableStateOf(false) }
+    var soundAdvancedExpanded by remember { mutableStateOf(false) }
+    var soundGraphExpanded by remember { mutableStateOf(false) }
+    var compactOscillatorExpanded by remember { mutableStateOf(false) }
+    // Preserve compact LIVE/TONE/VOICE/ENGINE selection across OSC paging and tab switches.
+    var compactSoundPage by remember { mutableStateOf(CompactSoundPage.LIVE) }
+    var soundVisual by remember { mutableStateOf(AudioVisualSnapshot()) }
+    val readLiveAudioVisual by rememberUpdatedState(onReadAudioVisual)
+    LaunchedEffect(selectedTab, immersiveMode) {
+        if (selectedTab == Tab.SOUND && !immersiveMode) {
+            // Actual accepted AudioTrack PCM, read on UI coroutine only while
+            // SOUND is visible. Keyed by TAB, never by a changing host lambda.
+            while (isActive) {
+                soundVisual = readLiveAudioVisual?.invoke() ?: AudioVisualSnapshot()
+                delay(50L) // 20Hz UI presentation; DSP audio worker untouched.
+            }
+        } else {
+            soundVisual = AudioVisualSnapshot()
+        }
+    }
     var showPatchLibrary by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
     var newPatchName by remember { mutableStateOf("") }
@@ -215,6 +236,11 @@ fun OrbitalScreen(
     }
     val morph = parameter(ParameterId.MORPH)
     val move = parameter(ParameterId.MOVEMENT)
+    val soundParameterValues = remember(state.parameters) {
+        ParameterId.entries.associateWith { id ->
+            (state.parameters[id] ?: defaultValue(id)).coerceIn(0f, 1f)
+        }
+    }
     // The optional engine IDs are linked by the host synthesis engine. Dynamic lookup
     // keeps this layout independently buildable while its audio implementation lands.
     val engineId = remember { ParameterId.entries.firstOrNull { it.name == "ENGINE" } }
@@ -272,6 +298,7 @@ fun OrbitalScreen(
             initialPerformanceConfig = state.stageTouchSettings,
             onPerformanceConfigChange = onStageTouchSettingsChange,
             audioVisualSource = onReadAudioVisual,
+            performanceResetEpoch = state.performanceResetEpoch,
             onExit = { immersiveMode = false },
         )
     } else {
@@ -317,15 +344,29 @@ fun OrbitalScreen(
             }
         }
         val compactOrbitLayout = compactHeight || maxWidth < 380.dp || LocalDensity.current.fontScale >= 1.2f
+        // Exactly one dense portrait SOUND hero must show all 4 authentic
+        // configuration mini plots ABOVE the anchored chromatic keyboard.
+        // Reclaim shell whitespace, not plasma pixels or 48dp touch targets.
+        val referencePortrait = selectedTab == Tab.SOUND && !compactHeight
         Column(
             Modifier.fillMaxSize().padding(
                 horizontal = if (compactHeight) 8.dp else 12.dp,
-                vertical = if (compactHeight) 3.dp else 9.dp,
+                vertical = if (compactHeight) 0.dp else if (referencePortrait) 6.dp else 9.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(
-                if (compactHeight) 2.dp else if (compactOrbitLayout) 8.dp else 12.dp,
+                if (compactHeight) 0.dp else if (referencePortrait) 4.dp
+                else if (compactOrbitLayout) 8.dp else 12.dp,
             ),
         ) {
+        if (compactHeight) {
+            CompactTopNavigation(
+                selectedTab = selectedTab,
+                onTabSelect = { selectedTab = it },
+                onEnterImmersive = { immersiveMode = true },
+                onOpenLibrary = { showPatchLibrary = true },
+                libraryEnabled = onSavePatch != null || onSelectPatch != null,
+            )
+        } else {
         Header(
             patch = state.patchName,
             onOpenLibrary = { showPatchLibrary = true },
@@ -404,6 +445,8 @@ fun OrbitalScreen(
             }
         }
 
+        }
+
         // Editor area is the only vertical scroller. Performance controls remain anchored below it.
         Column(
             Modifier
@@ -418,202 +461,291 @@ fun OrbitalScreen(
                 )
                 .verticalScroll(editorScroll)
                 .testTag("soundEditorScroll")
-                .padding(horizontal = 7.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(if (compactOrbitLayout) 8.dp else 12.dp),
+                .padding(
+                    horizontal = if (referencePortrait) 5.dp else 7.dp,
+                    vertical = if (compactHeight) 1.dp else if (referencePortrait) 3.dp else 6.dp,
+                ),
+            verticalArrangement = Arrangement.spacedBy(
+                if (compactHeight) 3.dp else if (compactOrbitLayout) 8.dp else 12.dp,
+            ),
         ) {
         when (selectedTab) {
             Tab.SOUND -> {
-                CompactPatchHeader(
-                    state = state,
-                    onPreviousPatch = onPreviousPatch,
-                    onNextPatch = onNextPatch,
-                    engineName = engineChoice.name,
-                )
                 if (compactHeight) {
-                    CompactSoundPanel(
-                        parameter = parameter,
-                        engineId = engineId,
-                        engineValue = engineValue,
-                        onParameterChange = onParameterChange,
-                    )
-                } else {
-                if (compactOrbitLayout) {
-                    Box(Modifier.fillMaxWidth().height(148.dp).testTag("compactOrbitViewport")) {
-                        OrbitalDisplay(
-                            morph = morph,
-                            movement = move,
-                            modifier = Modifier.fillMaxSize(),
-                            onExpressionChange = { nextMorph, nextMovement ->
-                                onParameterChange(ParameterId.MORPH, nextMorph)
-                                onParameterChange(ParameterId.MOVEMENT, nextMovement)
-                            },
-                        )
-                    }
-                    Box(Modifier.fillMaxWidth().testTag("compactOrbitHint")) {
-                        Label("DRAG ORBIT: X = MORPH  /  Y = MOTION")
-                    }
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .testTag("compactModulationToggle")
-                            .border(1.dp, OrbitalPalette.PanelEdge, RoundedCornerShape(12.dp))
-                            .background(OrbitalPalette.Panel.copy(alpha = .55f), RoundedCornerShape(12.dp))
-                            .clickable(role = Role.Button) { compactGraphExpanded = !compactGraphExpanded }
-                            .semantics {
-                                contentDescription = if (compactGraphExpanded)
-                                    "Hide modulation graph" else "Show modulation graph"
-                            }
-                            .heightIn(min = 48.dp)
-                            .padding(horizontal = 12.dp, vertical = 7.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("MODULATION GRAPH", color = OrbitalPalette.Text,
-                            fontSize = 10.sp, letterSpacing = 1.1.sp)
-                        Text(if (compactGraphExpanded) "−" else "+",
-                            color = OrbitalPalette.Cyan, fontSize = 18.sp)
-                    }
-                    if (compactGraphExpanded) {
-                        Box(Modifier.fillMaxWidth().testTag("compactModulationGraph")) {
-                            ModulationGraph(morph, move, Modifier.fillMaxWidth())
-                        }
-                    }
-                    EngineArchitecturePanel(
-                        value = engineValue,
-                        enabled = engineId != null,
-                        onChoose = { value -> engineId?.let { onParameterChange(it, value) } },
-                    )
-                } else {
-                    EngineArchitecturePanel(
-                        value = engineValue,
-                        enabled = engineId != null,
-                        onChoose = { value -> engineId?.let { onParameterChange(it, value) } },
-                    )
-                    // Patch controls live above the orbit so no caption competes with
-                    // the luminous visual field or intercepts XY expression touches.
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(244.dp)
-                            .border(
-                                1.dp, OrbitalPalette.Cyan.copy(alpha = .30f),
-                                RoundedCornerShape(18.dp),
-                            ),
-                    ) {
-                        OrbitalDisplay(
-                            morph = morph,
-                            movement = move,
-                            modifier = Modifier.fillMaxSize(),
-                            onExpressionChange = { nextMorph, nextMovement ->
-                                onParameterChange(ParameterId.MORPH, nextMorph)
-                                onParameterChange(ParameterId.MOVEMENT, nextMovement)
-                            },
-                        )
-                    }
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 5.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Label("TOUCH ORBIT / X: MORPH / Y: MOTION")
-                        Text(
-                            percent(morph) + "  /  " + percent(move),
-                            color = OrbitalPalette.Cyan,
-                            fontSize = 10.sp,
-                            letterSpacing = .7.sp,
-                        )
-                    }
-                    ModulationGraph(morph, move, Modifier.fillMaxWidth())
-                }
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .border(
-                            1.dp, OrbitalPalette.PanelEdge.copy(alpha = .48f),
-                            RoundedCornerShape(17.dp),
-                        )
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(OrbitalPalette.DeepBlue.copy(alpha = .45f), OrbitalPalette.Panel.copy(alpha = .80f)),
-                            ),
-                            RoundedCornerShape(17.dp),
-                        )
-                        .padding(horizontal = 5.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 5.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Label("TONE SHAPING  /  LIVE MACROS")
-                        Label("01 — 05")
-                    }
+                    // Five equally reachable 48dp neon controls share ONE
+                    // front-row toolbar: OSC plus LIVE/TONE/VOICE/ENGINE. A
+                    // physical 350dp landscape editor cannot hide ENGINE
+                    // below a second scrollable header or the pinned piano.
+                    val canEditOscillators =
+                        state.oscillatorSlots.isNotEmpty() &&
+                            onOscillatorSlotChange != null
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                    val knobSize = 55.dp
-                    NeonKnob("WAVE", parameter(ParameterId.WAVE), percent(parameter(ParameterId.WAVE)), OrbitalPalette.Violet,
-                        { onParameterChange(ParameterId.WAVE, it) }, Modifier.weight(1f), knobSize)
-                    NeonKnob("CUTOFF", parameter(ParameterId.CUTOFF), cutoffLabel(parameter(ParameterId.CUTOFF)), OrbitalPalette.Cyan,
-                        { onParameterChange(ParameterId.CUTOFF, it) }, Modifier.weight(1f), knobSize)
-                    NeonKnob("RESO", parameter(ParameterId.RESONANCE), percent(parameter(ParameterId.RESONANCE)), OrbitalPalette.Gold,
-                        { onParameterChange(ParameterId.RESONANCE, it) }, Modifier.weight(1f), knobSize)
-                    NeonKnob("MOTION", move, percent(move), OrbitalPalette.Violet,
-                        { onParameterChange(ParameterId.MOVEMENT, it) }, Modifier.weight(1f), knobSize)
-                    NeonKnob("FX", parameter(ParameterId.FX_AMOUNT), percent(parameter(ParameterId.FX_AMOUNT)), OrbitalPalette.Cyan,
-                        { onParameterChange(ParameterId.FX_AMOUNT, it) }, Modifier.weight(1f), knobSize)
+                        if (canEditOscillators) {
+                            Box(
+                                Modifier
+                                    .weight(1f)
+                                    .testTag("compactOscillatorToggle")
+                                    .heightIn(min = 48.dp)
+                                    .border(
+                                        1.dp,
+                                        if (compactOscillatorExpanded) OrbitalPalette.Cyan
+                                        else OrbitalPalette.PanelEdge,
+                                        RoundedCornerShape(11.dp),
+                                    )
+                                    .background(
+                                        OrbitalPalette.Panel.copy(
+                                            alpha = if (compactOscillatorExpanded) .85f else .65f,
+                                        ), RoundedCornerShape(11.dp),
+                                    )
+                                    .clickable(role = Role.Button) {
+                                        compactOscillatorExpanded = !compactOscillatorExpanded
+                                    }
+                                    .semantics {
+                                        contentDescription = if (compactOscillatorExpanded)
+                                            "Hide eight-layer oscillator editor"
+                                        else "Show eight-layer oscillator editor"
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    if (compactOscillatorExpanded) "OSC −" else "OSC +",
+                                    color = OrbitalPalette.Cyan,
+                                    fontSize = 10.sp,
+                                )
+                            }
+                        }
+                        CompactSoundPage.entries.forEach { choice ->
+                            val selected = !compactOscillatorExpanded && compactSoundPage == choice
+                            Box(
+                                Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 48.dp)
+                                    .border(
+                                        1.dp,
+                                        if (selected) OrbitalPalette.Cyan
+                                        else OrbitalPalette.PanelEdge,
+                                        RoundedCornerShape(11.dp),
+                                    )
+                                    .background(
+                                        OrbitalPalette.Panel.copy(alpha = if (selected) .88f else .58f),
+                                        RoundedCornerShape(11.dp),
+                                    )
+                                    .selectable(
+                                        selected = selected,
+                                        role = Role.RadioButton,
+                                        onClick = {
+                                            compactSoundPage = choice
+                                            compactOscillatorExpanded = false
+                                        },
+                                    )
+                                    .semantics {
+                                        contentDescription = "Sound rack " + choice.name
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    choice.caption,
+                                    fontSize = 9.sp,
+                                    color = if (selected) Color.White else OrbitalPalette.Muted,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
                     }
-                }
-                // Voice engine parameters appear as luminous knobs when present.
-                val voiceParameters = listOf("UNISON", "DETUNE", "CHARACTER").mapNotNull { name ->
-                    ParameterId.entries.firstOrNull { it.name == name }?.let { id -> name to id }
-                }
-                if (voiceParameters.isNotEmpty()) {
+                    if (canEditOscillators && compactOscillatorExpanded) {
+                        // A bounded single-purpose page replaces the formerly
+                        // simultaneous giant rack+patch+macro scroll tree.
+                        OscillatorRackPanel(
+                            slots = state.oscillatorSlots,
+                            onSlotChange = onOscillatorSlotChange!!,
+                            compact = true,
+                        )
+                    } else {
+                        CompactSoundPanel(
+                            parameter = parameter,
+                            engineId = engineId,
+                            engineValue = engineValue,
+                            onParameterChange = onParameterChange,
+                            page = compactSoundPage,
+                        )
+                        // The saved patch and engine labels remain reachable
+                        // below the priority sound-design toolbar on collapse.
+                        CompactPatchHeader(
+                            state = state,
+                            onPreviousPatch = onPreviousPatch,
+                            onNextPatch = onNextPatch,
+                            engineName = engineChoice.name,
+                        )
+                    }
+                } else {
+                    // First viewport: the genuine procedural reference hero,
+                    // one overlaid interactive XY, five real macros and four
+                    // saved-signal tiles. No old engine/header/knob duplication.
+                    ReferenceSoundHero(
+                        parameters = soundParameterValues,
+                        lfos = state.modulationLfos,
+                        routes = state.modulationRoutes,
+                        onParameterChange = onParameterChange,
+                        compact = compactOrbitLayout,
+                        audioRms = soundVisual.rms,
+                        audioPeak = soundVisual.peak,
+                        patchName = state.patchName,
+                        patchId = state.activePatchId,
+                        patchEpoch = state.performanceResetEpoch,
+                        engineName = engineChoice.name,
+                        onOpenPatchLibrary = if (onSelectPatch != null ||
+                            onSavePatch != null
+                        ) { { showPatchLibrary = true } } else null,
+                        onPreviousPatch = onPreviousPatch,
+                        onNextPatch = onNextPatch,
+                        onOpenEngine = { soundAdvancedExpanded = true },
+                    )
                     Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .border(1.dp, OrbitalPalette.Cyan.copy(alpha = .26f),
+                                RoundedCornerShape(12.dp))
+                            .background(OrbitalPalette.Void.copy(alpha = .88f),
+                                RoundedCornerShape(12.dp))
+                            .clickable(role = Role.Button) {
+                                soundAdvancedExpanded = !soundAdvancedExpanded
+                            }
+                            .semantics {
+                                contentDescription = if (soundAdvancedExpanded)
+                                    "Collapse advanced engine and oscillator controls"
+                                else "Expand advanced engine and eight oscillator controls"
+                            }
+                            .testTag("referenceSoundAdvancedToggle")
+                            .padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        voiceParameters.forEach { (name, id) ->
-                            NeonKnob(
-                                name, parameter(id), percent(parameter(id)),
-                                when (name) {
-                                    "UNISON" -> OrbitalPalette.Gold
-                                    "CHARACTER" -> OrbitalPalette.Teal
-                                    else -> OrbitalPalette.Violet
-                                },
-                                { onParameterChange(id, it) }, Modifier.weight(1f), 62.dp,
+                        Text("ENGINE  /  OSCILLATORS  /  ADVANCED",
+                            color = OrbitalPalette.Text, fontSize = 10.sp,
+                            letterSpacing = .9.sp)
+                        Text(if (soundAdvancedExpanded) "−" else "+",
+                            color = OrbitalPalette.Cyan, fontSize = 22.sp)
+                    }
+                    // A touch-reachable, truthfully wired patch canvas. Do not
+                    // offer phantom cables when a host has not supplied all
+                    // callback paths to its one audible OrbitalSynth.
+                    val routeWrite = onModulationRouteChange
+                    val routeClear = onModulationRouteClear
+                    val fxMove = onFxMoveSlot
+                    val oscillatorWrite = onOscillatorSlotChange
+                    if (state.oscillatorSlots.size >= 8 &&
+                        state.modulationLfos.size >= 8 &&
+                        state.modulationRoutes.size >= 64 &&
+                        state.fxSlots.isNotEmpty() &&
+                        routeWrite != null && routeClear != null &&
+                        fxMove != null && oscillatorWrite != null
+                    ) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .border(1.dp, OrbitalPalette.Violet.copy(alpha = .42f),
+                                    RoundedCornerShape(12.dp))
+                                .background(OrbitalPalette.Void.copy(alpha = .88f),
+                                    RoundedCornerShape(12.dp))
+                                .clickable(role = Role.Button) {
+                                    soundGraphExpanded = !soundGraphExpanded
+                                }
+                                .semantics {
+                                    contentDescription = if (soundGraphExpanded)
+                                        "Collapse the live oscillator, LFO, STEP and effects patch graph"
+                                    else "Open live oscillator, LFO, STEP and effects patch graph"
+                                }
+                                .testTag("referenceSoundGraphToggle")
+                                .padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text("LIVE PATCH GRAPH  /  OSC · LFO · FX",
+                                color = OrbitalPalette.Cyan, fontSize = 10.sp,
+                                letterSpacing = .7.sp)
+                            Text(if (soundGraphExpanded) "−" else "+",
+                                color = OrbitalPalette.Violet, fontSize = 22.sp)
+                        }
+                        if (soundGraphExpanded) {
+                            PatchGraphPanel(
+                                oscillators = state.oscillatorSlots,
+                                lfos = state.modulationLfos,
+                                routes = state.modulationRoutes,
+                                fxSlots = state.fxSlots,
+                                onRouteChange = routeWrite,
+                                onRouteClear = routeClear,
+                                onMoveFxSlot = fxMove,
+                                onOscillatorSlotChange = oscillatorWrite,
+                                stepConfig = state.modulationSteps,
                             )
                         }
                     }
-                }
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.FX }
-                        .semantics { contentDescription = "Edit envelope" }) {
-                        SignalTile("ENV", parameter(ParameterId.ATTACK), OrbitalPalette.Violet, Modifier.fillMaxWidth())
+                    if (soundAdvancedExpanded) {
+                        EngineArchitecturePanel(
+                            value = engineValue,
+                            enabled = engineId != null,
+                            onChoose = { value ->
+                                engineId?.let { onParameterChange(it, value) }
+                            },
+                        )
+                        // Original engine controls remain genuine DSP inputs,
+                        // accessible on demand instead of crowding the orb.
+                        val voiceParameters =
+                            listOf("UNISON", "DETUNE", "CHARACTER").mapNotNull { name ->
+                                ParameterId.entries.firstOrNull { it.name == name }
+                                    ?.let { id -> name to id }
+                            }
+                        if (voiceParameters.isNotEmpty()) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                voiceParameters.forEach { (name, id) ->
+                                    NeonKnob(
+                                        name, parameter(id), percent(parameter(id)),
+                                        when (name) {
+                                            "UNISON" -> OrbitalPalette.Gold
+                                            "CHARACTER" -> OrbitalPalette.Teal
+                                            else -> OrbitalPalette.Violet
+                                        },
+                                        { onParameterChange(id, it) },
+                                        Modifier.weight(1f), 62.dp,
+                                    )
+                                }
+                            }
+                        }
+                        if (state.oscillatorSlots.isNotEmpty() &&
+                            onOscillatorSlotChange != null
+                        ) {
+                            OscillatorRackPanel(
+                                slots = state.oscillatorSlots,
+                                onSlotChange = onOscillatorSlotChange,
+                            )
+                        }
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .clickable(role = Role.Button) {
+                                    selectedTab = Tab.FX
+                                }
+                                .semantics {
+                                    contentDescription =
+                                        "Open live modulation routing and ordered effects"
+                                }
+                                .testTag("referenceSoundOpenModFx"),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("MODULATION ROUTES   /   FX BUS  →",
+                                color = OrbitalPalette.Cyan, fontSize = 11.sp)
+                        }
                     }
-                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.FX }
-                        .semantics { contentDescription = "Edit LFO" }) {
-                        SignalTile("LFO", parameter(ParameterId.LFO_RATE), OrbitalPalette.Cyan, Modifier.fillMaxWidth())
-                    }
-                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.PLAY }
-                        .semantics { contentDescription = "Edit glide" }) {
-                        SignalTile("GLIDE", parameter(ParameterId.GLIDE), OrbitalPalette.Gold, Modifier.fillMaxWidth())
-                    }
-                    Box(Modifier.weight(1f).clickable(role = Role.Button) { selectedTab = Tab.SEQ }
-                        .semantics { contentDescription = "Edit sequencer" }) {
-                        SignalTile("MOD", move, OrbitalPalette.Violet, Modifier.fillMaxWidth())
-                    }
-                }
-                }
-                if (state.oscillatorSlots.isNotEmpty() && onOscillatorSlotChange != null) {
-                    OscillatorRackPanel(
-                        slots = state.oscillatorSlots,
-                        onSlotChange = onOscillatorSlotChange,
-                    )
                 }
             }
             Tab.PLAY -> PlayPanel(
@@ -722,14 +854,38 @@ fun OrbitalScreen(
             }
         }
 
-        // Editor content scrolls independently; keyboard never becomes scrollable.
-        OrbitalKeyboard(
-            octave = state.octave.coerceIn(0, 8),
-            onNoteOn = onNoteOn,
-            onNoteOff = onNoteOff,
-            modifier = Modifier.fillMaxWidth(),
-            preferredHeight = if (compactHeight) 82.dp else if (compactOrbitLayout) 110.dp else null,
-        )
+        // Key input never scrolls with editors. A host panic invalidates
+        // the chromatic glass pointer owners immediately; saving a new patch
+        // ID without panic retains the existing held voices.
+        if (selectedTab == Tab.SOUND && !compactHeight) {
+            key(state.performanceResetEpoch, state.octave) {
+                ReferencePerformanceKeybed(
+                    octave = state.octave.coerceIn(0, 8),
+                    onNoteOn = onNoteOn,
+                    onNoteOff = onNoteOff,
+                    onExpressiveNoteOn = onExpressiveNoteOn,
+                    onOctaveChange = onOctaveChange,
+                    morph = morph,
+                    movement = move,
+                    audioRms = soundVisual.rms,
+                    modifier = Modifier.fillMaxWidth(),
+                    preferredHeight = if (compactOrbitLayout) 108.dp else 124.dp,
+                )
+            }
+        } else {
+            // #143 piano owns its tokenized finger/TalkBack lifetimes and
+            // reacts to the same real host reset revision, without remounting
+            // the entire keyboard or suppressing fresh notes.
+            OrbitalKeyboard(
+                octave = state.octave.coerceIn(0, 8),
+                onNoteOn = onNoteOn,
+                onNoteOff = onNoteOff,
+                modifier = Modifier.fillMaxWidth(),
+                preferredHeight = if (compactHeight) 82.dp
+                    else if (compactOrbitLayout) 110.dp else null,
+                performanceResetEpoch = state.performanceResetEpoch,
+            )
+        }
         if (!compactHeight) {
             Row(
                 Modifier.fillMaxWidth(),
@@ -751,7 +907,11 @@ fun OrbitalScreen(
                 }
             }
         }
-        Spacer(Modifier.height(if (compactHeight) 0.dp else 6.dp))
+        // The old trailing spacer used to hide the last line of four mini
+        // oscilloscope tiles behind the keyboard at phone-scale font.
+        if (!referencePortrait) {
+            Spacer(Modifier.height(if (compactHeight) 0.dp else 6.dp))
+        }
         }
         SnackbarHost(hostState = snackbarHost, modifier = Modifier.align(Alignment.BottomCenter))
     }
@@ -1247,7 +1407,7 @@ private fun Header(
         Box(
             Modifier
                 .width(if (compact) 54.dp else 64.dp)
-                .heightIn(min = 40.dp)
+                .heightIn(min = if (compact) 40.dp else 48.dp)
                 .testTag("immersiveModeToggle")
                 .border(1.dp, OrbitalPalette.Cyan.copy(alpha = .55f), RoundedCornerShape(13.dp))
                 .background(OrbitalPalette.Blue.copy(alpha = .18f), RoundedCornerShape(13.dp))
@@ -1275,6 +1435,100 @@ private fun Header(
         ) {
             Text("☰", color = if (libraryEnabled) OrbitalPalette.Cyan else OrbitalPalette.Muted,
                 fontSize = 20.sp)
+        }
+    }
+}
+
+/**
+ * One 48dp-high six-action nav for tiny landscape: four real tabs plus STAGE
+ * and patch library in the same row. Replaces two stacked 40dp headers and
+ * returns 32dp to the genuine 48dp SOUND/ENGINE editors above pinned keys.
+ * Portrait preserves the full ORBITAL masthead and separate generous tabs.
+ */
+@Composable
+private fun CompactTopNavigation(
+    selectedTab: Tab,
+    onTabSelect: (Tab) -> Unit,
+    onEnterImmersive: () -> Unit,
+    onOpenLibrary: () -> Unit,
+    libraryEnabled: Boolean,
+) {
+    val corner = RoundedCornerShape(11.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .testTag("compactTopNavigation")
+            .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .55f), corner)
+            .background(OrbitalPalette.Void.copy(alpha = .82f), corner)
+            .padding(1.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Tab.entries.forEach { tab ->
+            val active = selectedTab == tab
+            val glow = when (tab) {
+                Tab.SOUND -> OrbitalPalette.Cyan
+                Tab.PLAY -> OrbitalPalette.Gold
+                Tab.SEQ -> OrbitalPalette.Violet
+                Tab.FX -> OrbitalPalette.Teal
+            }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("compactTopTab_" + tab.name)
+                    .border(1.dp, if (active) glow.copy(alpha = .78f)
+                        else OrbitalPalette.PanelEdge.copy(alpha = .42f), corner)
+                    .background(
+                        if (active) glow.copy(alpha = .18f)
+                        else OrbitalPalette.Panel.copy(alpha = .45f), corner,
+                    )
+                    .selectable(
+                        selected = active,
+                        role = Role.Tab,
+                        onClick = { onTabSelect(tab) },
+                    )
+                    .clearAndSetSemantics {
+                        contentDescription = "Tab " + tab.title
+                        selected = active
+                        role = Role.Tab
+                        onClick(label = "Open " + tab.title) {
+                            onTabSelect(tab)
+                            true
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(tab.title, color = if (active) Color.White else OrbitalPalette.Muted,
+                    fontSize = 9.sp, fontWeight = if (active) FontWeight.SemiBold
+                    else FontWeight.Normal, maxLines = 1)
+            }
+        }
+        Box(
+            Modifier
+                .weight(1f)
+                .heightIn(min = 48.dp)
+                .testTag("immersiveModeToggle")
+                .border(1.dp, OrbitalPalette.Cyan.copy(alpha = .60f), corner)
+                .background(OrbitalPalette.Blue.copy(alpha = .20f), corner)
+                .clickable(role = Role.Button, onClick = onEnterImmersive)
+                .semantics { contentDescription = "Enter immersive performance" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("STAGE", color = OrbitalPalette.Cyan, fontSize = 9.sp, maxLines = 1)
+        }
+        Box(
+            Modifier
+                .weight(1f)
+                .heightIn(min = 48.dp)
+                .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .55f), corner)
+                .background(OrbitalPalette.Panel.copy(alpha = .55f), corner)
+                .clickable(enabled = libraryEnabled, role = Role.Button, onClick = onOpenLibrary)
+                .semantics { contentDescription = "Open patch library" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("LIB", color = if (libraryEnabled) OrbitalPalette.Cyan
+                else OrbitalPalette.Muted, fontSize = 9.sp, maxLines = 1)
         }
     }
 }
@@ -2313,27 +2567,11 @@ private fun CompactSoundPanel(
     engineId: ParameterId?,
     engineValue: Float,
     onParameterChange: (ParameterId, Float) -> Unit,
+    page: CompactSoundPage,
 ) {
-    var page by remember { mutableStateOf(CompactSoundPage.LIVE) }
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text(
-            "SONIC RACK  /  STAGE VIEW",
-            color = OrbitalPalette.Cyan, fontSize = 11.sp, letterSpacing = 1.5.sp,
-        )
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            CompactSoundPage.entries.forEach { choice ->
-                Pill(
-                    label = choice.caption,
-                    active = page == choice,
-                    onClick = { page = choice },
-                    description = "Sound rack " + choice.name,
-                    role = Role.RadioButton,
-                )
-            }
-        }
+    // Header and page selection live in the pinned single-row compact strip
+    // above. Only the chosen actual synthesis controls are measured here.
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         when (page) {
             CompactSoundPage.LIVE -> {
                 CompactFxControl("MORPH", parameter(ParameterId.MORPH), ParameterId.MORPH,
@@ -2372,9 +2610,14 @@ private fun CompactSoundPanel(
                 }
             }
             CompactSoundPage.ENGINE -> {
-                Label("SYNTHESIS ARCHITECTURE  /  MODELED + INSPIRED")
+                // The five-way toolbar already names ENGINE. The extra
+                // decorative headline previously pushed its real choices
+                // beyond the 350dp viewport and beneath the pinned piano.
+                // Keep the 48dp radio choices first and fully visible.
                 Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    Modifier.fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .testTag("compactEngineOptionsRow"),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     EngineArchitectures.forEachIndexed { index, choice ->

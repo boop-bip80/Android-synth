@@ -32,6 +32,10 @@ class OscillatorNoiseActivityHostTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test fun whitePinkBrownControlsReachRealAndroidSynthAndSurviveWaveEdit() {
+        // The actual SOUND landing intentionally mounts its eight layers only
+        // after the user taps the reachable advanced sound-design workbench.
+        compose.onNodeWithTag("referenceSoundAdvancedToggle")
+            .performScrollTo().performClick()
         compose.onNodeWithTag("oscillatorRack").assertExists()
         val synth = liveActivitySynth()
 

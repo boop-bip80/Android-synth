@@ -168,6 +168,14 @@ if [[ "$package_manager_ready" != 1 ]]; then
   exit 1
 fi
 
+# GENERAL has two independent, mandatory AndroidJUnitRunner shards. Never
+# silently fall back to an unsharded or unknown suite configuration.
+case "${ORBITAL_TEST_SUITE:-}" in
+  general-0) shard_index=0 ;;
+  general-1) shard_index=1 ;;
+  *) echo "ci-emulator.sh requires general-0 or general-1, got '${ORBITAL_TEST_SUITE:-unset}'" >&2; exit 1 ;;
+esac
+
 # Fail immediately if any JUnit instrumentation test fails.
 printf '%s\n' 'instrumentation' > artifacts/emulator-phase.txt
 # The job precompiled these exact APK files before QEMU boot. Assert that
@@ -219,27 +227,37 @@ general_full_logcat_pid=$!
 # messages even if emulator-5554 vanishes before EXIT diagnostics can query it.
 adb logcat -v threadtime -s OrbitalCompactTest:I AndroidRuntime:E ActivityManager:W SurfaceFlinger:E HWUI:E libc:F DEBUG:E '*:S' > artifacts/compact-test-live-logcat.txt 2>&1 &
 compact_logcat_pid=$!
-# The expensive real-PCM live FOCUS framebuffer test now runs STRICTLY in its
-# own fresh API35 `stage` emulator lane (including its real screenshot proof).
-# Exclude only that class from this full-suite pass to avoid executing it a
-# second time after dozens of Compose tests; no other tests are excluded.
-printf 'suite=general\nexpected_at_least=38\nexclusive_stage_class=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest\n' > artifacts/instrumentation-suite.txt
+# The real PCM-held FOCUS framebuffer and compact350 SOUND editor tests stay
+# mandatory in their own clean STAGE / COMPACT350 emulators. AndroidX
+# discovery enumerates every other declared method, including two opt-in
+# STEP process phases, additionally executed in the fresh RESTART emulator.
+stage_class=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest
+compact350_class=com.orbital.synth.ui.Compact350SoundInstrumentedTest
+excluded_classes="$stage_class,$compact350_class"
+printf 'suite=%s\nshards=2\nshard_index=%s\nexclusive_stage_class=%s\nexclusive_compact350_class=%s\n' \
+  "$ORBITAL_TEST_SUITE" "$shard_index" "$stage_class" "$compact350_class" > artifacts/instrumentation-suite.txt
+printf '%s\n' 'discover-all-non-stage-androidx-tests' > artifacts/emulator-phase.txt
+timeout 120s adb install -r "$app_apk" > artifacts/general-manifest-app-install.txt
+timeout 120s adb install -r "$instrumentation_apk" > artifacts/general-manifest-test-install.txt
+timeout 180s adb shell am instrument -w -r \
+  -e log true -e notClass "$excluded_classes" \
+  com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
+  | tee artifacts/general-runner-discovery.txt
+python3 .github/workflows/ci-verify-android-shards.py manifest \
+  artifacts/general-runner-discovery.txt artifacts/general-shard-manifest.tsv
+
+# Each job owns one real AndroidJUnitRunner shard and real Gradle UTP XML.
+# Exclusion of any other class or a failure in either runner is fatal. The
+# aggregate required gate later compares the disjoint XML union to the full
+# runner-discovered manifest from both independently booted devices.
+printf '%s\n' "instrumentation-shard-${shard_index}" > artifacts/emulator-phase.txt
 timeout 30m gradle :app:connectedDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.notClass=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest \
+  -Pandroid.testInstrumentationRunnerArguments.notClass="$excluded_classes" \
+  -Pandroid.testInstrumentationRunnerArguments.numShards=2 \
+  -Pandroid.testInstrumentationRunnerArguments.shardIndex="$shard_index" \
   --stacktrace --no-daemon --console=plain
-python3 - <<'PY'
-import glob
-from xml.etree import ElementTree as ET
-files = glob.glob("app/build/outputs/androidTest-results/connected/debug/*.xml")
-cases = sum(len(ET.parse(path).findall(".//testcase")) for path in files)
-print(f"ORBITAL general instrumentation: {cases} testcases in {len(files)} XML reports")
-excluded = "com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest"
-if any(excluded in case.attrib.get("classname", "") or excluded in case.attrib.get("name", "")
-       for path in files for case in ET.parse(path).findall(".//testcase")):
-    raise SystemExit("General runner ignored notClass; fresh stage lane must own this class")
-if cases < 38:
-    raise SystemExit(f"Expected at least 38 instrumented tests, got {cases}")
-PY
+python3 .github/workflows/ci-verify-android-shards.py results \
+  app/build/outputs/androidTest-results/connected/debug artifacts/general-shard-results.tsv
 
 # Android Gradle Plugin's connected test runner may remove the target APK
 # during cleanup. A green instrumentation result does not guarantee the app
@@ -252,45 +270,8 @@ if [[ ! -s "$debug_apk" ]]; then
 fi
 timeout 120s adb install -r "$debug_apk"
 
-# Process-death contract: this test intentionally spans TWO AndroidJUnitRunner
-# invocations with an OS force-stop between them. Each invocation is opt-in;
-# the ordinary full-suite run skips this class's two phase methods explicitly.
-# No mock Activity recreation can satisfy the fresh Process.myPid assertion.
-step_restart_test_apk='app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'
-[[ -s "$step_restart_test_apk" ]] || {
-  echo "STEP process-restart instrumentation APK is missing." >&2
-  exit 1
-}
-timeout 120s adb install -r "$step_restart_test_apk"
-printf '%s\n' 'step-v5-prepare-before-process-death' > artifacts/emulator-phase.txt
-timeout 180s adb shell am instrument -w -r \
-  -e class 'com.orbital.synth.ui.StepProcessRestartInstrumentedTest#prepareStepPatchAndProveFocusPlayStateBeforeProcessDeath' \
-  -e orbitalStepRestartPhase prepare \
-  com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
-  | tee artifacts/step-restart-prepare.txt
-grep -Eq 'OK \(1 test\)' artifacts/step-restart-prepare.txt || {
-  echo "STEP process-restart prepare instrumentation did not pass." >&2
-  exit 1
-}
-printf '%s\n' 'step-v5-actual-os-force-stop' > artifacts/emulator-phase.txt
-timeout 20s adb shell am force-stop com.orbital.synth
-if timeout 8s adb shell pidof com.orbital.synth >/dev/null 2>&1; then
-  echo "Android kept ORBITAL alive despite the required force-stop." >&2
-  exit 1
-fi
-launch_orbital artifacts/step-restart-cold-launch.txt
-printf '%s\n' 'step-v5-verify-new-os-process' > artifacts/emulator-phase.txt
-timeout 180s adb shell am instrument -w -r \
-  -e class 'com.orbital.synth.ui.StepProcessRestartInstrumentedTest#verifyAfterForcedDeathColdRestartAndDeleteOnlyOurPatch' \
-  -e orbitalStepRestartPhase verify \
-  com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner \
-  | tee artifacts/step-restart-verify.txt
-grep -Eq 'OK \(1 test\)' artifacts/step-restart-verify.txt || {
-  echo "STEP V5 cold-process recall/instrumentation did not pass." >&2
-  exit 1
-}
-printf 'step_v5_persistence=PASS\nprocess_death=REAL_FORCE_STOP\nfresh_android_pid=ASSERTED\nstep_audio_clock=PASS\nfocus_play_transition=PASS\n' \
-  > artifacts/step-restart-summary.txt
+# True cross-PID STEP persistence now runs exclusively in the fresh RESTART lane.
+# Both opt-in @Test methods remain in shard coverage and are executed there.
 
 installed_package="$(timeout 15s adb shell pm path com.orbital.synth | tr -d '\r')"
 if [[ "$installed_package" != *'package:'* ]]; then
