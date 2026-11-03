@@ -50,7 +50,12 @@ class FxParameterSignatureTest {
         val node = compose.onNodeWithTag(tag)
         val bounds = node.fetchSemanticsNode().boundsInRoot
         val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
-        if (bounds.top < root.top || bounds.bottom > root.bottom) {
+        // Compose reports Rect.Zero for offscreen, not-yet-placed descendants
+        // of a vertically scrolling Column. Treat zero size as offscreen too:
+        // otherwise neither scroll nor screenshot ever reaches the editor.
+        if (bounds.width <= 0f || bounds.height <= 0f ||
+            bounds.top < root.top || bounds.bottom > root.bottom
+        ) {
             node.performScrollTo()
             compose.waitForIdle()
         }
