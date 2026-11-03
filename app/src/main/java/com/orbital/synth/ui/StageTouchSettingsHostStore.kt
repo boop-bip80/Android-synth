@@ -69,6 +69,9 @@ internal class StageTouchSettingsHostStore internal constructor(
         revision
     }
 
+    /** Inspect a request epoch without touching storage (also for device tests). */
+    fun requestedRevision(): Long = synchronized(lock) { lastIssuedRevision }
+
     /** Suppress stale outcomes from Activity instances that are already gone. */
     fun completedRevision(): Long = completed.value
 
