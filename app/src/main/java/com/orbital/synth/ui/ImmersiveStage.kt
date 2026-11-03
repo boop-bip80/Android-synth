@@ -25,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -59,13 +60,19 @@ internal fun ImmersiveStage(
     onParameterChange: (ParameterId, Float) -> Unit,
     onExpressiveNoteOn: ((Int, Float) -> Unit)? = null,
     onExit: () -> Unit,
+    /** Optional source for DSP modulation: normalized X, Y, and touch pressure. */
+    onModulationTouchExpression: ((Float, Float, Float) -> Unit)? = null,
 ) {
     val mapper = remember { TouchPerformanceMapper() }
+    var showConfig by remember { mutableStateOf(false) }
+    var stageSettings by remember { mutableStateOf(StageTouchSettings(baseOctave = state.octave)) }
     val haptics = LocalHapticFeedback.current
     val latestOn = rememberUpdatedState(onNoteOn)
     val latestExpressiveOn = rememberUpdatedState(onExpressiveNoteOn)
     val latestOff = rememberUpdatedState(onNoteOff)
     val latestParameter = rememberUpdatedState(onParameterChange)
+    val latestModulationTouch = rememberUpdatedState(onModulationTouchExpression)
+    val lastModulationTouch = remember { FloatArray(3) { Float.NaN } }
     // Dedupe minute pointer jitter before triggering Compose state invalidations.
     // Finger position and the visual renderer still update on every pointer event.
     val lastExpression = remember { FloatArray(4) { Float.NaN } }
@@ -109,17 +116,34 @@ internal fun ImmersiveStage(
         }
     }
 
-    // Retuning the octave first releases old notes, so no hanging keys remain.
-    LaunchedEffect(mapper, state.octave) {
-        deliver(
-            mapper.updateConfig(
-                TouchPerformanceConfig(rootMidiNote = ((state.octave + 1) * 12).coerceIn(0, 127)),
-            ),
-        )
+    fun reportTouchModulation(x: Float, y: Float, pressure: Float, force: Boolean = false) {
+        val vx = if (x.isFinite()) x.coerceIn(0f, 1f) else .5f
+        val vy = if (y.isFinite()) y.coerceIn(0f, 1f) else .5f
+        val vp = if (pressure.isFinite()) pressure.coerceIn(0f, 1f) else .5f
+        if (force || lastModulationTouch[0].isNaN() ||
+            abs(vx - lastModulationTouch[0]) >= .01f ||
+            abs(vy - lastModulationTouch[1]) >= .01f ||
+            abs(vp - lastModulationTouch[2]) >= .01f
+        ) {
+            lastModulationTouch[0] = vx
+            lastModulationTouch[1] = vy
+            lastModulationTouch[2] = vp
+            latestModulationTouch.value?.invoke(vx, vy, vp)
+        }
+    }
+
+    // External octave updates follow the keyboard's octave, but the performer
+    // may choose a different stage octave using the configuration panel.
+    LaunchedEffect(state.octave) {
+        stageSettings = stageSettings.copy(baseOctave = state.octave)
+    }
+    LaunchedEffect(mapper, stageSettings) {
+        deliver(mapper.updateConfig(stageSettings.toTouchConfig()))
     }
     DisposableEffect(mapper) {
         onDispose {
             deliver(mapper.cancelAll())
+            reportTouchModulation(.5f, .5f, .5f, force = true)
         }
     }
 
@@ -175,6 +199,7 @@ internal fun ImmersiveStage(
                             touchY = normalizeY(y)
                             touchIntensity = pressure.coerceIn(.15f, 1f)
                             pulse += 1L
+                            reportTouchModulation(touchX, touchY, pressure)
                             // A restrained one-shot tactile accent, never a
                             // continuous vibration or a high-frequency haptic loop.
                             if (time - lastHapticAt >= 80L) {
@@ -207,6 +232,7 @@ internal fun ImmersiveStage(
                                             touchX = normalizeX(change.position.x)
                                             touchY = normalizeY(change.position.y)
                                             touchIntensity = change.pressure.coerceIn(.15f, 1f)
+                                            reportTouchModulation(touchX, touchY, change.pressure)
                                             deliver(
                                                 mapper.touchMove(
                                                     id, touchX, touchY, change.pressure,
@@ -216,6 +242,9 @@ internal fun ImmersiveStage(
                                         }
                                     } else if (activeIds.remove(id)) {
                                         deliver(mapper.touchUp(id))
+                                        if (mapper.activePointerCount == 0) {
+                                            reportTouchModulation(.5f, .5f, .5f, force = true)
+                                        }
                                     }
                                     change.consume()
                                 }
@@ -227,6 +256,7 @@ internal fun ImmersiveStage(
                             activeIds.forEach { id -> deliver(mapper.touchUp(id)) }
                             activeIds.clear()
                             touchIntensity = 0f
+                            reportTouchModulation(.5f, .5f, .5f, force = true)
                         }
                     }
                 },
@@ -248,6 +278,7 @@ internal fun ImmersiveStage(
                     .clickable(role = Role.Button) {
                         deliver(mapper.cancelAll())
                         touchIntensity = 0f
+                        reportTouchModulation(.5f, .5f, .5f, force = true)
                         onExit()
                     }
                     .semantics { contentDescription = "Exit immersive performance" }
@@ -271,12 +302,24 @@ internal fun ImmersiveStage(
                     fontSize = 11.sp,
                     letterSpacing = 2.sp,
                 )
-                Text(
-                    "IMMERSIVE / LIVE",
-                    color = cyan.copy(alpha = .75f),
-                    fontSize = 9.sp,
-                    letterSpacing = 1.3.sp,
-                )
+                Box(
+                    Modifier
+                        .testTag("stageConfigOpen")
+                        .heightIn(min = 48.dp)
+                        .border(1.dp, cyan.copy(alpha = .48f), RoundedCornerShape(13.dp))
+                        .background(Color(0xFF101728), RoundedCornerShape(13.dp))
+                        .clickable(role = Role.Button) {
+                            deliver(mapper.cancelAll())
+                            touchIntensity = 0f
+                            reportTouchModulation(.5f, .5f, .5f, force = true)
+                            showConfig = true
+                        }
+                        .semantics { contentDescription = "Configure touch performance stage" }
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("◈ CONFIG", color = cyan, fontSize = 10.sp, letterSpacing = 1.sp)
+                }
             }
         }
 
@@ -304,11 +347,27 @@ internal fun ImmersiveStage(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "X  /  PITCH + MORPH     Y  /  FILTER + MOTION     PRESSURE  /  EXPRESSION",
+                if (stageSettings.pitchAxis == TouchPitchAxis.HORIZONTAL)
+                    "X  /  PITCH + MORPH     Y  /  FILTER     SWIPE  /  MOTION"
+                else "Y  /  PITCH + MORPH     X  /  FILTER     SWIPE  /  MOTION",
                 fontSize = 8.sp,
                 letterSpacing = .5.sp,
                 color = dim.copy(alpha = .67f),
                 maxLines = 2,
+            )
+            Text(
+                (stageSettings.scale.name.replace('_', ' ') + " · " +
+                    stageSettings.octaveRange + " OCT · " +
+                    (if (stageSettings.glissando) "GLIDE" else "HOLD")),
+                fontSize = 9.sp, color = cyan.copy(alpha = .62f), maxLines = 1,
+            )
+        }
+        if (showConfig) {
+            StageTouchConfigurationPanel(
+                settings = stageSettings,
+                onChange = { stageSettings = it },
+                onDismiss = { showConfig = false },
+                onReset = { stageSettings = StageTouchSettings(baseOctave = state.octave) },
             )
         }
     }

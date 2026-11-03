@@ -18,6 +18,9 @@ enum class TouchScale(val semitones: IntArray) {
     WHOLE_TONE(intArrayOf(0, 2, 4, 6, 8, 10)),
 }
 
+/** The physical axis that selects the pitched voice on the empty performance stage. */
+enum class TouchPitchAxis { HORIZONTAL, VERTICAL }
+
 /**
  * A root MIDI note plus a finite set of horizontally selectable scale degrees.
  * Defaults to C4..C6 in the chromatic scale. Out-of-range configuration values
@@ -28,6 +31,9 @@ data class TouchPerformanceConfig(
     val noteCount: Int = 25,
     val scale: TouchScale = TouchScale.CHROMATIC,
     val glissando: Boolean = true,
+    /** 0 disables pressure response; 1 maximizes its *optional* contribution. */
+    val pressureSensitivity: Float = 0.5f,
+    val pitchAxis: TouchPitchAxis = TouchPitchAxis.HORIZONTAL,
 )
 
 /** A sound action for the existing host callbacks; no audio synthesis happens in UI code. */
@@ -87,7 +93,7 @@ class TouchPerformanceMapper(
         if (before == null && contacts.size >= maxContacts) return emptyList()
         val px = unit(x, 0.5f)
         val py = unit(y, 0.5f)
-        val index = indexFor(px)
+        val index = indexFor(pitchPosition(px, py))
         val note = noteFor(index)
         contacts[pointerId] = Contact(px, py, index, note, eventTimeMs)
         val actions = ArrayList<TouchVoiceEvent>(if (before == null) 2 else 3)
@@ -118,11 +124,11 @@ class TouchPerformanceMapper(
 
         val events = ArrayList<TouchVoiceEvent>(3)
         if (config.glissando) {
-            val position = continuousIndex(px)
+            val position = continuousIndex(pitchPosition(px, py))
             // Stay on a note for a small boundary margin to avoid finger-jitter
             // retriggers, but allow purposeful long sweeps to cross many notes.
             if (kotlin.math.abs(position - contact.noteIndex) > 0.62f) {
-                val index = indexFor(px)
+                val index = indexFor(pitchPosition(px, py))
                 val next = noteFor(index)
                 if (next != contact.note) {
                     events += TouchVoiceEvent.NoteOff(contact.note)
@@ -162,7 +168,7 @@ class TouchPerformanceMapper(
         config = next
         val actions = ArrayList<TouchVoiceEvent>(contacts.size * 2)
         for (contact in contacts.values) {
-            val index = indexFor(contact.x)
+            val index = indexFor(pitchPosition(contact.x, contact.y))
             val newNote = noteFor(index)
             if (newNote != contact.note) {
                 actions += TouchVoiceEvent.NoteOff(contact.note)
@@ -173,6 +179,9 @@ class TouchPerformanceMapper(
         }
         return actions
     }
+
+    private fun pitchPosition(x: Float, y: Float): Float =
+        if (config.pitchAxis == TouchPitchAxis.HORIZONTAL) x else 1f - y
 
     private fun continuousIndex(x: Float): Float =
         x * (config.noteCount.coerceIn(1, 64) - 1)
@@ -191,7 +200,8 @@ class TouchPerformanceMapper(
         // Pressure readings differ wildly between phones. Vertical position is
         // always available; pressure only makes a small optional adjustment.
         val pressureDelta = (finite(pressure, 1f) - 1f).coerceIn(-1f, 1f)
-        return (0.58f + 0.28f * (1f - y) + 0.12f * pressureDelta)
+        val sensitivity = finite(config.pressureSensitivity, 0.5f).coerceIn(0f, 1f)
+        return (0.58f + 0.28f * (1f - y) + 0.24f * pressureDelta * sensitivity)
             .coerceIn(0.12f, 1f)
     }
 
@@ -202,13 +212,16 @@ class TouchPerformanceMapper(
         movementSpeed: Float,
     ): TouchVoiceEvent.Expression {
         val pressureDelta = (finite(pressure, 1f) - 1f).coerceIn(-1f, 1f)
-        val brightness = (1f - y).pow(0.65f)
+        val pressureSensitivity = finite(config.pressureSensitivity, 0.5f).coerceIn(0f, 1f)
+        val filterAxis = if (config.pitchAxis == TouchPitchAxis.HORIZONTAL) y else x
+        val pitchAxis = pitchPosition(x, y)
+        val brightness = (1f - filterAxis).pow(0.65f)
         return TouchVoiceEvent.Expression(
             cutoff = (0.06f + brightness * 0.92f).coerceIn(0f, 1f),
-            morph = (0.08f + x * 0.86f + pressureDelta * 0.06f).coerceIn(0f, 1f),
+            morph = (0.08f + pitchAxis * 0.86f + pressureDelta * 0.12f * pressureSensitivity).coerceIn(0f, 1f),
             movement = (0.10f + movementSpeed * 0.58f + (1f - y) * 0.22f)
                 .coerceIn(0f, 1f),
-            fx = (0.09f + movementSpeed * 0.50f + pressureDelta * 0.12f)
+            fx = (0.09f + movementSpeed * 0.50f + pressureDelta * 0.24f * pressureSensitivity)
                 .coerceIn(0f, 1f),
         )
     }
