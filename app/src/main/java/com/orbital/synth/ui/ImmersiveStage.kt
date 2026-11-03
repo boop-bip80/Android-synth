@@ -320,7 +320,7 @@ internal fun ImmersiveStage(
                         // Arrays allocate on fresh DOWN, not during high-rate drags.
                         val deliveredSamples = mutableMapOf<Long, FloatArray>()
                         fun safePressure(raw: Float): Float =
-                            if (raw.isFinite()) raw.coerceIn(0f, 1f) else 1f
+                            if (raw.isFinite()) raw else 1f
                         fun normalizeX(x: Float): Float =
                             (x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                         fun normalizeY(y: Float): Float =
