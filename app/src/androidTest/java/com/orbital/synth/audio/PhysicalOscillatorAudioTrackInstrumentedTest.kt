@@ -87,7 +87,13 @@ class PhysicalOscillatorAudioTrackInstrumentedTest {
                 targetRect.top >= editorRect.top - 1f &&
                 targetRect.bottom <= editorRect.bottom + 1f
             if (fullyVisible) break
+            // Compose clips unplaced/offscreen semantics to a ZERO rect.
+            // Zero is not a position above the viewport: when approaching
+            // the OSC rack from the top, a real finger swipe UP must advance
+            // content before geometry becomes measurable.
             val drag = when {
+                targetRect.width <= 1f || targetRect.height <= 1f ->
+                    -editorRect.height * .28f
                 targetRect.bottom > editorRect.bottom ->
                     -(targetRect.bottom - editorRect.bottom + 10f)
                 targetRect.top < editorRect.top ->
