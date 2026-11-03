@@ -9,9 +9,42 @@ import com.orbital.synth.core.dsp.processing.ModCurve
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
 import org.junit.Assert.*
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class PatchModulationV3Test {
+    @get:Rule val temporaryFolder = TemporaryFolder()
+
+    @Test fun v3DiskSaveReopenAndLegacySwitchPreserveOrClearModulation() {
+        val path = temporaryFolder.newFolder("v3-bank").toPath()
+        val writer = PatchDirectoryStore(path)
+        val programmed = FactoryPatches.DEFAULT.copy(
+            id = "saved-v3-modulation",
+            modulationRoutes = listOf(sourceRoute),
+            modulationLfos = listOf(slowLfo),
+            modulationTempoBpm = 111f,
+        )
+        writer.save(programmed)
+
+        // Model process restart: reopen a new persistence adapter, then load to DSP.
+        val reopened = PatchDirectoryStore(path)
+        assertEquals(programmed, reopened.load(programmed.id))
+        val synth = OrbitalSynth()
+        synth.loadPatch(reopened.load(programmed.id)!!)
+        assertEquals(sourceRoute, synth.modulationRoute(0))
+        assertEquals(slowLfo, synth.modulationLfo(0))
+        assertEquals(111f, synth.modulationTempoBpm, 0f)
+
+        // A physically stored legacy patch must also clear V3 runtime state.
+        val legacy = FactoryPatches.DEFAULT.copy(id = "saved-legacy")
+        writer.save(legacy)
+        synth.loadPatch(PatchDirectoryStore(path).load(legacy.id)!!)
+        assertFalse(synth.modulationRoute(0).enabled)
+        assertEquals(ModulationLfoConfig(enabled = true), synth.modulationLfo(0))
+        assertEquals(120f, synth.modulationTempoBpm, 0f)
+    }
+
     private fun rejects(block: () -> Unit) {
         try {
             block()
