@@ -85,6 +85,9 @@ internal fun ImmersiveStage(
     performanceResetEpoch: Long = 0L,
 ) {
     val mapper = remember(performanceResetEpoch) { TouchPerformanceMapper() }
+    // Independent Back/FOCUS cancellation revokes the current pointer recognizer
+    // while retaining its stage configuration and the host's audio session epoch.
+    var pointerCancelEpoch by remember { mutableIntStateOf(0) }
     var showConfig by remember { mutableStateOf(false) }
     // Explicit opt-in. On a clean canvas there is no synth HUD or keyboard.
     // Android Back (or the screen reader custom action) reveals controls first.
@@ -216,6 +219,7 @@ internal fun ImmersiveStage(
 
     fun cancelPerformanceTouch() {
         deliver(mapper.cancelAll())
+        pointerCancelEpoch++
         touchIntensity = 0f
         reportTouchModulation(.5f, .5f, .5f, force = true)
     }
@@ -301,7 +305,7 @@ internal fun ImmersiveStage(
                         )
                     }
                 }
-                .pointerInput(mapper, performanceResetEpoch) {
+                .pointerInput(mapper, performanceResetEpoch, pointerCancelEpoch) {
                     // Do not use awaitEachGesture here: it waits for EVERY old
                     // pointer to lift, including fingers held over a stopped
                     // AudioTrack worker. A brand-new contact must be admitted
