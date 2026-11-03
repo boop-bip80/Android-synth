@@ -224,7 +224,9 @@ jobs:
                 .tag_name == $tag and
                 .draft == false and
                 .prerelease == true and
-                (.body | contains($source) and contains($run) and contains($checksum)) and
+                (.body | contains($source)) and
+                (.body | contains($run)) and
+                (.body | contains($checksum)) and
                 (.assets | length) == 1 and
                 any(.assets[];
                   .name == $asset and
