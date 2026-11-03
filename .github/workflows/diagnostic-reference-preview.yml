@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   preview:
@@ -63,3 +64,53 @@ jobs:
           path: artifacts/orbital-reference-preview.jpg
           if-no-files-found: error
           retention-days: 7
+      - name: Download actual successful MAIN emulator framebuffer artifacts (read only)
+        uses: actions/download-artifact@v4
+        with:
+          name: orbital-api35-general-emulator-screenshot
+          run-id: 41593445962
+          github-token: ${{ github.token }}
+          path: artifacts/real-emulator-main
+      - name: Convert genuine successful emulator captures to JPEG for visual parity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import io
+          import os
+          from PIL import Image, ImageOps
+
+          captures = [
+              ("ACTUAL", "orbital-emulator.png"),
+              ("OSC", "orbital-oscillator-workbench.png"),
+          ]
+          for label, filename in captures:
+              path = os.path.join("artifacts", "real-emulator-main", filename)
+              if not os.path.isfile(path):
+                  print(f"{label}_MISSING: {filename} unavailable in successful main artifact")
+                  continue
+              with open(path, "rb") as stream:
+                  blob = stream.read()
+              assert blob[:8] == b"\x89PNG\r\n\x1a\n", f"{filename} not valid PNG"
+              image = Image.open(io.BytesIO(blob))
+              source_dimensions = image.size
+              image = ImageOps.exif_transpose(image).convert("RGB")
+              image.thumbnail((700, 1400), Image.Resampling.LANCZOS)
+              encoded_file = io.BytesIO()
+              image.save(encoded_file, format="JPEG", quality=47,
+                         optimize=True, progressive=True)
+              jpeg = encoded_file.getvalue()
+              assert len(jpeg) > 4096, f"{filename} preview empty"
+              encoded = base64.b64encode(jpeg).decode("ascii")
+              print(
+                  f"{label}_JPEG_BEGIN file={filename} source_dimensions={source_dimensions} "
+                  f"preview_dimensions={image.size} original_sha256={hashlib.sha256(blob).hexdigest()} "
+                  f"jpeg_sha256={hashlib.sha256(jpeg).hexdigest()} "
+                  f"jpeg_bytes={len(jpeg)} base64_characters={len(encoded)}"
+              )
+              for offset in range(0, len(encoded), 512):
+                  print(f"{label}_B64_{offset // 512:04d}:{encoded[offset:offset+512]}")
+              print(f"{label}_JPEG_END")
+          PY
