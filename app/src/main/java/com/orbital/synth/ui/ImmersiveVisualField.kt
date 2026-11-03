@@ -125,6 +125,12 @@ fun ImmersiveVisualField(
         }
     }
 
+    // Reuse mutable Skia Paths across active frames instead of allocating ~35
+    // tiny render objects every 60/90/120 Hz screen refresh. A single Compose
+    // draw is synchronous; paths are reset before each draw, never shared with
+    // the audio worker or another Composable.
+    val reusablePaths = remember { ImmersiveReusablePaths() }
+
     // Compose gesture coordinates are tracked for a translucent performance trail.
     // Keep only the latest 24 points, even during long drags; no event grows memory.
     val touchTrace = remember { mutableStateListOf<Offset>() }
@@ -230,7 +236,7 @@ fun ImmersiveVisualField(
         // Silk-like interference currents: they move as the modulation macro changes.
         // They remain background details, not a misleading FFT visualization.
         for (band in 0..5) {
-            val path = Path()
+            val path = reusablePaths.silk[band].apply { reset() }
             val horizontalSteps = 64
             for (i in 0..horizontalSteps) {
                 val u = i.toFloat() / horizontalSteps
@@ -316,7 +322,8 @@ fun ImmersiveVisualField(
                 val tip = c + Offset(cos(tipA) * outer, sin(tipA) * outer * .78f)
                 val endA = a + span * 2.2f
                 val end = c + Offset(cos(endA) * inner, sin(endA) * inner * .78f)
-                val wing = Path().apply {
+                val wing = reusablePaths.petals[petal].apply {
+                    reset()
                     moveTo(begin.x, begin.y)
                     cubicTo(
                         c.x + cos(a + .08f) * outer * .83f,
@@ -343,6 +350,76 @@ fun ImmersiveVisualField(
                 drawPath(wing, ice.copy(alpha = .25f * petalFlare),
                     style = Stroke(width = .57f * stroke, cap = StrokeCap.Round))
             }
+        }
+
+        // Real accepted-PCM LOW/MID/HIGH energies sculpt THREE different
+        // refractive glass ribbons around the nucleus. These are procedural
+        // spatial analogies, NOT sampled PCM waveforms, microphone spectra,
+        // calibrated bins or synthetic FFT data. With absent/silent telemetry
+        // every band is zero and this layer draws NOTHING.
+        //
+        // Each lane reuses one annular Path + 48 primitive radii; no Path,
+        // List, array, Brush or random-number allocation per animated frame.
+        // Existing precomputed unit-circle vectors avoid 3 x 48 cos/sin pairs.
+        for (lane in 0 until SpectralCausticMath.LANE_COUNT) {
+            val acceptedBand = when (lane) {
+                0 -> pcm.lowGold
+                1 -> pcm.midViolet
+                else -> pcm.highCyan
+            }
+            val bandStrength = SpectralCausticMath.glowStrength(acceptedBand)
+            if (bandStrength <= .012f) continue
+            val thickness = radius * SpectralCausticMath.halfWidth(lane, acceptedBand)
+            val bandRadii = reusablePaths.spectralRadii[lane]
+            val ribbon = reusablePaths.spectral[lane].apply { reset() }
+            for (index in 0 until SpectralCausticMath.POINTS) {
+                val unit = ImmersiveFieldGeometry.orbit[index * 2]
+                bandRadii[index] = radius * SpectralCausticMath.radialScale(
+                    lane = lane,
+                    angle = unit.angle,
+                    phase = animatedPhase,
+                    morph = timbre,
+                    movement = motion,
+                    band = acceptedBand,
+                )
+            }
+            // Close both edges of the same refracted 48-segment glass ribbon.
+            // The three lobe frequencies make LOW spread warmer/wider, MID
+            // weave a violet braid and HIGH form slender cyan filaments.
+            for (index in 0..SpectralCausticMath.POINTS) {
+                val sample = index % SpectralCausticMath.POINTS
+                val unit = ImmersiveFieldGeometry.orbit[sample * 2]
+                val rr = bandRadii[sample] + thickness
+                val x = c.x + unit.x * rr
+                val y = c.y + unit.y * rr * .82f
+                if (index == 0) ribbon.moveTo(x, y) else ribbon.lineTo(x, y)
+            }
+            for (index in SpectralCausticMath.POINTS downTo 0) {
+                val sample = index % SpectralCausticMath.POINTS
+                val unit = ImmersiveFieldGeometry.orbit[sample * 2]
+                val rr = (bandRadii[sample] - thickness).coerceAtLeast(1f)
+                ribbon.lineTo(c.x + unit.x * rr, c.y + unit.y * rr * .82f)
+            }
+            ribbon.close()
+            val tint = when (lane) {
+                0 -> amber
+                1 -> ultraviolet
+                else -> ice
+            }
+            // Dark translucent body + glow + bright index of refraction.
+            // Keeping the outline thinner toward HIGH leaves visible space
+            // instead of turning the entire field into one solid neon disc.
+            drawPath(
+                ribbon, tint.copy(alpha = .13f * bandStrength),
+            )
+            drawPath(
+                ribbon, tint.copy(alpha = .055f * bandStrength),
+                style = Stroke(width = (13f - lane * 2f) * stroke, cap = StrokeCap.Round),
+            )
+            drawPath(
+                ribbon, tint.copy(alpha = .48f * bandStrength),
+                style = Stroke(width = (1.35f - lane * .18f) * stroke, cap = StrokeCap.Round),
+            )
         }
 
         // Concentric etched circles and rotating orbital ellipses.
@@ -400,7 +477,8 @@ fun ImmersiveVisualField(
                 val ctrl1 = c + touchToCore * .28f + tangent * (lane * radius * .22f + twist)
                 val ctrl2 = c + touchToCore * .72f -
                     tangent * (lane * radius * .12f + twist * .48f)
-                val filament = Path().apply {
+                val filament = reusablePaths.conduits[strand].apply {
+                    reset()
                     moveTo(start.x, start.y)
                     cubicTo(ctrl1.x, ctrl1.y, ctrl2.x, ctrl2.y, end.x, end.y)
                 }
@@ -425,7 +503,7 @@ fun ImmersiveVisualField(
         val wobbleFrequency = 2.5f + timbre * 4.5f +
             pcm.highCyan * 2.8f + flick * 1.5f
         for (layer in 0 until 8) {
-            val line = Path()
+            val line = reusablePaths.orbits[layer].apply { reset() }
             for (i in ImmersiveFieldGeometry.orbit.indices) {
                 val unit = ImmersiveFieldGeometry.orbit[i]
                 val wave = sin(unit.angle * wobbleFrequency + motion * 4.1f + t * .73f +
@@ -702,6 +780,21 @@ fun ImmersiveVisualField(
             drawLine(ice.copy(alpha = .36f), touch + Offset(0f, -cross),
                 touch + Offset(0f, cross), .6f * stroke)
         }
+    }
+}
+
+/**
+ * Compose-owned scratch. A single draw pass mutates these paths; no object is
+ * shared across Composables or with AudioTrack. Buffers stay bounded for life.
+ */
+private class ImmersiveReusablePaths {
+    val silk = Array(6) { Path() }
+    val petals = Array(ImmersiveLightMath.PETAL_COUNT) { Path() }
+    val conduits = Array(ImmersiveLightMath.CONDUIT_STRANDS) { Path() }
+    val orbits = Array(8) { Path() }
+    val spectral = Array(SpectralCausticMath.LANE_COUNT) { Path() }
+    val spectralRadii = Array(SpectralCausticMath.LANE_COUNT) {
+        FloatArray(SpectralCausticMath.POINTS)
     }
 }
 
