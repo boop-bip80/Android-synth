@@ -249,7 +249,9 @@ fun ReferenceSoundControls(
             )
             ReferenceMiniSignal(
                 title = "MOD",
-                caption = liveRouteCount.toString() + " LIVE",
+                // Counts configured nonzero destination routes; some saved
+                // sources are not DSP-wired, so \"LIVE\" would be misleading.
+                caption = liveRouteCount.toString() + " SET",
                 values = routePreview,
                 tint = OrbitalPalette.Violet,
                 tag = "referenceMiniMod",
