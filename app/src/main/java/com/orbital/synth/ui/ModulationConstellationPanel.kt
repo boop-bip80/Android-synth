@@ -340,8 +340,7 @@ fun ModulationConstellationPanel(
             )
         }
         Text(
-            "LIVE AUDIO TARGETS  /  PITCH · MORPH · CUTOFF · RESONANCE · AMP · PAN. " +
-                "All other destinations remain saved/editable but are not yet audible.",
+            ModulationConstellationModel.liveTargetsLegend,
             color = OrbitalPalette.Muted, fontSize = 10.sp,
             modifier = Modifier.testTag("modulationLiveDestinationsLegend"),
         )
