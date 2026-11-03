@@ -24,9 +24,9 @@ class TempoStepSequencerTest {
         invalid { twoSteps.copy(beatsPerStep = Float.POSITIVE_INFINITY) }
         invalid { twoSteps.copy(glide = -.01f) }
         invalid { twoSteps.copy(glide = 1.01f) }
-        assertEquals(-1f, twoSteps.withStep(5, -4f).values[5])
-        assertEquals(1f, twoSteps.withStep(5, 4f).values[5])
-        assertEquals(0f, twoSteps.values[5])
+        assertEquals(-1f, twoSteps.withStep(5, -4f).values[5], 0f)
+        assertEquals(1f, twoSteps.withStep(5, 4f).values[5], 0f)
+        assertEquals(0f, twoSteps.values[5], 0f)
     }
 
     @Test fun forwardReversePingPongAndRandomTraverseRealQuantizedBeats() {
