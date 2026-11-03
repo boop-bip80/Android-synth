@@ -255,7 +255,10 @@ internal object PatchGraphUiModel {
                 if (bank == PatchGraphTargetBank.GLOBAL) {
                     if (i < 3) .89f else .96f
                 } else .92f,
-                active = oscIndex < 0 || oscillators.getOrNull(oscIndex)?.enabled == true,
+                // A live typed destination can be configured while its
+                // layer produces silence. Gain is multiplicative (0–2×):
+                // level=0 stays inaudible even with a modulation route.
+                active = oscIndex < 0 || layers[oscIndex].active,
                 dest = dest,
             )
         }
@@ -299,9 +302,8 @@ internal object PatchGraphUiModel {
             val to = visiblePorts[route.destination]
             if (to == null) hiddenLive++
             val oscIndex = oscillatorTargetIndex(route.destination)
-            val layerEnabled = oscIndex < 0 ||
-                oscillators.getOrNull(oscIndex)?.enabled == true
-            if (!layerEnabled) dormantOscillatorTarget++
+            val layerAudible = oscIndex < 0 || layers[oscIndex].active
+            if (!layerAudible) dormantOscillatorTarget++
             val usableDepth = route.depth.isFinite() && route.depth != 0f
 
             if (route.source == ModSource.STEP) {
@@ -311,7 +313,7 @@ internal object PatchGraphUiModel {
                     patch += PatchGraphCable(
                         from = stepNode, to = to,
                         kind = PatchCableKind.MODULATION,
-                        active = stepNode.active && layerEnabled && usableDepth,
+                        active = stepNode.active && layerAudible && usableDepth,
                         routeSlot = index,
                     )
                 }
@@ -328,7 +330,7 @@ internal object PatchGraphUiModel {
                 patch += PatchGraphCable(
                     from = lfoNodes[lfoIndex], to = to,
                     kind = PatchCableKind.MODULATION,
-                    active = activeSource && layerEnabled && usableDepth,
+                    active = activeSource && layerAudible && usableDepth,
                     routeSlot = index,
                 )
             }
