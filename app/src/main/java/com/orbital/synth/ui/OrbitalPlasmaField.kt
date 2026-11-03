@@ -127,6 +127,19 @@ internal data class OrbitalPlasmaSignal(
 }
 
 /**
+ * Only accepted output PCM can strengthen the local touch lens. Idle or
+ * audio-only frames contribute NO touch highlight or invented contact.
+ */
+internal object OrbitalPlasmaTouchLens {
+    fun accent(signal: OrbitalPlasmaSignal): Float {
+        if (!signal.pressed) return 0f
+        val rms = signal.rms.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
+        val peak = signal.peak.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
+        return (.42f + rms * 1.25f + peak * .32f).coerceIn(.42f, 1f)
+    }
+}
+
+/**
  * AGSL's shader uses cheap hash/value noise and constant bounded loops.
  * Turbulent domain-warped blue/violet ribbons, thin electric shell, warm
  * reflected filaments and individual gold particles occupy a black sphere.
@@ -143,6 +156,7 @@ private const val ORBITAL_PLASMA_AGSL = """
     uniform float uPeak;
     uniform float2 uTouch;
     uniform float uPressed;
+    uniform float uTouchAccent;
 
     float hash21(float2 p) {
         float3 q = fract(float3(p.x, p.y, p.x) * 0.1031);
@@ -177,6 +191,13 @@ private const val ORBITAL_PLASMA_AGSL = """
         float t = seconds * (0.15 + 0.19 * uMovement);
         float expression = clamp(uRms * 1.8 + uPeak * 0.42, 0.0, 0.8)
                            + uPressed * 0.16;
+        // Refracted gesture-local caustic; intensity uses ACTUAL accepted PCM.
+        float2 finger = (uTouch * resolution - resolution * 0.5) / m;
+        float2 fingerOffset = p - finger;
+        float fingerDist2 = dot(fingerOffset, fingerOffset);
+        float fingerBloom = exp(-fingerDist2 * 78.0) * uTouchAccent;
+        float fingerRim = exp(-pow((sqrt(fingerDist2) -
+            (0.078 + uPeak * 0.024)) * 67.0, 2.0)) * uTouchAccent;
         float2 displacement = (uTouch - 0.5) * 0.14;
 
         float wave = turbulence(float2(a * 0.93 + t, r * 13.7 - t * 0.4)
@@ -238,6 +259,12 @@ private const val ORBITAL_PLASMA_AGSL = """
                glassRim * (0.44 + 0.20 * depth);
         rgb += (electric * 0.46 + amber * 0.26) * orbitRing *
                (0.13 + expression * 0.19);
+        // Two bounded volumetric terms, following the real finger; a diffuse
+        // electric core plus a thin gold-pearl refractive liquid-glass rim.
+        rgb += (electric * 0.68 + violet * 0.18) * fingerBloom *
+               (0.40 + 0.50 * body);
+        rgb += (pearl * 0.53 + amber * 0.39 + electric * 0.08) *
+               fingerRim * (0.30 + 0.72 * body);
 
         // Sparse warm firefly motes are confined to the sphere. Their position
         // is deterministic, so a still instrument never spins an idle timer.
@@ -281,6 +308,7 @@ private fun PlasmaGpuField(
         shader.setFloatUniform("uPeak", signal.peak)
         shader.setFloatUniform("uTouch", signal.touchX, signal.touchY)
         shader.setFloatUniform("uPressed", if (signal.pressed) 1f else 0f)
+        shader.setFloatUniform("uTouchAccent", OrbitalPlasmaTouchLens.accent(signal))
         drawRect(Color.Black)
         drawRect(brush)
     }
@@ -298,6 +326,7 @@ private fun PlasmaVectorFallback(
         val center = Offset(size.width * .5f, size.height * .5f)
         val radius = min(size.width, size.height) * .445f
         val energy = 0.45f + 0.6f * signal.rms + .28f * signal.peak
+        val touchAccent = OrbitalPlasmaTouchLens.accent(signal)
         drawCircle(
             brush = Brush.radialGradient(
                 listOf(
@@ -337,6 +366,31 @@ private fun PlasmaVectorFallback(
                 style = Stroke(width = 18f))
             drawPath(path, tint.copy(alpha = .37f * energy),
                 style = Stroke(width = 2.1f))
+        }
+        // Android 8–12 receives the same touch/PCM-tied caustic cue. It
+        // costs two circles only while a finger is genuinely pressed.
+        if (touchAccent > 0f) {
+            val finger = Offset(signal.touchX * size.width, signal.touchY * size.height)
+            val bloomRadius = radius * .22f
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(
+                        Color(0xFF66E8FF).copy(alpha = .39f * touchAccent),
+                        Color(0xFF936BFF).copy(alpha = .16f * touchAccent),
+                        Color.Transparent,
+                    ),
+                    center = finger,
+                    radius = bloomRadius,
+                ),
+                radius = bloomRadius,
+                center = finger,
+            )
+            drawCircle(
+                Color(0xFFFFD393).copy(alpha = .73f * touchAccent),
+                radius = radius * (.078f + signal.peak * .024f),
+                center = finger,
+                style = Stroke(width = 1.7f),
+            )
         }
         drawCircle(
             color = Color(0xFF5BDFFF).copy(alpha = .29f * energy),
