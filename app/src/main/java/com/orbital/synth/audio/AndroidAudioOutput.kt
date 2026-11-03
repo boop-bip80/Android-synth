@@ -378,6 +378,10 @@ class AndroidAudioOutput(
             visualTelemetry.stop()
             audioSequencer.onWorkerStop()
             performanceArp.onWorkerStop()
+            // A failed worker may have left source-tagged or untagged engine notes
+            // queued beyond the transport's last block. Flush all ownership before
+            // any replacement worker renders a fresh buffer.
+            if (unexpectedFailure) synth.allNotesOff()
             lastUnderruns = runCatching { config.track.underrunCount }.getOrDefault(lastUnderruns)
             runCatching { config.track.pause() }
             runCatching { config.track.flush() }
