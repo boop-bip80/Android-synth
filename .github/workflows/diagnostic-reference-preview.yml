@@ -156,18 +156,18 @@ jobs:
               print(f'{prefix}_JPEG_END')
           PY
 
-      - name: Download genuine #149 initial hosted MainActivity SOUND framebuffer (read only)
+      - name: Download genuine #149 latest hosted MainActivity SOUND framebuffer (read only)
         uses: actions/download-artifact@v4
         with:
           name: orbital-api35-visuals-emulator-screenshot
-          run-id: 41615692119
+          run-id: 41618045253
           github-token: ${{ github.token }}
           path: artifacts/live-sound-host-normal
       - name: Download genuine #149 compact 360dp hosted SOUND framebuffer (read only)
         uses: actions/download-artifact@v4
         with:
           name: orbital-api35-compact-emulator-screenshot
-          run-id: 41615692119
+          run-id: 41618045253
           github-token: ${{ github.token }}
           path: artifacts/live-sound-host-compact
       - name: Expose bounded real-host SOUND JPEGs for original artwork parity inspection
@@ -186,8 +186,8 @@ jobs:
           # instrumentation/ADB capture, not a setContent fixture, generated
           # concept image, or claim of successful UI test gates.
           sources = [
-              ("SOUNDHOST", "artifacts/live-sound-host-normal", "orbital-emulator.png"),
-              ("SOUNDCOMPACT", "artifacts/live-sound-host-compact", "compact-350-sound.png"),
+              ("SOUNDHOST2", "artifacts/live-sound-host-normal", "orbital-emulator.png"),
+              ("SOUNDCOMPACT2", "artifacts/live-sound-host-compact", "compact-350-sound.png"),
           ]
           for prefix, folder, name in sources:
               files = sorted(glob.glob(os.path.join(folder, '**', '*.png'), recursive=True))
@@ -200,7 +200,7 @@ jobs:
               assert blob.startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid live-host PNG'
               image = Image.open(io.BytesIO(blob))
               original = image.size
-              if prefix == "SOUNDHOST":
+              if prefix == "SOUNDHOST2":
                   assert original[0] >= 600 and original[1] >= 1000, 'Expected actual portrait phone'
               else:
                   assert original[0] >= 300 and original[1] >= 300, 'Expected authentic 350dp short-height emulator'
