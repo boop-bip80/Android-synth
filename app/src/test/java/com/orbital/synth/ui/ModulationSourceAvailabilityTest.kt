@@ -107,6 +107,37 @@ class ModulationSourceAvailabilityTest {
         }
     }
 
+    @Test fun constellationAnimationGateTransitionsEmptyToPoweredToPausedWithoutPhantomFrames() {
+        // The Compose graph only instantiates an infinite redraw clock while
+        // at least one actual enabled periodic source can illustrate a cable.
+        val empty = List(64) { ModulationRouteConfig() }
+        assertFalse(ModulationSourceAvailability.hasAnimatedPeriodicRoute(
+            empty, enabledLfos, null))
+        val connected = empty.toMutableList().apply {
+            this[63] = route(ModSource.LFO8, depth = -1.25f)
+        }
+        assertTrue("Inverse audible LFO depth must enable the illustrative clock",
+            ModulationSourceAvailability.hasAnimatedPeriodicRoute(
+                connected, enabledLfos, null))
+        val pausedLfos = enabledLfos.toMutableList().apply {
+            this[7] = ModulationLfoConfig(enabled = false)
+        }
+        assertFalse("Pausing that LFO must stop invisible 60Hz redraws",
+            ModulationSourceAvailability.hasAnimatedPeriodicRoute(
+                connected, pausedLfos, null))
+        assertFalse("Zero depth must not keep a backdrop animation alive",
+            ModulationSourceAvailability.hasAnimatedPeriodicRoute(
+                connected.map { it.copy(depth = 0f) }, enabledLfos, null))
+        val touchOnly = listOf(route(ModSource.TOUCH_X), route(ModSource.ENV1))
+        assertFalse(ModulationSourceAvailability.hasAnimatedPeriodicRoute(
+            touchOnly, enabledLfos, ModulationStepConfig(enabled = true)))
+        val step = listOf(route(ModSource.STEP))
+        assertTrue(ModulationSourceAvailability.hasAnimatedPeriodicRoute(
+            step, disabledLfos, ModulationStepConfig(enabled = true)))
+        assertFalse(ModulationSourceAvailability.hasAnimatedPeriodicRoute(
+            step, disabledLfos, ModulationStepConfig(enabled = false)))
+    }
+
     @Test fun labelsDistinguishDspConnectedFromAudibleAndUnwired() {
         assertTrue(ModulationSourceAvailability.routeStatus(
             route(ModSource.ENV1), enabledLfos, null).contains("UNWIRED SOURCE"))
