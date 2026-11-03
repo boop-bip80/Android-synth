@@ -68,6 +68,7 @@ import com.orbital.synth.core.dsp.processing.FxModuleType
 import com.orbital.synth.core.dsp.processing.ModCurve
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
+import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -75,7 +76,7 @@ import kotlin.math.sin
  * A physically honest, interactive patch canvas for the ONE live OrbitalSynth.
  *
  * The backbone is FIXED by DSP architecture; arbitrary oscillator-to-effect
- * cables are intentionally unsupported. Existing LFO -> six live bus routes
+ * cables are intentionally unsupported. Existing LFO/STEP -> six live bus routes
  * and queued ordered FX slots are editable via onRouteChange/onMoveFxSlot.
  * Reserved modulation IDs stay stored/visible as RESERVED and are never
  * misrepresented as processed audio. Bright cables are real configuration,
@@ -96,25 +97,26 @@ fun PatchGraphPanel(
     onMoveFxSlot: (Int, Int) -> Unit,
     modifier: Modifier = Modifier,
     onOscillatorSlotChange: ((Int, OscillatorSlot) -> Unit)? = null,
+    stepConfig: ModulationStepConfig? = null,
 ) {
     val routeBank = remember(routes) {
         List(64) { routes.getOrNull(it) ?: ModulationRouteConfig() }
     }
-    val graph = remember(oscillators, lfos, routes, fxSlots) {
-        PatchGraphUiModel.build(oscillators, lfos, routes, fxSlots)
+    val graph = remember(oscillators, lfos, routes, fxSlots, stepConfig) {
+        PatchGraphUiModel.build(oscillators, lfos, routes, fxSlots, stepConfig)
     }
     var source by remember { mutableStateOf(ModSource.LFO1) }
     var selectedBus by remember { mutableStateOf(ModDestination.MORPH) }
     var selectedRoute by remember { mutableIntStateOf(0) }
     var selectedFx by remember { mutableIntStateOf(0) }
-    var notice by remember { mutableStateOf("Touch an LFO, then a glowing destination bus. Drag to connect.") }
+    var notice by remember { mutableStateOf("Touch a live source, then a glowing destination bus. Drag to connect.") }
 
     fun connect(from: ModSource, target: ModDestination) {
         source = from
         selectedBus = target
         val result = PatchGraphUiModel.findOrCreateLiveRoute(routeBank, from, target)
         if (result == null) {
-            notice = "No empty patch slots available, or this port is not a live LFO destination."
+            notice = "No empty patch slots available, or this is not a supported live source/target."
             return
         }
         selectedRoute = result.first
@@ -147,9 +149,11 @@ fun PatchGraphPanel(
 
     fun tapNode(node: PatchGraphNode?) {
         when (node?.kind) {
-            PatchNodeKind.LFO -> {
+            PatchNodeKind.LFO, PatchNodeKind.STEP -> {
                 source = node.source ?: source
-                notice = "Selected " + node.label + ". Tap/drag to one of six live DSP buses."
+                notice = "Selected " + node.label + ". Tap/drag to a real DSP bus." +
+                    (if (node.kind == PatchNodeKind.STEP && !node.active)
+                        " Enable STEP first for an audible signal." else "")
             }
             PatchNodeKind.MOD_BUS -> node.destination?.let { connect(source, it) }
             PatchNodeKind.FX_SLOT -> {
@@ -215,7 +219,8 @@ fun PatchGraphPanel(
             fontSize = 12.sp,
         )
         Text(
-            "8 OSC LAYERS  •  8 LFO SOURCES  •  " + fxSlots.size +
+            "8 OSC LAYERS  •  8 LFO SOURCES" +
+                (if (stepConfig != null) " + STEP" else "") + "  •  " + fxSlots.size +
                 " ORDERED FX  /  " + graph.liveRouteCount + " LIVE BUSES",
             color = OrbitalPalette.Muted,
             fontSize = 10.sp,
@@ -269,7 +274,8 @@ fun PatchGraphPanel(
                                 size.width.toFloat(), size.height.toFloat(),
                                 48.dp.toPx(),
                             )
-                            if (start?.kind == PatchNodeKind.LFO &&
+                            if ((start?.kind == PatchNodeKind.LFO ||
+                                    start?.kind == PatchNodeKind.STEP) &&
                                 end?.kind == PatchNodeKind.MOD_BUS
                             ) {
                                 val origin = start.source
@@ -291,7 +297,8 @@ fun PatchGraphPanel(
                         onDrag = { change, _ ->
                             endPointState.value = change.position
                             if (startNodeState.value?.kind == PatchNodeKind.FX_SLOT ||
-                                startNodeState.value?.kind == PatchNodeKind.LFO
+                                startNodeState.value?.kind == PatchNodeKind.LFO ||
+                                startNodeState.value?.kind == PatchNodeKind.STEP
                             ) change.consume()
                         },
                     )
@@ -387,7 +394,7 @@ fun PatchGraphPanel(
                 val center = Offset(node.x * width, node.y * height)
                 val tint = patchNodeTint(node)
                 val selected = when (node.kind) {
-                    PatchNodeKind.LFO -> node.source == source
+                    PatchNodeKind.LFO, PatchNodeKind.STEP -> node.source == source
                     PatchNodeKind.MOD_BUS -> node.destination == selectedBus
                     PatchNodeKind.FX_SLOT -> node.slot == fxIndex
                     else -> false
@@ -395,6 +402,7 @@ fun PatchGraphPanel(
                 val small = node.kind == PatchNodeKind.OSC_LAYER ||
                     node.kind == PatchNodeKind.FX_SLOT ||
                     node.kind == PatchNodeKind.LFO ||
+                    node.kind == PatchNodeKind.STEP ||
                     node.kind == PatchNodeKind.MOD_BUS
                 val radius = (if (small) 16.dp else 20.dp).toPx() +
                     if (selected) 3.dp.toPx() else 0f
@@ -434,7 +442,7 @@ fun PatchGraphPanel(
                 val native = canvas.nativeCanvas
                 graph.nodes.forEach { node ->
                     val radius = when (node.kind) {
-                        PatchNodeKind.OSC_LAYER, PatchNodeKind.LFO,
+                        PatchNodeKind.OSC_LAYER, PatchNodeKind.LFO, PatchNodeKind.STEP,
                         PatchNodeKind.FX_SLOT, PatchNodeKind.MOD_BUS -> 16.dp.toPx()
                         else -> 20.dp.toPx()
                     }
@@ -469,8 +477,10 @@ fun PatchGraphPanel(
         Text(notice, color = OrbitalPalette.Teal, fontSize = 10.sp,
             modifier = Modifier.testTag("patchGraphNotice"))
         Text(
-            graph.patchCables.size.toString() + " LFO CABLES DRAWN • " +
-                graph.externalSourceRouteCount + " OTHER LIVE SOURCES • " +
+            graph.patchCables.size.toString() + " LFO/STEP CABLES DRAWN • " +
+                graph.stepRouteCount + " STEP ROUTES (" +
+                graph.dormantStepRouteCount + " DORMANT) • " +
+                graph.externalSourceRouteCount + " OTHER SOURCES • " +
                 graph.dormantLfoRouteCount + " DORMANT LFO CABLES • " +
                 graph.reservedRouteCount + " RESERVED ROUTES (NOT AUDIBLE)",
             color = OrbitalPalette.Muted,
@@ -533,6 +543,33 @@ fun PatchGraphPanel(
                         }
                     }
                 }
+            }
+        }
+        if (stepConfig != null) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                PatchChip(
+                    label = "STEP / CLOCK",
+                    selected = source == ModSource.STEP,
+                    tint = OrbitalPalette.Gold,
+                    description = "Select real audio-clocked STEP modulation source",
+                    tag = "patchStepSource",
+                ) {
+                    source = ModSource.STEP
+                    notice = "STEP selected. Connect to a live bus. " +
+                        (if (stepConfig.enabled) "Clocked step source is enabled."
+                        else "Enable STEP in modulation editor before expecting audio.")
+                }
+                Text(
+                    if (stepConfig.enabled) "AUDIO-CLOCKED / ACTIVE"
+                    else "STEP SEQUENCER DISABLED / CABLING DORMANT",
+                    color = if (stepConfig.enabled) OrbitalPalette.Teal else OrbitalPalette.Muted,
+                    fontSize = 9.sp,
+                    modifier = Modifier.weight(1f).testTag("patchStepSourceStatus"),
+                )
             }
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -851,6 +888,7 @@ private fun patchNodeTint(node: PatchGraphNode): Color = when (node.kind) {
     PatchNodeKind.FILTER, PatchNodeKind.VOICE_AMP_PAN -> OrbitalPalette.Teal
     PatchNodeKind.MASTER_FX -> OrbitalPalette.Blue
     PatchNodeKind.LFO -> OrbitalPalette.Violet
+    PatchNodeKind.STEP -> OrbitalPalette.Gold
     PatchNodeKind.MOD_BUS -> OrbitalPalette.Cyan
     PatchNodeKind.FX_SLOT -> when (node.fxType) {
         FxModuleType.SATURATION -> OrbitalPalette.Gold
