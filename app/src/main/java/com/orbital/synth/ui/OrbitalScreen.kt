@@ -75,6 +75,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.audio.AudioVisualSnapshot
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationLfoConfig
 import com.orbital.synth.core.ModulationRouteConfig
@@ -104,6 +105,8 @@ data class OrbitalUiState(
     /** Immutable 8-LFO and 64-cable snapshots from the actual audio engine. */
     val modulationLfos: List<ModulationLfoConfig> = emptyList(),
     val modulationRoutes: List<ModulationRouteConfig> = emptyList(),
+    /** User-adjusted performance layout, reused when the keyboardless stage reopens. */
+    val stageTouchSettings: StageTouchSettings? = null,
     val octave: Int = 4,
     val sequencerRunning: Boolean = false,
     val enabledSteps: Set<Int> = emptySet(),
@@ -179,6 +182,9 @@ fun OrbitalScreen(
     onModulationTempoChange: ((Float) -> Unit)? = null,
     /** Sends stage X/Y/pressure to actual expressive modulation sources. */
     onStageModulationTouch: ((Float, Float, Float) -> Unit)? = null,
+    /** Real output PCM telemetry; read only while the immersive stage is visible. */
+    onReadAudioVisual: (() -> AudioVisualSnapshot)? = null,
+    onStageTouchSettingsChange: ((StageTouchSettings) -> Unit)? = null,
 ) {
     var selectedTab by remember { mutableStateOf(Tab.SOUND) }
     var immersiveMode by remember { mutableStateOf(false) }
@@ -250,6 +256,9 @@ fun OrbitalScreen(
             onParameterChange = onParameterChange,
             onExpressiveNoteOn = onExpressiveNoteOn,
             onModulationTouchExpression = onStageModulationTouch,
+            initialPerformanceConfig = state.stageTouchSettings,
+            onPerformanceConfigChange = onStageTouchSettingsChange,
+            audioVisualSource = onReadAudioVisual,
             onExit = { immersiveMode = false },
         )
     } else {
