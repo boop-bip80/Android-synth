@@ -89,10 +89,16 @@ internal fun ImmersiveStage(
     val latestAudioVisualSource = rememberUpdatedState(audioVisualSource)
     var audioVisual by remember { mutableStateOf(AudioVisualSnapshot()) }
     // Snapshot reads do not touch the DSP engine and never run on its audio thread.
-    // The coroutine is cancelled when this immersive screen leaves composition.
-    LaunchedEffect(Unit) {
+    // No polling occurs for preview hosts without a meter, or after stage disposal.
+    LaunchedEffect(audioVisualSource != null) {
+        val silent = AudioVisualSnapshot()
         while (isActive) {
-            val next = latestAudioVisualSource.value?.invoke() ?: AudioVisualSnapshot()
+            val source = latestAudioVisualSource.value
+            if (source == null) {
+                if (audioVisual != silent) audioVisual = silent
+                break
+            }
+            val next = source()
             if (next != audioVisual) audioVisual = next
             delay(33L)
         }
