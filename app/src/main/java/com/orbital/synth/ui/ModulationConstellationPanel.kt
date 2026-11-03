@@ -187,9 +187,16 @@ fun ModulationConstellationPanel(
                         val index = row * 8 + col
                         val route = patch[index]
                         val selected = index == current
-                        val tint = if (route.enabled) sourceTint(route.source) else OrbitalPalette.Muted
-                        val live = route.enabled &&
-                            ModulationConstellationModel.audibleTarget(route.destination)
+                        // A destination being DSP-capable does NOT make a cable audible:
+                        // unwired, paused, touch-only and zero-depth slots stay dim.
+                        val live = ModulationSourceAvailability.showConfiguredPhoton(
+                            route, lanes, stepConfig,
+                        )
+                        val tint = when {
+                            !route.enabled -> OrbitalPalette.Muted
+                            live -> sourceTint(route.source)
+                            else -> sourceTint(route.source).copy(alpha = .55f)
+                        }
                         Box(
                             Modifier.weight(1f).padding(2.dp).height(39.dp)
                                 .border(
@@ -206,7 +213,9 @@ fun ModulationConstellationPanel(
                                 .semantics {
                                     contentDescription = "Route " + (index + 1) +
                                         (if (!route.enabled) ", empty"
-                                        else if (live) ", audible" else ", reserved")
+                                        else ", " + ModulationSourceAvailability.routeStatus(
+                                            route, lanes, stepConfig,
+                                        ))
                                 }
                                 .testTag("modRouteSlot" + index),
                             contentAlignment = Alignment.Center,
