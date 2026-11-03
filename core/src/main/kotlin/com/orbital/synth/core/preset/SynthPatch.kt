@@ -3,6 +3,7 @@ package com.orbital.synth.core.preset
 import com.orbital.synth.core.OscillatorSlot
 import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.ModulationLfoConfig
+import com.orbital.synth.core.dsp.processing.FxModuleConfig
 
 /** Stable engine parameter keys, matching com.orbital.synth.core.ParameterId names. */
 object PatchParameters {
@@ -33,6 +34,8 @@ data class SynthPatch(
     val modulationLfos: List<ModulationLfoConfig> = emptyList(),
     /** Saved transport tempo for beat-synchronized modulation. */
     val modulationTempoBpm: Float = 120f,
+    /** Ordered, independently editable six-slot stereo FX chain; empty is V1/V2/V3. */
+    val fxSlots: List<FxModuleConfig> = emptyList(),
 ) {
     init {
         require(validId(id)) { "Invalid patch identifier" }
@@ -66,6 +69,13 @@ data class SynthPatch(
         require(modulationTempoBpm.isFinite() && modulationTempoBpm in 20f..400f) {
             "Invalid modulation transport tempo"
         }
+        require(fxSlots.size <= 6) { "A patch supports at most six live FX slots" }
+        require(fxSlots.all { fx ->
+            fx.wet.isFinite() && fx.wet in 0f..1f &&
+                fx.depth.isFinite() && fx.depth in 0f..1f &&
+                fx.rate.isFinite() && fx.rate in 0f..1f &&
+                fx.stereo.isFinite() && fx.stereo in 0f..1f
+        }) { "Invalid FX slot settings" }
     }
 
     fun parameter(key: String, fallback: Float = 0.5f): Float = parameters[key] ?: fallback
