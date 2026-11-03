@@ -5,11 +5,15 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import com.orbital.synth.audio.AndroidAudioOutput
 import com.orbital.synth.audio.PerformanceTouchEpochPolicy
 import com.orbital.synth.audio.AndroidMidiManager
@@ -91,6 +95,8 @@ class MainActivity : ComponentActivity() {
     /** UI-only acknowledgment of the audio worker session revision. A rapid
      * stop→restart cannot disappear between 32ms polls. */
     private var lastObservedAudioSession: Long? = null
+    // Activity/main-thread state only: no Compose mutation from the render worker.
+    private var audioFailureNotice by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -166,6 +172,12 @@ class MainActivity : ComponentActivity() {
             // computed at sample offsets on the dedicated audio render worker.
             LaunchedEffect(Unit) {
                 while (true) {
+                    // The worker exposes a one-shot notice after its bounded retry.
+                    // Consume only while visible; onStop clears this dialog and the
+                    // worker's pending notice, so background polls cannot notify.
+                    if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                        audioOutput.consumeFatalErrorNotice()?.let { audioFailureNotice = it }
+                    }
                     val step = audioOutput.sequencerPlayhead
                     val modulationStep = synth.modulationStepPlayhead
                     val session = audioOutput.performanceSessionEpoch
@@ -355,6 +367,21 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                 )
+                audioFailureNotice?.let { message ->
+                    // Unlike the patch Snackbar, a dialog is also accessible
+                    // over the keyboardless FOCUS surface until acknowledged.
+                    AlertDialog(
+                        onDismissRequest = { audioFailureNotice = null },
+                        title = { Text("Audio output stopped") },
+                        text = { Text(message) },
+                        confirmButton = {
+                            TextButton(onClick = ::retryAudioOutput) { Text("Retry audio") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { audioFailureNotice = null }) { Text("Later") }
+                        },
+                    )
+                }
             }
         }
     }
@@ -830,15 +857,13 @@ class MainActivity : ComponentActivity() {
         screenState = screenState.copy(playMode = mode)
     }
 
-    override fun onStart() {
-        super.onStart()
+    /** Shared foreground-start/epoch handshake; never runs on the audio worker. */
+    private fun startAudioOutput(): Boolean {
         val sessionBeforeStart = audioOutput.performanceSessionEpoch
         val started = audioOutput.start()
-        // onStop already panicked/invalidated all prior physical finger leases.
-        // A synchronous, successful foreground worker start is expected and
-        // must be ACKed before a fresh finger gets canceled at the 32ms poll.
-        // Unknown extra revisions (focus interruption/worker exit) remain
-        // unacknowledged so the poll can revoke truly stale input.
+        // An observed stop already invalidated old physical finger leases.
+        // Unobserved focus/worker revisions remain pending so the next poll
+        // cancels stale touches instead of silently acknowledging them.
         lastObservedAudioSession = PerformanceTouchEpochPolicy.acknowledgeExpectedStart(
             previouslyObserved = lastObservedAudioSession,
             beforeStart = sessionBeforeStart,
@@ -846,7 +871,23 @@ class MainActivity : ComponentActivity() {
             accepted = started,
             running = audioOutput.isRunning,
         )
-        if (!started) {
+        return started
+    }
+
+    /** A new bounded recovery budget requires this explicit user action. */
+    private fun retryAudioOutput() {
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return
+        audioFailureNotice = null
+        audioOutput.stop()
+        if (!startAudioOutput()) {
+            audioFailureNotice =
+                "Audio output is still unavailable. Check your device audio settings and try again."
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (!startAudioOutput()) {
             Toast.makeText(
                 this,
                 "Audio output unavailable. Check your device audio settings.",
@@ -857,6 +898,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        audioFailureNotice = null
         // Explicit panic below increments UI epoch; acknowledge the matching
         // AudioTrack epoch after stop so the poll cannot double-reset it.
         audioOutput.arpeggiatorPanic()
