@@ -72,6 +72,8 @@ internal class LiveModulationHost(sampleRate: Int) {
 
     var active: Boolean = false
         private set
+    var pitchRouteActive: Boolean = false
+        private set
     var morph: Float = 0.5f
         private set
     var pitchSemitones: Float = 0f
@@ -138,6 +140,7 @@ internal class LiveModulationHost(sampleRate: Int) {
         val latestRouteRevision = routeRevision.get()
         if (latestRouteRevision != appliedRouteRevision) {
             var count = 0
+            var pitchCount = 0
             for (i in 0 until ROUTE_COUNT) {
                 val next = publishedRoutes.get(i)
                 if (next !== appliedRoutes[i]) {
@@ -148,9 +151,13 @@ internal class LiveModulationHost(sampleRate: Int) {
                     }
                     appliedRoutes[i] = next
                 }
-                if (next.enabled) count++
+                if (next.enabled) {
+                    count++
+                    if (next.destination == ModDestination.PITCH) pitchCount++
+                }
             }
             active = count > 0
+            pitchRouteActive = pitchCount > 0
             appliedRouteRevision = latestRouteRevision
             if (!active) rack.resetSmoothing()
         }
