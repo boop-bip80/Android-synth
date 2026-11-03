@@ -161,7 +161,7 @@ jobs:
               }
             done
             grep -Fq "$source_sha" docs/screenshots/PROVENANCE.md &&
-              grep -Fq "actions/runs/$VERIFIED_RUN_ID" docs/screenshots/PROVENANCE.md || {
+              grep -Fq "https://github.com/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID)" docs/screenshots/PROVENANCE.md || {
                 echo "Screenshot bot child has no matching source SHA / run provenance." >&2
                 exit 1
               }
@@ -247,7 +247,7 @@ jobs:
               exit 1
             }
             [[ "$provenance" == *"$SOURCE_SHA"* &&
-               "$provenance" == *"actions/runs/$VERIFIED_RUN_ID"* ]] || {
+               "$provenance" == *"https://github.com/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID)"* ]] || {
               echo "New screenshot child lacks exact source SHA or CI run provenance." >&2
               exit 1
             }
