@@ -302,12 +302,24 @@ internal fun ImmersiveStage(
                     fontSize = 11.sp,
                     letterSpacing = 2.sp,
                 )
-                Text(
-                    "IMMERSIVE / LIVE",
-                    color = cyan.copy(alpha = .75f),
-                    fontSize = 9.sp,
-                    letterSpacing = 1.3.sp,
-                )
+                Box(
+                    Modifier
+                        .testTag("stageConfigOpen")
+                        .heightIn(min = 48.dp)
+                        .border(1.dp, cyan.copy(alpha = .48f), RoundedCornerShape(13.dp))
+                        .background(Color(0xFF101728), RoundedCornerShape(13.dp))
+                        .clickable(role = Role.Button) {
+                            deliver(mapper.cancelAll())
+                            touchIntensity = 0f
+                            reportTouchModulation(.5f, .5f, .5f, force = true)
+                            showConfig = true
+                        }
+                        .semantics { contentDescription = "Configure touch performance stage" }
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("◈ CONFIG", color = cyan, fontSize = 10.sp, letterSpacing = 1.sp)
+                }
             }
         }
 
@@ -335,11 +347,27 @@ internal fun ImmersiveStage(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "X  /  PITCH + MORPH     Y  /  FILTER + MOTION     PRESSURE  /  EXPRESSION",
+                if (stageSettings.pitchAxis == TouchPitchAxis.HORIZONTAL)
+                    "X  /  PITCH + MORPH     Y  /  FILTER     SWIPE  /  MOTION"
+                else "Y  /  PITCH + MORPH     X  /  FILTER     SWIPE  /  MOTION",
                 fontSize = 8.sp,
                 letterSpacing = .5.sp,
                 color = dim.copy(alpha = .67f),
                 maxLines = 2,
+            )
+            Text(
+                (stageSettings.scale.name.replace('_', ' ') + " · " +
+                    stageSettings.octaveRange + " OCT · " +
+                    (if (stageSettings.glissando) "GLIDE" else "HOLD")),
+                fontSize = 9.sp, color = cyan.copy(alpha = .62f), maxLines = 1,
+            )
+        }
+        if (showConfig) {
+            StageTouchConfigurationPanel(
+                settings = stageSettings,
+                onChange = { stageSettings = it },
+                onDismiss = { showConfig = false },
+                onReset = { stageSettings = StageTouchSettings(baseOctave = state.octave) },
             )
         }
     }
