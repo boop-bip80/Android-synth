@@ -3,6 +3,7 @@ package com.orbital.synth.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -228,6 +229,100 @@ class ReferencePerformanceKeybedTest {
         node.performTouchInput { up() }
         compose.runOnIdle {
             assertEquals(listOf(60, 60), off)
+        }
+    }
+
+    @Test fun hostEpochRemountBlocksStaleFingerMoveAndProtectsNewSamePitchOwner() {
+        val events = mutableListOf<String>()
+        var epoch by mutableStateOf(0L)
+        compose.setContent {
+            // The real SOUND host uses this same key(epoch, octave) boundary
+            // to dispose old voice owners immediately after patch/audio panic.
+            key(epoch) {
+                Box(Modifier.width(360.dp)) {
+                    ReferencePerformanceKeybed(
+                        octave = 4,
+                        onNoteOn = { events.add("ON:$it") },
+                        onNoteOff = { events.add("OFF:$it") },
+                    )
+                }
+            }
+        }
+        compose.onNodeWithTag("referencePerformanceKeybed").performTouchInput {
+            val width = center.x * 2f
+            down(0, Offset(width * .05f, center.y))
+        }
+        compose.runOnIdle { epoch++ }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(listOf("ON:60", "OFF:60"), events)
+        }
+
+        // Finger 0 never lifted: a MOVE after host recall is not a note-down.
+        compose.onNodeWithTag("referencePerformanceKeybed").performTouchInput {
+            val width = center.x * 2f
+            moveTo(0, Offset(width * .22f, center.y))
+        }
+        compose.runOnIdle {
+            assertEquals("A stale held finger must not reattack after panic",
+                listOf("ON:60", "OFF:60"), events)
+        }
+        compose.onNodeWithTag("referencePerformanceKeybed").performTouchInput {
+            val width = center.x * 2f
+            down(1, Offset(width * .05f, center.y))
+            up(0)
+        }
+        compose.runOnIdle {
+            assertEquals("Releasing stale finger 0 must not silence new finger 1",
+                listOf("ON:60", "OFF:60", "ON:60"), events)
+        }
+        compose.onNodeWithTag("referencePerformanceKeybed").performTouchInput { up(1) }
+        compose.runOnIdle {
+            assertEquals(
+                listOf("ON:60", "OFF:60", "ON:60", "OFF:60"),
+                events,
+            )
+        }
+    }
+
+    @Test fun recognizerOctaveRestartIgnoresOldMoveYetAcceptsIndependentFreshFinger() {
+        val events = mutableListOf<String>()
+        var octave by mutableStateOf(4)
+        compose.setContent {
+            Box(Modifier.width(360.dp)) {
+                ReferencePerformanceKeybed(
+                    octave = octave,
+                    onNoteOn = { events.add("ON:$it") },
+                    onNoteOff = { events.add("OFF:$it") },
+                )
+            }
+        }
+        val keybed = compose.onNodeWithTag("referencePerformanceKeybed")
+        keybed.performTouchInput {
+            val width = center.x * 2f
+            down(0, Offset(width * .05f, center.y))
+        }
+        compose.runOnIdle { octave = 5 }
+        compose.waitForIdle()
+        keybed.performTouchInput {
+            val width = center.x * 2f
+            moveTo(0, Offset(width * .22f, center.y))
+        }
+        compose.runOnIdle {
+            assertEquals("Old C4 finger moving over new D5 must stay silent",
+                listOf("ON:60", "OFF:60"), events)
+        }
+        keybed.performTouchInput {
+            val width = center.x * 2f
+            down(1, Offset(width * .05f, center.y))
+            up(0)
+        }
+        compose.runOnIdle {
+            assertEquals(listOf("ON:60", "OFF:60", "ON:72"), events)
+        }
+        keybed.performTouchInput { up(1) }
+        compose.runOnIdle {
+            assertEquals(listOf("ON:60", "OFF:60", "ON:72", "OFF:72"), events)
         }
     }
 
