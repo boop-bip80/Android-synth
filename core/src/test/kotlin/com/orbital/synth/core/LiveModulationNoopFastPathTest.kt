@@ -82,6 +82,15 @@ class LiveModulationNoopFastPathTest {
         m.tick()
         assertTrue("Real pitch route must no longer be zero", m.pitchSemitones < -.01f)
         m.setRoute(10, ModSource.TOUCH_X, ModDestination.PITCH, -0.0f, ModCurve.SOFT)
+        assertTrue("Last audible pitch cable must declick, not instantly snap",
+            m.syncBlock(.3f, .8f, .16f))
+        assertTrue(m.pitchRouteActive)
+        var frames = 0
+        while (m.syncBlock(.3f, .8f, .16f) && frames < 1_100) {
+            m.tick()
+            frames++
+        }
+        assertTrue("Tail is bounded to at most 120 ms plus block sync", frames <= 960)
         assertFalse(m.syncBlock(.3f, .8f, .16f))
         assertFastPathsOff(m)
     }
@@ -133,7 +142,7 @@ class LiveModulationNoopFastPathTest {
         assertTrue(m.syncBlock(.5f, .5f, .5f))
         m.tick()
         assertEquals("Dormant cable must keep the real LFO phase, not restart",
-            .4f, m.morph, .002f)
+            firstSlewedMorph(.4f), m.morph, .0001f)
         assertFalse(m.pitchRouteActive)
     }
 
@@ -148,7 +157,7 @@ class LiveModulationNoopFastPathTest {
         assertTrue(m.syncBlock(.5f, .5f, .5f))
         m.tick()
         assertEquals("A note gate must reset the configured dormant SAW_UP to -1",
-            .3f, m.morph, .002f)
+            firstSlewedMorph(.3f), m.morph, .0001f)
     }
 
     @Test fun sampleHoldRngMatchesExactSequentialLfoAfterDormantClockWraps() {
@@ -170,7 +179,8 @@ class LiveModulationNoopFastPathTest {
         assertTrue(m.syncBlock(.5f, .5f, .5f))
         m.tick()
         assertEquals("Dormant S&H must advance and preserve every deterministic wrap/RNG draw",
-            (.5f + expectedSample * .3f).coerceIn(0f, 1f), m.morph, .00001f)
+            firstSlewedMorph((.5f + expectedSample * .3f).coerceIn(0f, 1f)),
+            m.morph, .00001f)
     }
 
     @Test fun enablingPreviouslyDisabledLfoWhileCableIsDormantIsHonored() {
@@ -187,7 +197,7 @@ class LiveModulationNoopFastPathTest {
         assertTrue(m.syncBlock(.5f, .5f, .5f))
         m.tick()
         assertEquals("LFO2 advances only after enabled, even while its cable is dormant",
-            .4f, m.morph, .002f)
+            firstSlewedMorph(.4f), m.morph, .0001f)
     }
 
     @Test fun stepPlayheadContinuesOnBothDormantAndTrulyUnroutedClocks() {
@@ -236,6 +246,11 @@ class LiveModulationNoopFastPathTest {
         assertEquals(1.0, m.oscillatorPitchMultipliers[0], 0.0)
         assertEquals(0, m.oscillatorPitchMipMask)
         assertFalse(m.oscillatorModulationActive)
+    }
+
+    private fun firstSlewedMorph(target: Float): Float {
+        val alpha = (1.0 - kotlin.math.exp(-1.0 / (8_000 * 0.008))).toFloat()
+        return .5f + (target - .5f) * alpha
     }
 
     private fun configuredSynth(): OrbitalSynth =
