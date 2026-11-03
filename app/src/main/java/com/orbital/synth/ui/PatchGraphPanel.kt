@@ -102,19 +102,23 @@ fun PatchGraphPanel(
     val routeBank = remember(routes) {
         List(64) { routes.getOrNull(it) ?: ModulationRouteConfig() }
     }
-    val graph = remember(oscillators, lfos, routes, fxSlots, stepConfig) {
-        PatchGraphUiModel.build(oscillators, lfos, routes, fxSlots, stepConfig)
+    var targetBank by remember { mutableStateOf(PatchGraphTargetBank.GLOBAL) }
+    val graph = remember(oscillators, lfos, routes, fxSlots, stepConfig, targetBank) {
+        PatchGraphUiModel.build(oscillators, lfos, routes, fxSlots, stepConfig, targetBank)
     }
     var source by remember { mutableStateOf(ModSource.LFO1) }
     var selectedBus by remember { mutableStateOf(ModDestination.MORPH) }
     var selectedRoute by remember { mutableIntStateOf(0) }
     var routePage by remember { mutableIntStateOf(0) }
     var selectedFx by remember { mutableIntStateOf(0) }
-    var notice by remember { mutableStateOf("Touch a live source, then a glowing destination bus. Drag to connect.") }
+    var notice by remember { mutableStateOf(
+        "Select a source and a LIVE destination bank. Every visible cable is a real saved route."
+    ) }
 
     fun connect(from: ModSource, target: ModDestination) {
         source = from
         selectedBus = target
+        targetBank = PatchGraphUiModel.bankForTarget(target)
         val result = PatchGraphUiModel.findOrCreateLiveRoute(routeBank, from, target)
         if (result == null) {
             notice = "No empty patch slots available, or this is not a supported live source/target."
@@ -361,8 +365,9 @@ fun PatchGraphPanel(
                 )
             }
 
-            // This cable set is filtered to actual enabled LFO-source connections
-            // into six real PCM destinations. Reserved routes are NOT drawn.
+            // Show only current bank's real LFO/STEP→DSP cables, while the
+            // truth status below counts other-bank routes (never reserved).
+            // A source/layer with no possible audible output draws dormant.
             for (wire in graph.patchCables) {
                 val a = Offset(wire.from.x * width, wire.from.y * height)
                 val b = Offset(wire.to.x * width, wire.to.y * height)
@@ -456,8 +461,11 @@ fun PatchGraphPanel(
                         else 10.sp).toPx()
                     val word = when (node.kind) {
                         PatchNodeKind.FX_SLOT -> (node.slot + 1).toString()
-                        PatchNodeKind.MOD_BUS -> node.destination?.name
-                            ?.take(3) ?: node.label
+                        PatchNodeKind.MOD_BUS -> node.label.take(
+                            if (PatchGraphUiModel.oscillatorTargetIndex(
+                                    node.destination ?: ModDestination.MORPH
+                                ) >= 0) 5 else 3
+                        )
                         else -> node.label
                     }
                     native.drawText(
@@ -479,12 +487,15 @@ fun PatchGraphPanel(
         Text(notice, color = OrbitalPalette.Teal, fontSize = 10.sp,
             modifier = Modifier.testTag("patchGraphNotice"))
         Text(
-            graph.patchCables.size.toString() + " LFO/STEP CABLES DRAWN • " +
+            graph.patchCables.size.toString() + " LFO/STEP CABLES DRAWN IN " +
+                targetBank.label + " • " +
+                graph.hiddenLiveRouteCount + " LIVE ROUTES IN OTHER BANKS • " +
                 graph.stepRouteCount + " STEP ROUTES (" +
                 graph.dormantStepRouteCount + " DORMANT) • " +
-                graph.externalSourceRouteCount + " OTHER SOURCES • " +
-                graph.dormantLfoRouteCount + " DORMANT LFO CABLES • " +
-                graph.reservedRouteCount + " RESERVED ROUTES (NOT AUDIBLE)",
+                graph.externalSourceRouteCount + " OTHER SOURCES NOT DRAWN • " +
+                graph.dormantLfoRouteCount + " DORMANT LFO SOURCES • " +
+                graph.dormantOscillatorTargetRouteCount + " BYPASSED OSC TARGETS • " +
+                graph.reservedRouteCount + " RESERVED (NOT AUDIBLE)",
             color = OrbitalPalette.Muted,
             fontSize = 9.sp,
             modifier = Modifier.testTag("patchGraphTruthStatus"),
@@ -574,26 +585,87 @@ fun PatchGraphPanel(
                 )
             }
         }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            PatchGraphUiModel.liveTargets.chunked(3).forEach { targets ->
+        Text(
+            "REAL DSP TARGET BANK  /  SIX GLOBAL + EIGHT INDEPENDENT OSC LAYERS",
+            color = OrbitalPalette.Gold, fontSize = 10.sp,
+        )
+        // A 350dp phone cannot show 22 separate 48dp Canvas hit zones below
+        // the LFO field. Each of these nine semantic buttons opens an honest,
+        // reachable view of six global or exactly two per-layer DSP ports.
+        Column(
+            Modifier.fillMaxWidth().testTag("patchGraphDestinationBanks"),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            PatchGraphTargetBank.entries.chunked(3).forEach { banks ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    targets.forEach { target ->
+                    banks.forEach { bankChoice ->
                         Box(Modifier.weight(1f)) {
                             PatchChip(
-                                label = target.name,
-                                selected = selectedBus == target,
-                                tint = OrbitalPalette.Cyan,
-                                description = "Connect " + source.name + " to audible " + target.name,
-                                tag = "patchBus" + target.name,
+                                label = bankChoice.label,
+                                selected = targetBank == bankChoice,
+                                tint = if (bankChoice == PatchGraphTargetBank.GLOBAL)
+                                    OrbitalPalette.Cyan else OrbitalPalette.Violet,
+                                description = "Show real " + bankChoice.label +
+                                    " modulation destination bank",
+                                tag = "patchGraphBank" + bankChoice.name,
                                 fill = true,
-                            ) { connect(source, target) }
+                            ) {
+                                targetBank = bankChoice
+                                if (selectedBus !in PatchGraphUiModel.visibleTargets(bankChoice)) {
+                                    selectedBus = PatchGraphUiModel.visibleTargets(bankChoice).first()
+                                }
+                                notice = "Showing real DSP destination bank " +
+                                    bankChoice.label + ". Other live routes remain saved."
+                            }
                         }
                     }
                 }
             }
         }
         Text(
-            "Only six destinations reach PCM today. Other route IDs remain saved but RESERVED.",
+            "VISIBLE " + targetBank.label + " BUS PORTS • " +
+                (if (targetBank == PatchGraphTargetBank.GLOBAL)
+                    "PITCH · MORPH · CUTOFF · RESONANCE · AMP · PAN"
+                 else "GAIN 0–2× · PITCH ±6 SEMITONES") +
+                " • 48dp semantic touch controls",
+            color = OrbitalPalette.Teal, fontSize = 10.sp,
+            modifier = Modifier.testTag("patchGraphTargetBankStatus"),
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            PatchGraphUiModel.visibleTargets(targetBank)
+                .chunked(if (targetBank == PatchGraphTargetBank.GLOBAL) 3 else 2)
+                .forEach { targets ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        targets.forEach { target ->
+                            val oscillatorIndex = PatchGraphUiModel.oscillatorTargetIndex(target)
+                            val layerEnabled = oscillatorIndex < 0 ||
+                                oscillators.getOrNull(oscillatorIndex)?.enabled == true
+                            val label = if (oscillatorIndex < 0) target.name
+                                else "OSC " + (oscillatorIndex + 1) + " " +
+                                    PatchGraphUiModel.targetLabel(target)
+                            Box(Modifier.weight(1f)) {
+                                PatchChip(
+                                    label = label,
+                                    selected = selectedBus == target,
+                                    tint = if (oscillatorIndex < 0) OrbitalPalette.Cyan
+                                        else if (target.name.endsWith("_GAIN"))
+                                            OrbitalPalette.Gold else OrbitalPalette.Violet,
+                                    description = "Connect " + source.name +
+                                        " to real DSP " + label +
+                                        (if (layerEnabled) "" else
+                                            "; this oscillator is currently bypassed"),
+                                    tag = "patchBus" + target.name,
+                                    fill = true,
+                                ) { connect(source, target) }
+                            }
+                        }
+                    }
+                }
+        }
+        Text(
+            "All 22 destinations are DSP-capable, but require a driving source " +
+                "and nonzero depth. Disabled oscillator layers stay silent. " +
+                "Reserved route IDs are never shown as patchable buses.",
             color = OrbitalPalette.Gold, fontSize = 10.sp,
         )
 
@@ -656,6 +728,11 @@ fun PatchGraphPanel(
                                 selected = routeIndex == index,
                                 onClick = {
                                     selectedRoute = index
+                                    val savedDestination = routeBank[index].destination
+                                    if (savedDestination in PatchGraphUiModel.liveTargets) {
+                                        targetBank = PatchGraphUiModel.bankForTarget(savedDestination)
+                                        selectedBus = savedDestination
+                                    }
                                     notice = "Editing saved route " + (index + 1) +
                                         " / " + cable.status.caption + "."
                                 },
@@ -684,10 +761,16 @@ fun PatchGraphPanel(
             )
             Text(
                 if (!editedRoute.enabled) "EMPTY / BYPASSED"
-                else if (editedRoute.destination in PatchGraphUiModel.liveTargets)
-                    "LIVE PCM TARGET • " +
+                else if (editedRoute.destination in PatchGraphUiModel.liveTargets) {
+                    val oscillatorIndex =
+                        PatchGraphUiModel.oscillatorTargetIndex(editedRoute.destination)
+                    if (oscillatorIndex >= 0 &&
+                        oscillators.getOrNull(oscillatorIndex)?.enabled != true
+                    ) "REAL DSP TARGET • OSC " + (oscillatorIndex + 1) +
+                        " IS BYPASSED; CABLE DORMANT UNTIL ENABLED"
+                    else "REAL PCM TARGET • " +
                         PatchGraphUiModel.destinationEndpoint(editedRoute.destination)
-                else "RESERVED METADATA • THIS CABLE HAS NO AUDIO EFFECT",
+                } else "RESERVED METADATA • THIS CABLE HAS NO AUDIO EFFECT",
                 color = if (editedRoute.enabled &&
                     editedRoute.destination in PatchGraphUiModel.liveTargets
                 ) OrbitalPalette.Teal else OrbitalPalette.Muted,
@@ -717,6 +800,8 @@ fun PatchGraphPanel(
                     tag = "patchGraphRouteDestination",
                     modifier = Modifier.weight(1f),
                 ) { target ->
+                    targetBank = PatchGraphUiModel.bankForTarget(target)
+                    selectedBus = target
                     onRouteChange(routeIndex, editedRoute.copy(destination = target, enabled = true))
                 }
             }
@@ -740,9 +825,10 @@ fun PatchGraphPanel(
                 modifier = Modifier.testTag("patchGraphSourceTruth"),
             )
             Text(
-                "All 24 source IDs remain saved/editable. Only 8 LFOs and STEP are internally " +
-                    "generated; TOUCH sources need a gesture. The six live destinations " +
-                    "reach PCM only when their source supplies a nonzero signal.",
+                "All 24 source IDs stay saved/editable. Eight LFOs and STEP are " +
+                    "internally generated; TOUCH requires an actual gesture. All 22 " +
+                    "destinations reach DSP only when driven at nonzero depth; " +
+                    "disabled oscillator layers stay silent.",
                 color = OrbitalPalette.Muted, fontSize = 9.sp,
             )
             Text(
@@ -855,7 +941,7 @@ fun PatchGraphPanel(
 }
 
 /**
- * Explicitly exposes the *real* typed source, six audible destinations, and
+ * Explicitly exposes the real typed source, all 22 DSP destinations and
  * modulation shape. Large semantic targets keep route editing usable on phone.
  */
 @Composable
