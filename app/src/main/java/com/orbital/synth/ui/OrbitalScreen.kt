@@ -2187,22 +2187,22 @@ private fun FxPanel(
             }
             when (page) {
                 CompactFxPage.QUICK -> {
-                    ParameterSlider("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
-                    ParameterSlider("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
-                    ParameterSlider("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
+                    CompactFxControl("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
+                    CompactFxControl("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
+                    CompactFxControl("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
                 }
                 CompactFxPage.ENVELOPE -> {
-                    ParameterSlider("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
-                    ParameterSlider("DECAY", parameter(ParameterId.DECAY), ParameterId.DECAY, onParameterChange, "Transient fall")
-                    ParameterSlider("SUSTAIN", parameter(ParameterId.SUSTAIN), ParameterId.SUSTAIN, onParameterChange, "Held volume")
-                    ParameterSlider("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
+                    CompactFxControl("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
+                    CompactFxControl("DECAY", parameter(ParameterId.DECAY), ParameterId.DECAY, onParameterChange, "Transient fall")
+                    CompactFxControl("SUSTAIN", parameter(ParameterId.SUSTAIN), ParameterId.SUSTAIN, onParameterChange, "Held volume")
+                    CompactFxControl("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
                 }
                 CompactFxPage.MODULATION -> {
-                    ParameterSlider("LFO RATE", parameter(ParameterId.LFO_RATE), ParameterId.LFO_RATE, onParameterChange, "Modulation speed")
-                    ParameterSlider("LFO DEPTH", parameter(ParameterId.LFO_DEPTH), ParameterId.LFO_DEPTH, onParameterChange, "Modulation strength")
+                    CompactFxControl("LFO RATE", parameter(ParameterId.LFO_RATE), ParameterId.LFO_RATE, onParameterChange, "Modulation speed")
+                    CompactFxControl("LFO DEPTH", parameter(ParameterId.LFO_DEPTH), ParameterId.LFO_DEPTH, onParameterChange, "Modulation strength")
                 }
                 CompactFxPage.SPACE ->
-                    ParameterSlider("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
+                    CompactFxControl("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
             }
         }
     } else {
@@ -2219,6 +2219,96 @@ private fun FxPanel(
             ParameterSlider("LFO DEPTH", parameter(ParameterId.LFO_DEPTH), ParameterId.LFO_DEPTH, onParameterChange, "Modulation strength")
             ParameterSlider("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
         }
+    }
+}
+
+/**
+ * Lightweight FX bar for tiny landscape editors: bounded composition,
+ * tap/drag gesture control, and accessible incremental adjustments.
+ */
+@Composable
+private fun CompactFxControl(
+    title: String,
+    value: Float,
+    id: ParameterId,
+    onParameterChange: (ParameterId, Float) -> Unit,
+    description: String,
+) {
+    val update by rememberUpdatedState(onParameterChange)
+    val normalized = value.coerceIn(0f, 1f)
+    val tint = when (id) {
+        ParameterId.ATTACK, ParameterId.DECAY, ParameterId.SUSTAIN, ParameterId.RELEASE -> OrbitalPalette.Violet
+        ParameterId.LFO_RATE, ParameterId.LFO_DEPTH -> OrbitalPalette.Cyan
+        else -> OrbitalPalette.Gold
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .border(1.dp, OrbitalPalette.PanelEdge.copy(alpha = .45f), RoundedCornerShape(13.dp))
+            .background(OrbitalPalette.Panel.copy(alpha = .40f), RoundedCornerShape(13.dp))
+            .padding(horizontal = 9.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(title, color = OrbitalPalette.Text, fontSize = 9.sp,
+            letterSpacing = .55.sp, maxLines = 1, modifier = Modifier.width(78.dp))
+        Box(
+            Modifier
+                .weight(1f)
+                .height(48.dp)
+                .testTag("compactFxBar_" + id.name)
+                .semantics {
+                    contentDescription = "$title. $description. ${percent(normalized)}."
+                    customActions = listOf(
+                        CustomAccessibilityAction("Increase $title") {
+                            update(id, (normalized + .05f).coerceAtMost(1f)); true
+                        },
+                        CustomAccessibilityAction("Decrease $title") {
+                            update(id, (normalized - .05f).coerceAtLeast(0f)); true
+                        },
+                    )
+                }
+                .pointerInput(id) {
+                    detectTapGestures { position ->
+                        val inset = 8.dp.toPx()
+                        val length = (size.width - 2f * inset).coerceAtLeast(1f)
+                        update(id, ((position.x - inset) / length).coerceIn(0f, 1f))
+                    }
+                }
+                .pointerInput(id) {
+                    detectDragGestures(onDragStart = { offset ->
+                        val inset = 8.dp.toPx()
+                        val length = (size.width - 2f * inset).coerceAtLeast(1f)
+                        update(id, ((offset.x - inset) / length).coerceIn(0f, 1f))
+                    }) { change, _ ->
+                        val inset = 8.dp.toPx()
+                        val length = (size.width - 2f * inset).coerceAtLeast(1f)
+                        update(id, ((change.position.x - inset) / length).coerceIn(0f, 1f))
+                        change.consume()
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(Modifier.fillMaxWidth().height(18.dp)) {
+                val inset = 8.dp.toPx()
+                val usableWidth = (size.width - 2f * inset).coerceAtLeast(1f)
+                val y = size.height / 2f
+                val trackStart = Offset(inset, y)
+                drawLine(OrbitalPalette.PanelEdge.copy(alpha = .85f), trackStart,
+                    Offset(inset + usableWidth, y),
+                    strokeWidth = 5.dp.toPx(), cap = StrokeCap.Round)
+                drawLine(tint.copy(alpha = .9f), trackStart,
+                    Offset(inset + usableWidth * normalized, y),
+                    strokeWidth = 5.dp.toPx(), cap = StrokeCap.Round)
+                drawCircle(tint.copy(alpha = .20f), radius = 9.dp.toPx(),
+                    center = Offset(inset + usableWidth * normalized, y))
+                drawCircle(tint, radius = 4.6.dp.toPx(),
+                    center = Offset(inset + usableWidth * normalized, y))
+            }
+        }
+        Text(percent(normalized), color = tint, fontSize = 10.sp,
+            modifier = Modifier.width(34.dp), textAlign = TextAlign.End)
     }
 }
 
