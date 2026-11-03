@@ -171,6 +171,22 @@ class PatchGraphUiModelTest {
         assertNull(PatchGraphUiModel.hitNode(
             graph, lfo.x, lfo.y, 0f, 790f, 48f,
         ))
+        // No off-canvas source can be selected by an oversized hit radius.
+        assertNull(PatchGraphUiModel.hitNode(
+            graph, -.001f, lfo.y, 360f, 790f, 300f,
+        ))
+        assertNull(PatchGraphUiModel.hitNode(
+            graph, 1.001f, lfo.y, 360f, 790f, 300f,
+        ))
+        assertNull(PatchGraphUiModel.hitNode(
+            graph, lfo.x, 1.001f, 360f, 790f, 300f,
+        ))
+        assertNull(PatchGraphUiModel.hitNode(
+            graph, lfo.x, lfo.y, Float.NaN, 790f, 48f,
+        ))
+        assertNull(PatchGraphUiModel.hitNode(
+            graph, lfo.x, lfo.y, 360f, 790f, Float.POSITIVE_INFINITY,
+        ))
     }
 
     @Test fun orderedBypassedEffectsStillFormExactSerialDspSignalChain() {
