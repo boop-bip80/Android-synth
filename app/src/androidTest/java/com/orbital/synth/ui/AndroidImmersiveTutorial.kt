@@ -16,7 +16,8 @@ import java.util.ArrayDeque
  */
 internal object AndroidImmersiveTutorial {
     private const val TAG = "OrbitalImmersiveTutorial"
-    private const val MAX_VISITED_NODES = 180
+    private const val MAX_VISITED_NODES = 320
+    private const val MAX_NODES_PER_ROOT = 96
 
     fun acknowledgeOnlyIfSystemOverlayOwnsFocus(): Boolean {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
@@ -57,11 +58,19 @@ internal object AndroidImmersiveTutorial {
         val treeEvidence = mutableListOf<String>()
         var visited = 0
         for (root in roots) {
+            val rootPackage = root.packageName?.toString().orEmpty()
+            if (rootPackage != "com.android.systemui" && rootPackage != "android") {
+                if (treeEvidence.size < 26) treeEvidence += "ignored unrelated root: $rootPackage"
+                continue
+            }
             val nodes = ArrayDeque<AccessibilityNodeInfo>()
             nodes.add(root)
-            while (nodes.isNotEmpty() && visited < MAX_VISITED_NODES) {
+            var visitedThisRoot = 0
+            while (nodes.isNotEmpty() && visited < MAX_VISITED_NODES &&
+                visitedThisRoot < MAX_NODES_PER_ROOT) {
                 val node = nodes.removeFirst()
                 visited++
+                visitedThisRoot++
                 val packageName = node.packageName?.toString()
                     ?: root.packageName?.toString().orEmpty()
                 val className = node.className?.toString().orEmpty()
