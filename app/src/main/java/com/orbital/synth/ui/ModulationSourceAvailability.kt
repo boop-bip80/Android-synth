@@ -74,6 +74,17 @@ internal object ModulationSourceAvailability {
             ModulationConstellationModel.audibleTarget(route.destination) &&
             generatorEnabled(route.source, lfos, steps)
 
+    /**
+     * Compose must NOT schedule a perpetual UI frame clock if no cable can
+     * display illustrative periodic photons. This is only a picture gate;
+     * the audio-worker modulation clock remains independent.
+     */
+    fun hasAnimatedPeriodicRoute(
+        routes: List<ModulationRouteConfig>,
+        lfos: List<ModulationLfoConfig>,
+        steps: ModulationStepConfig?,
+    ): Boolean = routes.any { showConfiguredPhoton(it, lfos, steps) }
+
     /** Honest routing status, without claiming measured PCM or current sound. */
     fun routeStatus(
         route: ModulationRouteConfig,
