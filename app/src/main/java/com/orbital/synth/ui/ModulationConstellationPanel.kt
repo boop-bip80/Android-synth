@@ -16,8 +16,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -51,6 +53,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -180,51 +183,64 @@ fun ModulationConstellationPanel(
 
         Text("PATCH BAY  /  SELECT ANY OF 64 ROUTES", color = OrbitalPalette.Text,
             fontSize = 11.sp, letterSpacing = .7.sp)
-        Column(Modifier.testTag("modulationRouteGrid")) {
-            repeat(8) { row ->
-                Row(Modifier.fillMaxWidth()) {
-                    repeat(8) { col ->
-                        val index = row * 8 + col
-                        val route = patch[index]
-                        val selected = index == current
-                        // A destination being DSP-capable does NOT make a cable audible:
-                        // unwired, paused, touch-only and zero-depth slots stay dim.
-                        val live = ModulationSourceAvailability.showConfiguredPhoton(
-                            route, lanes, stepConfig,
-                        )
-                        val tint = when {
-                            !route.enabled -> OrbitalPalette.Muted
-                            live -> sourceTint(route.source)
-                            else -> sourceTint(route.source).copy(alpha = .55f)
-                        }
-                        Box(
-                            Modifier.weight(1f).padding(2.dp).height(39.dp)
-                                .border(
-                                    if (selected) 1.4.dp else .6.dp,
-                                    if (selected) OrbitalPalette.Gold else tint.copy(alpha = .45f),
-                                    RoundedCornerShape(7.dp),
+        BoxWithConstraints(Modifier.fillMaxWidth().testTag("modulationRouteGrid")) {
+            // maxWidth is the REAL inside-panel width after its 12dp side
+            // padding; six columns fit 350/360dp phones without sub-48dp
+            // thumbs. Larger screens can fit up to eight, reflowing all 64 IDs.
+            val columns = ModulationRouteGridSizing.columnsForWidth(maxWidth.value)
+            Column {
+                repeat(ModulationRouteGridSizing.rowsFor(64, columns)) { row ->
+                    Row(Modifier.fillMaxWidth()) {
+                        repeat(columns) { col ->
+                            val index = ModulationRouteGridSizing.index(row, col, columns)
+                            if (index >= ModulationRouteGridSizing.ROUTES) {
+                                // Final partial row keeps the SAME cell width.
+                                Spacer(Modifier.weight(1f))
+                            } else {
+                                val route = patch[index]
+                                val isSelected = index == current
+                                // A destination being DSP-capable does NOT make
+                                // this routed source audible.
+                                val live = ModulationSourceAvailability.showConfiguredPhoton(
+                                    route, lanes, stepConfig,
                                 )
-                                .background(
-                                    if (live) tint.copy(alpha = .15f)
-                                    else if (route.enabled) tint.copy(alpha = .06f)
-                                    else Color(0xFF061020), RoundedCornerShape(7.dp),
-                                )
-                                .clickable(role = Role.Button) { current = index }
-                                .semantics {
-                                    contentDescription = "Route " + (index + 1) +
-                                        (if (!route.enabled) ", empty"
-                                        else ", " + ModulationSourceAvailability.routeStatus(
-                                            route, lanes, stepConfig,
-                                        ))
+                                val tint = when {
+                                    !route.enabled -> OrbitalPalette.Muted
+                                    live -> sourceTint(route.source)
+                                    else -> sourceTint(route.source).copy(alpha = .55f)
                                 }
-                                .testTag("modRouteSlot" + index),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                ModulationConstellationModel.slotLabel(index),
-                                color = if (selected) OrbitalPalette.Gold else tint,
-                                fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-                            )
+                                Box(
+                                    Modifier.weight(1f).padding(2.dp).height(48.dp)
+                                        .border(
+                                            if (isSelected) 1.4.dp else .6.dp,
+                                            if (isSelected) OrbitalPalette.Gold
+                                            else tint.copy(alpha = .45f),
+                                            RoundedCornerShape(7.dp),
+                                        )
+                                        .background(
+                                            if (live) tint.copy(alpha = .15f)
+                                            else if (route.enabled) tint.copy(alpha = .06f)
+                                            else Color(0xFF061020), RoundedCornerShape(7.dp),
+                                        )
+                                        .clickable(role = Role.Button) { current = index }
+                                        .semantics {
+                                            selected = isSelected
+                                            contentDescription = "Route " + (index + 1) +
+                                                (if (!route.enabled) ", empty"
+                                                else ", " + ModulationSourceAvailability.routeStatus(
+                                                    route, lanes, stepConfig,
+                                                ))
+                                        }
+                                        .testTag("modRouteSlot" + index),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        ModulationConstellationModel.slotLabel(index),
+                                        color = if (isSelected) OrbitalPalette.Gold else tint,
+                                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
