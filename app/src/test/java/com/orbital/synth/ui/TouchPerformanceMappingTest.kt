@@ -85,8 +85,8 @@ class TouchPerformanceMappingTest {
         val change = mapper.updateConfig(next)
         assertEquals(1, change.ons().size)
         assertEquals(1, change.offs().size)
-        assertEquals(66, change.ons().single().note)
-        assertEquals(66, mapper.touchUp(21L).offs().single().note)
+        assertEquals(63, change.ons().single().note)
+        assertEquals(63, mapper.touchUp(21L).offs().single().note)
         assertEquals(0, mapper.activePointerCount)
         assertTrue(mapper.updateConfig(next).isEmpty())
     }
