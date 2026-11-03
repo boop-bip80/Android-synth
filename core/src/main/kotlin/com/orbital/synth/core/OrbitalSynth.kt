@@ -108,6 +108,12 @@ class OrbitalSynth(
     private val filterControlInterval = max(1, sampleRate / 800)
     private var filterControlFrame = 0
     private var wasFilterRoutingActive = false
+    // A held note's conservative wavetable mip/fade reservation must not change
+    // solely because the audio host chose 192 vs 512 frames per callback.
+    // A removed PITCH cable still de-clicks at audio rate; retain its +6-semitone
+    // alias-safety headroom until the sounding note and its tails are finished.
+    // This is worker-owned state, never read or written by the UI thread.
+    private var pitchMipReservationWhileSounding = false
     private val events = ConcurrentLinkedQueue<Event>()
     // Only note/source events reserve slots; hostile MIDI floods cannot retain an
     // unbounded queue or strand releases behind millions of stale note-ons.
@@ -573,7 +579,15 @@ class OrbitalSynth(
             voice.configureEngine(engineModel, character, cutoffHz.toFloat(),
                 resonance, wave, morph, updateFilter = !filterRoutingActive)
         }
+        // Reset BEFORE processing newly queued notes: a fresh dry note after
+        // full silence must never inherit an older note's mip reservation.
+        if (voices.none { it.active || it.hasTail }) {
+            pitchMipReservationWhileSounding = false
+        }
         drainEvents(glideSec, wave, morph)
+        if (liveModulation.pitchRouteActive && voices.any { it.active || it.hasTail }) {
+            pitchMipReservationWhileSounding = true
+        }
         for (slot in 0 until fxSlotCount) {
             blockFxSlots[slot] = fxSlots.get(slot)
             modularFx.setSlot(slot, blockFxSlots[slot])
@@ -582,7 +596,7 @@ class OrbitalSynth(
 
         // Reserve room for upward bend and vibrato when selecting anti-alias mip levels.
         val highestPitchMultiplier = 2.0.pow((max(0.0, pitchBend) +
-            modulationDepth * 0.5 + (if (liveModulation.pitchRouteActive) 6.0 else 0.0)) / 12.0)
+            modulationDepth * 0.5 + (if (pitchMipReservationWhileSounding) 6.0 else 0.0)) / 12.0)
         // Headroom is per routed oscillator, so an OSC1 pitch cable cannot
         // dull OSC2..OSC8's unrelated wavetable/mip selection.
         val oscillatorPitchMipMask = liveModulation.oscillatorPitchMipMask
