@@ -27,6 +27,11 @@ enum class ChordAssist(
 class ChordVoicing(
     /** Ascending MIDI notes to sound; the first is always the touched lane's note. */
     val notes: IntArray,
+    /**
+     * Lane index of each entry in [notes] (same order). Chord tones above the top of
+     * the grid have an index beyond the last lane; renderers must ignore those.
+     */
+    val lanes: IntArray,
     /** Display symbol such as "Dm", "G7" or "C" (blank chords fall back to a note name). */
     val symbol: String,
     /** Roman numeral inside the key, e.g. "ii", "V7", "vii°"; empty for non-chord voicings. */
@@ -43,17 +48,20 @@ object ChordVoicer {
     fun voice(grid: DiatonicGrid, lane: Int, assist: ChordAssist): ChordVoicing {
         val safeLane = lane.coerceIn(0, grid.laneCount - 1)
         val steps = stepsFor(grid, safeLane, assist)
-        val notes = steps.map { grid.midiForStep(safeLane + it) }
-            .filter { it in 0..127 }
-            .distinct()
-            .toIntArray()
+        // Pair each tone with its lane, drop illegal pitches and duplicates together.
+        val tones = steps.map { (safeLane + it) to grid.midiForStep(safeLane + it) }
+            .filter { it.second in 0..127 }
+            .distinctBy { it.second }
+        val notes = tones.map { it.second }.toIntArray()
+        val toneLanes = tones.map { it.first }.toIntArray()
         val root = notes.firstOrNull() ?: grid.midiForLane(safeLane)
         val rootName = grid.key.nameOf(root)
         val symbol = symbolFor(rootName, notes, root)
         val roman = if (assist == ChordAssist.TRIAD || assist == ChordAssist.SEVENTH) {
             romanFor(grid, safeLane, notes, root)
         } else ""
-        return ChordVoicing(if (notes.isEmpty()) intArrayOf(root) else notes, symbol, roman)
+        return if (notes.isEmpty()) ChordVoicing(intArrayOf(root), intArrayOf(safeLane), symbol, roman)
+        else ChordVoicing(notes, toneLanes, symbol, roman)
     }
 
     private fun stepsFor(grid: DiatonicGrid, lane: Int, assist: ChordAssist): IntArray {
