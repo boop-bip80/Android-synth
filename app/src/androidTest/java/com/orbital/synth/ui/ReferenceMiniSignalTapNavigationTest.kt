@@ -121,13 +121,14 @@ class ReferenceMiniSignalTapNavigationTest {
      *
      * Crucially a target above the editor requires a DOWN swipe; below it
      * requires UP. A wholly clipped Compose node may report Rect.Zero, so
-     * retain the last observed edge. Small 30..60px moves avoid flinging an
-     * already revealed 48dp chip out of view on high-density phones.
+     * retain the last observed edge. When a real 48dp target is clipped at
+     * that edge, move by its measured missing height plus touch slop so even
+     * a 4px sliver becomes a full physical tap surface.
      */
     private fun physicallyRevealGardenAction(tag: String) {
         val editor = compose.onNodeWithTag("soundEditorScroll").assertIsDisplayed()
         var lastObservedEdge = 1 // +1 below the viewport; -1 above.
-        repeat(16) { attempt ->
+        repeat(24) { attempt ->
             val target = compose.onNodeWithTag(tag)
             val editorRect = editor.fetchSemanticsNode().boundsInRoot
             val targetRect = try {
@@ -142,18 +143,18 @@ class ReferenceMiniSignalTapNavigationTest {
             val missingBounds = targetRect.width <= 1f || targetRect.height <= 1f
             val travel = when {
                 missingBounds ->
-                    if (lastObservedEdge < 0) 60f else -60f
+                    if (lastObservedEdge < 0) 80f else -80f
                 targetRect.top < editorRect.top ||
                     (targetRect.height < 48f * density - 1f &&
                         targetRect.top <= editorRect.top + 5f) -> {
                     lastObservedEdge = -1
-                    (editorRect.top - targetRect.top + 3f).coerceIn(30f, 60f)
+                    (48f * density - targetRect.height + 24f).coerceIn(30f, 180f)
                 }
                 targetRect.bottom > editorRect.bottom ||
                     (targetRect.height < 48f * density - 1f &&
                         targetRect.bottom >= editorRect.bottom - 5f) -> {
                     lastObservedEdge = 1
-                    -(targetRect.bottom - editorRect.bottom + 3f).coerceIn(30f, 60f)
+                    -(48f * density - targetRect.height + 24f).coerceIn(30f, 180f)
                 }
                 else -> {
                     // The node is geometrically inside the viewport but not
@@ -166,8 +167,8 @@ class ReferenceMiniSignalTapNavigationTest {
                     return
                 }
             }
-            check(travel.isFinite() && kotlin.math.abs(travel) in 30f..60f) {
-                "Physical mini LFO swipe must be finite and 30..60px: " + travel
+            check(travel.isFinite() && kotlin.math.abs(travel) in 30f..180f) {
+                "Physical mini LFO swipe must be finite and 30..180px: " + travel
             }
             android.util.Log.i("MiniLfoReveal", "attempt=" + attempt + " tag=" + tag +
                 " target=" + targetRect + " editor=" + editorRect +
@@ -185,7 +186,7 @@ class ReferenceMiniSignalTapNavigationTest {
             .fetchSemanticsNode().boundsInRoot
         val editorRect = editor.fetchSemanticsNode().boundsInRoot
         assertTrue(
-            "Real LFO action must be fully touchable >=48dp after 16 physical " +
+            "Real LFO action must be fully touchable >=48dp after 24 physical " +
                 "bidirectional swipes: " + tag + " editor=" + editorRect + " target=" + target,
             fullyInEditor(editorRect, target, 48f),
         )

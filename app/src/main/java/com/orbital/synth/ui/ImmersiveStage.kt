@@ -366,7 +366,14 @@ internal fun ImmersiveStage(
                         var sampleRevision = 0L
                         var expressionOwnerId: Long? = null
                         fun safePressure(raw: Float): Float =
-                            if (raw.isFinite()) raw else 1f
+                            // AndroidX's real MotionEvent injector does not
+                            // populate PointerCoords.pressure; Android devices
+                            // without force sensors can likewise report 0.
+                            // A *pressed* finger still needs a live TOUCH_P
+                            // source and visual intensity. Preserve any
+                            // positive measured pressure when available.
+                            if (raw.isFinite() && raw > 0f) raw.coerceIn(0f, 1f)
+                            else 1f
                         fun normalizeX(x: Float): Float =
                             (x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                         fun normalizeY(y: Float): Float =

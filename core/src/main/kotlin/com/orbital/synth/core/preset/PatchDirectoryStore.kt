@@ -1,13 +1,14 @@
 package com.orbital.synth.core.preset
 
-import java.io.IOException
 import java.nio.charset.StandardCharsets
-import java.nio.file.FileAlreadyExistsException
+import java.io.IOException
+import java.nio.channels.FileChannel
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 
 /**
  * Local patch persistence for a caller-supplied private directory.
@@ -15,6 +16,12 @@ import java.nio.file.StandardCopyOption
  * No Android Context dependency and no hidden background I/O.
  */
 class PatchDirectoryStore(private val directory: Path) {
+    private companion object {
+        // FileChannel.lock() throws OverlappingFileLockException for parallel
+        // callers in the same JVM; serialize those before taking the disk lock.
+        val saveNewProcessLock = Any()
+    }
+
     private fun pathFor(id: String): Path {
         require(SynthPatch.validId(id)) { "Unsafe patch id" }
         return directory.resolve(id + ".orbital")
@@ -50,13 +57,15 @@ class PatchDirectoryStore(private val directory: Path) {
     }
 
     /**
-     * Publish a new patch atomically and exclusively across store instances.
-     * A same-directory hard link exposes only a complete temp file and fails if
-     * the destination already exists (including corrupt files or symlinks).
-     * Unlike ATOMIC_MOVE, link creation never replaces a competing destination.
+     * Exclusively publish one *complete* new patch without ever replacing a
+     * patch already saved through this store (including another process).
      *
-     * Requires hard-link support on the private filesystem; an unsupported
-     * provider fails closed rather than exposing a partially written patch.
+     * Android API35 SELinux denies hard-link creation by untrusted apps, even
+     * in their own private files directory. An ordinary atomic rename is
+     * permitted. A persistent same-directory advisory lock serializes the
+     * existence check and rename across repository instances/processes, while
+     * a JVM mutex prevents overlapping locks inside this process. The app's
+     * private patch directory is not writable by uncooperative applications.
      */
     fun saveNew(patch: SynthPatch): Boolean {
         rejectSymlinkedBank()
@@ -68,13 +77,29 @@ class PatchDirectoryStore(private val directory: Path) {
         val temporary = Files.createTempFile(directory, patch.id + "-", ".tmp")
         try {
             Files.write(temporary, PatchCodec.encode(patch).toByteArray(StandardCharsets.UTF_8))
-            return try {
-                Files.createLink(target, temporary)
-                true
-            } catch (_: FileAlreadyExistsException) {
-                false
-            } catch (error: UnsupportedOperationException) {
-                throw IOException("Patch filesystem does not support atomic no-clobber writes", error)
+            // Keep this file: deleting a lock file allows two processes to
+            // lock different inodes under the same pathname (a split lock).
+            val lockPath = directory.resolve(".patch-save.lock")
+            return synchronized(saveNewProcessLock) {
+                FileChannel.open(
+                    lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                    LinkOption.NOFOLLOW_LINKS,
+                ).use { channel ->
+                    channel.lock().use {
+                        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                            false
+                        } else {
+                            try {
+                                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE)
+                            } catch (error: AtomicMoveNotSupportedException) {
+                                // Never expose partially written content by
+                                // substituting a non-atomic copy/move.
+                                throw IOException("Patch filesystem cannot atomically publish", error)
+                            }
+                            true
+                        }
+                    }
+                }
             }
         } finally {
             Files.deleteIfExists(temporary)
@@ -93,11 +118,7 @@ class PatchDirectoryStore(private val directory: Path) {
         return patch
     }
 
-    /**
-     * Reserve existing on-disk IDs without decoding patch data.
-     * Malformed or newer-version files must keep their filenames reserved so a
-     * save/import cannot overwrite user data merely because it cannot be read.
-     */
+    /** Reserve even corrupt/unreadable filenames so a save cannot reuse them. */
     fun storedIds(): Set<String> {
         rejectSymlinkedBank()
         if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return emptySet()

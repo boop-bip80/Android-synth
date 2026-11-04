@@ -1,6 +1,8 @@
 package com.orbital.synth.ui
 
+import android.animation.ValueAnimator
 import android.graphics.Color as PixelColor
+import android.os.ParcelFileDescriptor
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
@@ -9,8 +11,11 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import kotlin.math.abs
+import org.junit.After
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,6 +29,32 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class StageFlickPhysicalPixelsTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    private var previousAnimatorScale = "0.0"
+
+    private fun shell(command: String): String =
+        ParcelFileDescriptor.AutoCloseInputStream(
+            InstrumentationRegistry.getInstrumentation().uiAutomation
+                .executeShellCommand(command),
+        ).bufferedReader().use { it.readText().trim() }
+
+    @Before fun enableRealAndroidMotionForFlickProof() {
+        val old = shell("settings get global animator_duration_scale")
+        previousAnimatorScale = old.toFloatOrNull()
+            ?.takeIf { it.isFinite() && it in 0f..10f }?.toString() ?: "0.0"
+        // The CI emulator runner deliberately sets global animation scale
+        // to 0. This test proves an animation and must explicitly turn it ON
+        // for its own run, without changing the product's reduce-motion rule.
+        shell("settings put global animator_duration_scale 1.0")
+        compose.waitUntil(8_000L) { ValueAnimator.areAnimatorsEnabled() }
+        assertTrue("Real Android motion must be enabled for physical flick proof",
+            ValueAnimator.areAnimatorsEnabled())
+    }
+
+    @After fun restoreAndroidMotionPreference() {
+        compose.mainClock.autoAdvance = true
+        shell("settings put global animator_duration_scale $previousAnimatorScale")
+    }
 
     @Test fun slowAndFastDragWithSamePressureProduceDifferentPhysicalLightShapes() {
         compose.setContent {

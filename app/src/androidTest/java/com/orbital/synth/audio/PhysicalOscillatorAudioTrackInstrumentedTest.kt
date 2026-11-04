@@ -8,7 +8,6 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
@@ -332,11 +331,18 @@ class PhysicalOscillatorAudioTrackInstrumentedTest {
             assertTrue("Both noise colors must still produce actual sound",
                 white.second > .003f && brown.second > .003f)
             assertTrue("Real AudioTrack must have no fatal error", output.fatalErrorMessage == null)
-            // The original performance keyboard must remain anchored while
-            // oscillator sound design and audio telemetry are both live.
-            compose.onNodeWithContentDescription(
-                "Multitouch piano keyboard", substring = true,
-            ).assertIsDisplayed()
+            // SOUND intentionally has the twelve-strip liquid-glass keybed,
+            // not PLAY/FX's legacy OrbitalKeyboard description. Require the
+            // actual SOUND performance surface to remain physically pinned
+            // below the scrolling oscillator editor while audio is held.
+            val keybed = compose.onNodeWithTag("referencePerformanceKeybed")
+                .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            val editor = compose.onNodeWithTag("soundEditorScroll")
+                .fetchSemanticsNode().boundsInRoot
+            val density = compose.activity.resources.displayMetrics.density
+            assertTrue("SOUND piano must remain anchored below the scrolling rack",
+                keybed.top >= editor.bottom - 1f &&
+                    keybed.height >= 96f * density - 1f)
             assertRealForegroundAndroidPixels()
             Log.i(TAG, "phase=physical-finger-to-audiotrack-success")
         } finally {

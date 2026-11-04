@@ -325,21 +325,29 @@ fun ModulationConstellationPanel(
                 color = if (chosen.depth >= 0f) OrbitalPalette.Cyan else OrbitalPalette.Violet,
                 fontSize = 12.sp, fontFamily = FontFamily.Monospace,
             )
-            Slider(
-                value = chosen.depth.coerceIn(-4f, 4f),
-                onValueChange = { onRouteChange(current, chosen.copy(depth = it, enabled = true)) },
-                valueRange = -4f..4f,
-                // Material3's stock Slider can measure only 44dp on this
-                // device. Give the *actual* interactive node a 48dp minimum
-                // so it remains physically tappable in the 350dp patch bay.
-                modifier = Modifier.fillMaxWidth().testTag("modulationDepthSlider")
-                    .heightIn(min = 48.dp),
-                colors = SliderDefaults.colors(
-                    thumbColor = OrbitalPalette.Gold,
-                    activeTrackColor = OrbitalPalette.Cyan,
-                    inactiveTrackColor = OrbitalPalette.DeepBlue,
-                ),
-            )
+            // Material3's intrinsic Slider semantics were still 44dp tall
+            // when heightIn was placed directly on the control. Merge its
+            // real SetProgress semantics onto a 56dp layout/hit surface: the
+            // outer tagged node now occupies the full physical finger target
+            // in both 350dp and 360dp viewports.
+            Box(
+                modifier = Modifier.fillMaxWidth().height(56.dp)
+                    .semantics(mergeDescendants = true) {}
+                    .testTag("modulationDepthSlider"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Slider(
+                    value = chosen.depth.coerceIn(-4f, 4f),
+                    onValueChange = { onRouteChange(current, chosen.copy(depth = it, enabled = true)) },
+                    valueRange = -4f..4f,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = OrbitalPalette.Gold,
+                        activeTrackColor = OrbitalPalette.Cyan,
+                        inactiveTrackColor = OrbitalPalette.DeepBlue,
+                    ),
+                )
+            }
             Text(
                 ModulationConstellationModel.destinationStatus(chosen.destination),
                 color = if (ModulationConstellationModel.audibleTarget(chosen.destination))
