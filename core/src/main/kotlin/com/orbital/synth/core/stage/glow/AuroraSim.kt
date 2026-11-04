@@ -622,6 +622,8 @@ class AuroraSim(seed: Long = 7L) {
     private val sy = FloatArray(STRING_SAMPLES + 1)
     private val tx = FloatArray(TRAIL)
     private val ty = FloatArray(TRAIL)
+    private val rx = FloatArray(RIBBON_POINTS)
+    private val ry = FloatArray(RIBBON_POINTS)
     private val gx = FloatArray(GUIDE_MAX * GUIDE_SEGMENT_SAMPLES + 1)
     private val gy = FloatArray(GUIDE_MAX * GUIDE_SEGMENT_SAMPLES + 1)
 
@@ -654,7 +656,7 @@ class AuroraSim(seed: Long = 7L) {
     private fun drawNebula(c: GlowCanvas, pal: AuroraPalette, vis: Float, low: Boolean) {
         val lowEnergy = audioLow * 0.5f + audioRms * 0.4f
         val drift = if (reducedMotion) 0f else t
-        val a = 0.07f * vis + lowEnergy * 0.10f
+        val a = 0.10f * vis + lowEnergy * 0.12f
         if (a > 0.004f) {
             c.glow(w * (0.5f + 0.30f * sin(drift * 0.045f)), h * (0.34f + 0.10f * cos(drift * 0.037f)),
                 w * 0.95f, pal.ambient, a)
@@ -670,6 +672,34 @@ class AuroraSim(seed: Long = 7L) {
                 val breathe = 0.7f + 0.3f * sin(drift * 0.4f + k * 1.7f)
                 c.vband(cx, w * 0.2f, 0f, h, rgb, curtain * breathe)
             }
+        }
+        drawAuroraRibbons(c, pal, vis)
+    }
+
+    /**
+     * Slow luminous ribbons of key-coloured light drifting across the field, the "aurora" of the
+     * name. They fill the idle surface with depth and swell with the low end of the music.
+     */
+    private fun drawAuroraRibbons(c: GlowCanvas, pal: AuroraPalette, vis: Float) {
+        val energy = audioLow * 0.6f + audioMid * 0.3f + audioRms * 0.3f
+        val strength = 0.125f * vis + energy * 0.14f
+        if (strength < 0.006f) return
+        val drift = if (reducedMotion) 0f else t
+        for (k in 0 until 3) {
+            val rgb = when (k) { 0 -> pal.root; 1 -> pal.fifth; else -> pal.third }
+            val baseY = h * (0.22f + 0.27f * k)
+            val phase = drift * (0.05f + 0.02f * k) + k * 2.1f
+            for (i in 0 until RIBBON_POINTS) {
+                val u = i / (RIBBON_POINTS - 1f)
+                val x = w * u
+                val wave = sin(u * 5.2f + phase * 2.4f) * 0.55f + sin(u * 2.3f - phase * 1.7f) * 0.45f
+                rx[i] = x
+                ry[i] = baseY + wave * h * (0.05f + 0.025f * energy)
+            }
+            val breathe = 0.65f + 0.35f * sin(drift * 0.35f + k * 1.3f)
+            c.polyline(rx, ry, RIBBON_POINTS, rgb, strength * 0.55f * breathe, 46f * dp)
+            c.polyline(rx, ry, RIBBON_POINTS, rgb, strength * 0.9f * breathe, 15f * dp)
+            c.polyline(rx, ry, RIBBON_POINTS, GlowColor.mix(rgb, GlowColor.WHITE, 0.45f), strength * 1.2f * breathe, 2.4f * dp)
         }
     }
 
@@ -973,6 +1003,7 @@ class AuroraSim(seed: Long = 7L) {
         const val GUIDE_SEGMENT_SAMPLES = 9
         const val FIREWORKS = 12
         const val STRING_SAMPLES = 44
+        const val RIBBON_POINTS = 28
         const val RIPPLE_SECONDS = 1.0f
         const val POPUP_SECONDS = 1.25f
         const val PULSE_SECONDS = 0.8f
