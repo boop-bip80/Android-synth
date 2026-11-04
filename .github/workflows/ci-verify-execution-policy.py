@@ -12,6 +12,7 @@ import re
 
 GROUP_LINE = "  group: android-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.number) || format('v2-{0}', github.ref) }}"
 BUILD_GUARD = "    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}"
+EMULATOR_GUARD = "    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}"
 WORKFLOW_NAME = "Android — build, JVM tests and emulator"
 SUITES = ("general-0", "general-1", "compact", "stage", "visuals", "compact350", "restart")
 
@@ -21,17 +22,19 @@ def require(condition, message):
         raise AssertionError(message)
 
 
-def modeled_policy(event_name, ref, number=None, action=None):
+def modeled_policy(event_name, ref, number=None, action=None, draft=False):
     """Mirror only the documented expression's event contract."""
     if event_name == "pull_request":
         require(isinstance(number, int) and number > 0, "PR event needs its top-level number")
         ref = f"refs/pull/{number}/merge"
     else:
         ref = f"v2-{ref}"
+    build = event_name != "pull_request" or action != "closed"
     return (
         f"android-ci-{WORKFLOW_NAME}-{ref}",
         event_name != "workflow_dispatch",
-        event_name != "pull_request" or action != "closed",
+        build,
+        build and (event_name != "pull_request" or not draft),
     )
 
 
@@ -39,6 +42,8 @@ def verify(workflow, compact):
     require(f"name: {WORKFLOW_NAME}\n" in workflow, "Workflow name changed; audit group compatibility")
     require(GROUP_LINE in workflow.splitlines(), "PR grouping expression drifted from tested model")
     require(BUILD_GUARD in workflow.splitlines(), "Closed PR must skip build and its dependent jobs")
+    emulator_job = workflow.split("\n  emulator:\n", 1)[1].split("\n  verify_sharded_coverage:\n", 1)[0]
+    require(EMULATOR_GUARD in emulator_job.splitlines(), "Draft PRs must not consume emulator runners")
     require(
         "  cancel-in-progress: " + "$" + "{{ github.event_name != 'workflow_dispatch' }}" in workflow,
         "Keep latest-wins main/PR behavior and noncancelling dispatch",
@@ -49,8 +54,8 @@ def verify(workflow, compact):
     require(trigger is not None, "Explicit PR actions required for close-event grouping")
     require(
         tuple(value.strip() for value in trigger.group(1).split(",")) ==
-        ("opened", "synchronize", "reopened", "closed"),
-        "Preserve prior PR defaults and add only closed",
+        ("opened", "synchronize", "reopened", "ready_for_review", "converted_to_draft", "closed"),
+        "Ready PRs must trigger full qualification; draft transitions must be handled",
     )
     require("permissions:\n  contents: read\n" in workflow, "Do not expand token permissions")
     require(not re.search(r"(?m)^\s+actions:\s*write\s*$", workflow), "No cleanup token elevation")
@@ -58,20 +63,24 @@ def verify(workflow, compact):
     # Both closed cases must select the old PR group even when GitHub gives a
     # merged close event refs/heads/main. An unrelated PR has its own group.
     cases = (
-        ("main push", "push", "refs/heads/main", None, None, "v2-refs/heads/main", True, True),
-        ("PR opened", "pull_request", "refs/pull/189/merge", 189, "opened", "refs/pull/189/merge", True, True),
-        ("PR sync", "pull_request", "refs/pull/189/merge", 189, "synchronize", "refs/pull/189/merge", True, True),
-        ("PR reopened", "pull_request", "refs/pull/189/merge", 189, "reopened", "refs/pull/189/merge", True, True),
-        ("PR closed unmerged", "pull_request", "refs/pull/189/merge", 189, "closed", "refs/pull/189/merge", True, False),
-        ("PR closed merged", "pull_request", "refs/heads/main", 189, "closed", "refs/pull/189/merge", True, False),
-        ("other PR", "pull_request", "refs/pull/192/merge", 192, "opened", "refs/pull/192/merge", True, True),
-        ("other PR merged", "pull_request", "refs/heads/main", 192, "closed", "refs/pull/192/merge", True, False),
-        ("manual main", "workflow_dispatch", "refs/heads/main", None, None, "v2-refs/heads/main", False, True),
-        ("manual branch", "workflow_dispatch", "refs/heads/work", None, None, "v2-refs/heads/work", False, True),
+        # name, event, ref, PR number, action, draft, group suffix, cancel, build, emulator
+        ("main push", "push", "refs/heads/main", None, None, False, "v2-refs/heads/main", True, True, True),
+        ("PR opened draft", "pull_request", "refs/pull/189/merge", 189, "opened", True, "refs/pull/189/merge", True, True, False),
+        ("PR sync draft", "pull_request", "refs/pull/189/merge", 189, "synchronize", True, "refs/pull/189/merge", True, True, False),
+        ("PR reopened draft", "pull_request", "refs/pull/189/merge", 189, "reopened", True, "refs/pull/189/merge", True, True, False),
+        ("PR made ready", "pull_request", "refs/pull/189/merge", 189, "ready_for_review", False, "refs/pull/189/merge", True, True, True),
+        ("PR sync ready", "pull_request", "refs/pull/189/merge", 189, "synchronize", False, "refs/pull/189/merge", True, True, True),
+        ("PR returned to draft", "pull_request", "refs/pull/189/merge", 189, "converted_to_draft", True, "refs/pull/189/merge", True, True, False),
+        ("PR closed unmerged", "pull_request", "refs/pull/189/merge", 189, "closed", False, "refs/pull/189/merge", True, False, False),
+        ("PR closed merged", "pull_request", "refs/heads/main", 189, "closed", False, "refs/pull/189/merge", True, False, False),
+        ("other PR ready", "pull_request", "refs/pull/192/merge", 192, "opened", False, "refs/pull/192/merge", True, True, True),
+        ("other PR merged", "pull_request", "refs/heads/main", 192, "closed", False, "refs/pull/192/merge", True, False, False),
+        ("manual main", "workflow_dispatch", "refs/heads/main", None, None, False, "v2-refs/heads/main", False, True, True),
+        ("manual branch", "workflow_dispatch", "refs/heads/work", None, None, False, "v2-refs/heads/work", False, True, True),
     )
-    for label, event, ref, number, action, expected_ref, cancel, build in cases:
-        actual = modeled_policy(event, ref, number, action)
-        expected = (f"android-ci-{WORKFLOW_NAME}-{expected_ref}", cancel, build)
+    for label, event, ref, number, action, draft, expected_ref, cancel, build, emulator in cases:
+        actual = modeled_policy(event, ref, number, action, draft)
+        expected = (f"android-ci-{WORKFLOW_NAME}-{expected_ref}", cancel, build, emulator)
         require(actual == expected, f"{label}: {actual!r} != {expected!r}")
 
 
