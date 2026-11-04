@@ -49,6 +49,21 @@ jobs:
         run: bash -n .github/workflows/ci-emulator.sh && bash -n .github/workflows/ci-process-restart.sh && bash -n .github/workflows/ci-compact350.sh && bash -n .github/workflows/ci-landscape.sh && bash -n .github/workflows/ci-compact-geometry.sh && bash -n .github/workflows/ci-immersive-stage.sh && bash -n .github/workflows/ci-oscillator-workbench.sh && bash -n .github/workflows/ci-live-stage-framebuffer.sh && bash -n .github/workflows/ci-stage-bootstrap.sh && python3 -m py_compile .github/workflows/ci-verify-android-shards.py && python3 .github/workflows/ci-verify-execution-policy.py
       - name: Host tests, lint, app APK and instrumentation test APK
         run: gradle :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-daemon
+      # Failure-only: surface the Kotlin compiler's own error lines (and the first failing
+      # tasks) as concise annotations, so a red build is readable without scrolling through
+      # thousands of Gradle stack frames. It re-runs only the compile tasks (cached otherwise).
+      - name: Diagnose build failures (concise compiler errors)
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          gradle :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin \
+            --continue --no-daemon --console=plain > compile-diagnostic.log 2>&1
+          echo "== Kotlin compiler errors =="
+          grep -E '^e: ' compile-diagnostic.log | sed 's#file:///home/runner/work/Android-synth/Android-synth/##' | sort -u | head -80
+          echo "== Failed tasks =="
+          grep -E "Execution failed for task|What went wrong" -A1 compile-diagnostic.log | head -30
+          exit 0
       - name: Upload debug APK
         if: always()
         uses: actions/upload-artifact@v4
