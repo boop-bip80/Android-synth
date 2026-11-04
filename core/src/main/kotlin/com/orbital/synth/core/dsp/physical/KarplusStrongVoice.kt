@@ -53,6 +53,9 @@ class KarplusStrongVoice(val sampleRate: Int) {
     private var dcOut = 0f
 
     private var noteFrequency = 440.0
+    // A few milliseconds of pick noise at the very start keep the attack crisp even though the
+    // tonal part of the string is pre-settled (see settleExcitation).
+    private var clickLevel = 0f
     private var lastFrequency = -1.0
     private var velocity = 0.8f
     private var noiseState = 0x9E3779B9.toInt()
@@ -87,6 +90,8 @@ class KarplusStrongVoice(val sampleRate: Int) {
         retuneLoop(noteFrequency)
         strikeCount++
         exciteString()
+        settleExcitation()
+        clickLevel = 0.22f * (0.25f + 0.75f * brightness) * (0.15f + 0.85f * this.velocity)
     }
 
     /** Legato retune: the string keeps ringing; only its pitch moves. */
@@ -131,7 +136,21 @@ class KarplusStrongVoice(val sampleRate: Int) {
         }
         line[writeIndex] = feedback
         writeIndex = if (writeIndex + 1 >= size) 0 else writeIndex + 1
-        return delayed.coerceIn(-2f, 2f)
+        var out = delayed
+        if (clickLevel > 1e-4f) {
+            out += nextNoise() * clickLevel
+            clickLevel *= 0.9985f
+        }
+        // A pluck is crest-heavy: a noisy, peaky attack over a quieter tonal sustain. Make-up gain
+        // lifts the sustain to sit alongside oscillators, and the soft saturation tames the
+        // attack peaks (a gentle, pleasant pluck compression) so they never hit the limiter.
+        val lifted = out * MAKEUP_GAIN
+        return (lifted / (1f + SATURATION * abs(lifted))).coerceIn(-2f, 2f)
+    }
+
+    private companion object {
+        const val MAKEUP_GAIN = 3.4f
+        const val SATURATION = 0.45f
     }
 
     private fun wrap(index: Int, size: Int): Int {
@@ -163,6 +182,56 @@ class KarplusStrongVoice(val sampleRate: Int) {
         loopGain = min(0.99995, perPass / max(lowpassGain, 1e-3)).toFloat()
     }
 
+    /**
+     * A raw noise burst spreads its energy over every partial, and the loop's low-pass then
+     * kills most of it within a few passes, which would leave only a sliver of level in the
+     * tone that actually sustains. Real Karplus-Strong implementations compensate; here the
+     * loop is run for two periods *before* the first sample is heard (keeping the crisp,
+     * bright start for bright settings, mellowing dark ones), and the line is then
+     * normalized so loudness is consistent from the softest to the brightest string.
+     */
+    private fun settleExcitation() {
+        val size = line.size
+        // Run for a fixed span of TIME, not periods: high partials of a raw noise burst take a
+        // fixed number of milliseconds to die whatever the pitch, and the level must be measured
+        // only after they are gone or the sustaining tone ends up far quieter than the attack.
+        val passes = min(
+            (sampleRate * 0.09).toInt(),
+            max((lineDelay * 2.0).toInt() + 8, (sampleRate * 0.05).toInt()),
+        )
+        repeat(passes) {
+            val whole = floor(lineDelay).toInt()
+            val t = (lineDelay - whole).toFloat()
+            val base = writeIndex - whole
+            val qm1 = line[wrap(base + 1, size)]
+            val q0 = line[wrap(base, size)]
+            val q1 = line[wrap(base - 1, size)]
+            val q2 = line[wrap(base - 2, size)]
+            val delayed = qm1 * (-t * (t - 1f) * (t - 2f) / 6f) +
+                q0 * ((t + 1f) * (t - 1f) * (t - 2f) / 2f) +
+                q1 * (-(t + 1f) * t * (t - 2f) / 2f) +
+                q2 * ((t + 1f) * t * (t - 1f) / 6f)
+            filterState += lowpassCoefficient * (delayed - filterState)
+            var feedback = filterState * loopGain
+            val blocked = feedback - dcIn + 0.9995f * dcOut
+            dcIn = feedback
+            dcOut = blocked
+            feedback = blocked
+            line[writeIndex] = if (feedback.isFinite()) feedback else 0f
+            writeIndex = if (writeIndex + 1 >= size) 0 else writeIndex + 1
+        }
+        // Normalize the settled string (a linear system: state scales with the line).
+        var peak = 1e-6f
+        val span = min(size, max(4, ceil(lineDelay).toInt() + 4))
+        for (i in 0 until span) peak = max(peak, abs(line[wrap(writeIndex - 1 - i, size)]))
+        val target = 0.50f + 0.30f * velocity
+        val scale = target / peak
+        for (i in 0 until size) line[i] *= scale
+        filterState *= scale
+        dcIn *= scale
+        dcOut *= scale
+    }
+
     /** Fill the loop with a shaped, zero-mean noise burst: the pluck itself. */
     private fun exciteString() {
         val length = min(line.size - 2, max(4, ceil(lineDelay).toInt() + 3))
@@ -170,7 +239,7 @@ class KarplusStrongVoice(val sampleRate: Int) {
         // sample, a hard bright one is crisp. (Brightness here is the same control that sets
         // how quickly the loop then mellows the tone.)
         val hardness = (0.04f + 0.96f * brightness.toDouble().pow(1.3).toFloat() *
-            (0.4f + 0.6f * velocity)).coerceIn(0.04f, 1f)
+            (0.2f + 0.8f * velocity)).coerceIn(0.04f, 1f)
         var previous = 0f
         var sum = 0f
         for (i in 0 until length) {

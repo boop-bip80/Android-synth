@@ -10,7 +10,7 @@ object FactoryPatches {
         "SUSTAIN" to 0.70f, "RELEASE" to 0.45f,
         "LFO_RATE" to 0.22f, "LFO_DEPTH" to 0.16f, "GLIDE" to 0.00f,
         "UNISON" to 0.00f, "DETUNE" to 0.00f,
-        "ENGINE" to 0.00f, "CHARACTER" to 0.00f,
+        "ENGINE" to 0.00f, "CHARACTER" to 0.00f, "SOURCE" to 0.00f,
     )
 
     private fun patch(
@@ -222,6 +222,87 @@ object FactoryPatches {
                 "WAVE" to .81f, "MORPH" to .63f, "CUTOFF" to .75f,
                 "ATTACK" to .65f, "SUSTAIN" to .79f, "RELEASE" to .91f,
                 "MOVEMENT" to .92f, "FX_AMOUNT" to .61f),
+        ),
+        // ---- Physical-model sources (SOURCE .5 = plucked STRING, 1 = struck GLASS/bell). ----
+        // STRING: WAVE = ring time, MORPH = brightness, CHARACTER = pick position.
+        patch(
+            "harp-glow", "Harp Glow", "Silky plucked strings that bloom into a long, shimmering ring.",
+            "pluck", "string", "stage",
+            changes = mapOf("SOURCE" to .5f, "WAVE" to .72f, "MORPH" to .55f, "CHARACTER" to .22f,
+                "CUTOFF" to .88f, "RESONANCE" to .12f, "ATTACK" to 0f, "SUSTAIN" to .95f,
+                "RELEASE" to .55f, "FX_AMOUNT" to .62f, "MOVEMENT" to .30f),
+        ),
+        patch(
+            "nylon-pluck", "Nylon Pluck", "Warm, intimate classical-guitar pluck with a gentle decay.",
+            "pluck", "string", "stage",
+            changes = mapOf("SOURCE" to .5f, "WAVE" to .40f, "MORPH" to .30f, "CHARACTER" to .15f,
+                "CUTOFF" to .75f, "ATTACK" to 0f, "SUSTAIN" to .90f, "RELEASE" to .35f,
+                "FX_AMOUNT" to .30f),
+        ),
+        patch(
+            "steel-strum", "Steel Strum", "Bright steel strings driven through the ladder filter for bite.",
+            "pluck", "string", "bright",
+            changes = mapOf("SOURCE" to .5f, "ENGINE" to .25f, "WAVE" to .55f, "MORPH" to .80f,
+                "CHARACTER" to .35f, "CUTOFF" to .72f, "RESONANCE" to .28f, "ATTACK" to 0f,
+                "SUSTAIN" to .90f, "RELEASE" to .30f, "FX_AMOUNT" to .35f),
+        ),
+        patch(
+            "koto-dream", "Koto Dream", "Nasal, expressive plucks in the manner of a koto, drenched in space.",
+            "pluck", "string", "ambient",
+            changes = mapOf("SOURCE" to .5f, "WAVE" to .62f, "MORPH" to .62f, "CHARACTER" to .50f,
+                "CUTOFF" to .80f, "ATTACK" to 0f, "SUSTAIN" to .92f, "RELEASE" to .45f,
+                "FX_AMOUNT" to .55f),
+        ),
+        // GLASS: WAVE = marimba -> glass -> bell, MORPH = strike hardness, CHARACTER = ring time.
+        patch(
+            "crystal-marimba", "Crystal Marimba", "Woody tuned bars with a clean, crystalline strike.",
+            "mallet", "glass", "stage",
+            changes = mapOf("SOURCE" to 1f, "WAVE" to .02f, "MORPH" to .60f, "CHARACTER" to .32f,
+                "CUTOFF" to .92f, "ATTACK" to 0f, "SUSTAIN" to .90f, "RELEASE" to .30f,
+                "FX_AMOUNT" to .35f),
+        ),
+        patch(
+            "glass-harmonics", "Glass Harmonics", "Singing glass bowls: inharmonic partials that hang in the air.",
+            "bell", "glass", "ambient",
+            changes = mapOf("SOURCE" to 1f, "WAVE" to .50f, "MORPH" to .72f, "CHARACTER" to .72f,
+                "CUTOFF" to .95f, "ATTACK" to .03f, "SUSTAIN" to .90f, "RELEASE" to .70f,
+                "FX_AMOUNT" to .72f),
+        ),
+        patch(
+            "cathedral-bell", "Cathedral Bell", "A deep minor-third bell that rings and rings.",
+            "bell", "glass", "cinematic",
+            changes = mapOf("SOURCE" to 1f, "WAVE" to 1f, "MORPH" to .78f, "CHARACTER" to .90f,
+                "CUTOFF" to .95f, "ATTACK" to 0f, "SUSTAIN" to .92f, "RELEASE" to .85f,
+                "FX_AMOUNT" to .80f),
+        ),
+        patch(
+            "music-box", "Music Box", "Tiny, bright, wistful bars: instant nostalgia for any melody.",
+            "mallet", "glass", "stage",
+            changes = mapOf("SOURCE" to 1f, "WAVE" to .25f, "MORPH" to .85f, "CHARACTER" to .42f,
+                "CUTOFF" to .97f, "ATTACK" to 0f, "SUSTAIN" to .90f, "RELEASE" to .40f,
+                "FX_AMOUNT" to .45f),
+        ),
+        // ---- Stage-ready voices on the existing engines. ----
+        patch(
+            "velvet-keys", "Velvet Keys", "Soft electric-piano keys with a smooth FM bell on the attack.",
+            "keys", "fm", "stage",
+            changes = mapOf("ENGINE" to .75f, "CHARACTER" to .45f, "WAVE" to .30f, "MORPH" to .50f,
+                "CUTOFF" to .85f, "ATTACK" to 0f, "DECAY" to .55f, "SUSTAIN" to .30f,
+                "RELEASE" to .45f, "FX_AMOUNT" to .35f),
+        ),
+        patch(
+            "moon-bass", "Moon Bass", "Round, weighty bass that stays clear when chords stack above it.",
+            "bass", "analog", "stage",
+            changes = mapOf("ENGINE" to .50f, "CHARACTER" to .30f, "WAVE" to .10f, "MORPH" to .20f,
+                "CUTOFF" to .30f, "RESONANCE" to .25f, "ATTACK" to 0f, "DECAY" to .38f,
+                "SUSTAIN" to .55f, "RELEASE" to .20f, "FX_AMOUNT" to .05f),
+        ),
+        patch(
+            "sunbeam-lead", "Sunbeam Lead", "A singing, slightly gliding lead that makes melodies sound finished.",
+            "lead", "analog", "stage",
+            changes = mapOf("ENGINE" to .25f, "CHARACTER" to .55f, "WAVE" to .72f, "MORPH" to .50f,
+                "CUTOFF" to .70f, "RESONANCE" to .38f, "ATTACK" to .01f, "SUSTAIN" to .80f,
+                "RELEASE" to .30f, "GLIDE" to .15f, "LFO_DEPTH" to .25f, "FX_AMOUNT" to .40f),
         ),
     )
 

@@ -168,9 +168,22 @@ class KarplusStrongVoiceTest {
     }
 
     @Test fun harderStrikesAreLouderAndBrighter() {
+        // (The synth also scales each voice by velocity, so the voice itself only needs to lean
+        // the same way: harder = more energy and a crisper, brighter pluck.)
         val soft = renderString(55, 0.3f, velocity = 0.15f)
         val hard = renderString(55, 0.3f, velocity = 1f)
-        assertTrue(rms(hard, 0, soft.size) > 1.4 * rms(soft, 0, soft.size))
+        val louder = rms(hard, 0, soft.size) / rms(soft, 0, soft.size)
+        assertTrue("hard/soft level ratio $louder", louder > 1.15)
+        fun brightnessProxy(x: FloatArray): Double {
+            var d = 0.0
+            var e = 0.0
+            for (i in 1 until x.size) { val diff = x[i] - x[i - 1]; d += diff * diff; e += x[i].toDouble() * x[i] }
+            return d / e
+        }
+        // A harder strike is crisper in its attack, which is where it is heard.
+        val attack = (0.04 * SR).toInt()
+        val crisper = brightnessProxy(hard.copyOfRange(0, attack)) / brightnessProxy(soft.copyOfRange(0, attack))
+        assertTrue("hard/soft brightness ratio $crisper", crisper > 1.3)
     }
 
     @Test fun pickPositionChangesTheTimbreNotThePitch() {

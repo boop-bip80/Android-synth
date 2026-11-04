@@ -136,7 +136,7 @@ class ModalBellVoice(val sampleRate: Int) {
         const val MODES = 6
 
         /** Normalizes the summed modes to a healthy level (peak is bounded by the gains). */
-        private const val OUTPUT_SCALE = 0.62f
+        private const val OUTPUT_SCALE = 0.85f
 
         // Partial ratios relative to the played pitch. Inspired by, not measured from, real instruments.
         private val MARIMBA = doubleArrayOf(1.0, 3.99, 9.92, 17.2, 26.4, 36.9)
