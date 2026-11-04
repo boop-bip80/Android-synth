@@ -325,21 +325,40 @@ fun ModulationConstellationPanel(
                 color = if (chosen.depth >= 0f) OrbitalPalette.Cyan else OrbitalPalette.Violet,
                 fontSize = 12.sp, fontFamily = FontFamily.Monospace,
             )
-            // Tag the Slider itself: Material3 marks this node as its own
-            // accessibility boundary, so a tagged parent Box cannot merge
-            // its SetProgress action. A definite 56dp height also provides
-            // the required physical touch target in the narrow viewport.
-            Slider(
-                value = chosen.depth.coerceIn(-4f, 4f),
-                onValueChange = { onRouteChange(current, chosen.copy(depth = it, enabled = true)) },
-                valueRange = -4f..4f,
-                modifier = Modifier.fillMaxWidth().height(56.dp).testTag("modulationDepthSlider"),
-                colors = SliderDefaults.colors(
-                    thumbColor = OrbitalPalette.Gold,
-                    activeTrackColor = OrbitalPalette.Cyan,
-                    inactiveTrackColor = OrbitalPalette.DeepBlue,
-                ),
-            )
+            // Material3 Slider exposes an inner 44dp semantics region even
+            // when its outer Modifier requests 56dp. Expose one 56dp target
+            // with an explicit SetProgress action routed to the SAME state
+            // callback as actual finger movement. A semantics merge alone
+            // cannot import Slider's independent SetProgress boundary.
+            Box(
+                modifier = Modifier.fillMaxWidth().height(56.dp)
+                    .semantics(mergeDescendants = true) {
+                        progressBarRangeInfo = ProgressBarRangeInfo(
+                            chosen.depth.coerceIn(-4f, 4f), -4f..4f,
+                        )
+                        setProgress { progress ->
+                            onRouteChange(
+                                current,
+                                chosen.copy(depth = progress.coerceIn(-4f, 4f), enabled = true),
+                            )
+                            true
+                        }
+                    }
+                    .testTag("modulationDepthSlider"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Slider(
+                    value = chosen.depth.coerceIn(-4f, 4f),
+                    onValueChange = { onRouteChange(current, chosen.copy(depth = it, enabled = true)) },
+                    valueRange = -4f..4f,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = OrbitalPalette.Gold,
+                        activeTrackColor = OrbitalPalette.Cyan,
+                        inactiveTrackColor = OrbitalPalette.DeepBlue,
+                    ),
+                )
+            }
             Text(
                 ModulationConstellationModel.destinationStatus(chosen.destination),
                 color = if (ModulationConstellationModel.audibleTarget(chosen.destination))
