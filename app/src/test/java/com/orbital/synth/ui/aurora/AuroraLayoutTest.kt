@@ -65,4 +65,18 @@ class AuroraLayoutTest {
         assertEquals(3, prefs.bestStars("ode"))
         assertEquals(0, prefs.bestStars("lamb"))
     }
+
+    @Test fun soundSourceSelectorMirrorsTheEngineQuantization() {
+        // OrbitalSynth reads SOURCE as (value * 2 + .5).toInt() in 0..2; the UI must agree.
+        var v = 0f
+        while (v <= 1f) {
+            val engine = (v * 2f + 0.5f).toInt().coerceIn(0, 2)
+            assertEquals("value $v", engine, com.orbital.synth.ui.physicalSourceIndex(v))
+            v += 0.01f
+        }
+        assertEquals(0, com.orbital.synth.ui.physicalSourceIndex(0f))
+        assertEquals(1, com.orbital.synth.ui.physicalSourceIndex(.5f))
+        assertEquals(2, com.orbital.synth.ui.physicalSourceIndex(1f))
+        assertEquals(0, com.orbital.synth.ui.physicalSourceIndex(Float.NaN.let { 0f }))
+    }
 }
