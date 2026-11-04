@@ -47,6 +47,7 @@ class StageTouchSettingsTest {
     @Test fun tonicAndMusicalOctaveRangeFollowScaleDegrees() {
         val settings = StageTouchSettings(
             tonic = 2, baseOctave = 3, octaveRange = 3, scale = TouchScale.MAJOR,
+            pitchAxis = TouchPitchAxis.HORIZONTAL, // this test sweeps pitch across X
         )
         val config = settings.toTouchConfig()
         assertEquals(50, config.rootMidiNote)
