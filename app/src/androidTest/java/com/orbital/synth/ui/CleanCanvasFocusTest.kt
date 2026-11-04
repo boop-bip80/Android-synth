@@ -84,6 +84,28 @@ class CleanCanvasFocusTest {
         ).assertCountEquals(1)
     }
 
+    @Test fun cleanCanvasTalkBackRevealActionRestoresUsableExit() {
+        render()
+        compose.onNodeWithTag("immersiveModeToggle").performClick()
+        compose.onNodeWithTag("stageFocusEnter").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("immersiveCanvas").assertIsDisplayed()
+        compose.onNodeWithTag("immersiveExit").assertDoesNotExist()
+
+        val customActions = compose.onNodeWithTag("immersiveCanvas")
+            .fetchSemanticsNode().config[SemanticsActions.CustomActions]
+        val revealAction = customActions.single { it.label == "Reveal stage controls" }
+        compose.runOnIdle {
+            assertTrue("TalkBack reveal action must report success", revealAction.action())
+        }
+        compose.waitForIdle()
+
+        compose.onNodeWithTag("immersiveStage").assertIsDisplayed()
+        compose.onNodeWithTag("immersiveExit").assertIsDisplayed()
+        compose.onNodeWithTag("stageConfigOpen").assertIsDisplayed()
+        compose.onNodeWithTag("stageFocusEnter").assertIsDisplayed()
+        compose.onNodeWithTag("immersiveCanvas").assertIsDisplayed()
+    }
+
     @Test fun cleanCanvasKeepsSoundGesturesAndCancellationsBalanced() {
         val noteOn = mutableListOf<Int>()
         val noteOff = mutableListOf<Int>()

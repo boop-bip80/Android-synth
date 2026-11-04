@@ -22,7 +22,9 @@ internal object ReferenceControlBusModel {
             ?.coerceIn(0f, 1f) ?: .5f
         Node(
             x = (index + .5f) / 5f,
-            y = .66f + (.5f - value) * .11f,
+            // Route the light through the *knob discs*, behind the controls.
+            // At .66 this line crossed WAVE/CUTOFF/etc labels on phones.
+            y = .37f + (.5f - value) * .10f,
             value = value,
         )
     }

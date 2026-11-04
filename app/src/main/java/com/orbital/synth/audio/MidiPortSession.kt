@@ -6,8 +6,8 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Opt-in source identity for MIDI listeners. Legacy listeners still receive
  * their existing callbacks; source-aware listeners receive exactly one
- * source-tagged callback per note event instead. Both onSource methods default
- * to the legacy methods for compatibility during app migrations.
+ * source-tagged callback per note or bend event instead. The source callbacks
+ * default to the legacy methods for compatibility during app migrations.
  *
  * sourceId identifies one physical/virtual MIDI OUTPUT PORT connection, not a
  * MIDI channel, and changes whenever that port reconnects. Pair it with
@@ -21,6 +21,22 @@ interface SourceAwareMidiMessageListener : MidiMessageListener {
     fun onSourceNoteOff(sourceId: Long, channel: Int, note: Int, velocity: Int) {
         onNoteOff(channel, note, velocity)
     }
+
+    /** Legacy listeners keep global bend behavior; opt-in listeners own it per port. */
+    fun onSourcePitchBend(sourceId: Long, channel: Int, value: Int) {
+        onPitchBend(channel, value)
+    }
+
+    /**
+     * Source-aware controller events preserve the origin of CC121 resets.
+     * Default delivery remains exactly one legacy control callback.
+     */
+    fun onSourceControlChange(sourceId: Long, channel: Int, controller: Int, value: Int) {
+        onControlChange(channel, controller, value)
+    }
+
+    /** A port's last expression value must not survive its physical disconnection. */
+    fun onSourceDisconnected(sourceId: Long) {}
 }
 
 /** Pure Kotlin adapter used by both normal event delivery and port cleanup. */
@@ -43,11 +59,19 @@ internal class MidiSourceRouter(
     }
 
     override fun onControlChange(channel: Int, controller: Int, value: Int) {
-        target.onControlChange(channel, controller, value)
+        if (target is SourceAwareMidiMessageListener) {
+            target.onSourceControlChange(sourceId, channel, controller, value)
+        } else target.onControlChange(channel, controller, value)
     }
 
     override fun onPitchBend(channel: Int, value: Int) {
-        target.onPitchBend(channel, value)
+        if (target is SourceAwareMidiMessageListener) {
+            target.onSourcePitchBend(sourceId, channel, value)
+        } else target.onPitchBend(channel, value)
+    }
+
+    fun onPortClosed() {
+        (target as? SourceAwareMidiMessageListener)?.onSourceDisconnected(sourceId)
     }
 }
 
@@ -152,6 +176,8 @@ internal class MidiPortSession(private val target: MidiMessageListener) : Closea
             sustainDown[channel] = false
             sostenutoDown[channel] = false
         }
+        // The close/feed lock guarantees no late bend can outrun this cleanup.
+        (target as? MidiSourceRouter)?.onPortClosed()
     }
 
     /**

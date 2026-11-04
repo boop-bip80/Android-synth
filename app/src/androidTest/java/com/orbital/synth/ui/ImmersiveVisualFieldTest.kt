@@ -139,8 +139,13 @@ class ImmersiveVisualFieldTest {
         RealAndroidFrameCapture(compose, compose.activity)
             .capture(field, "focus-post-stop-black").use { physical ->
                 var brightPixels = 0
-                for (iy in 0 until 44) {
-                    for (ix in 0 until 44) {
+                // This standalone ComponentActivity test does not invoke
+                // FocusSystemBarsEffect: Android may draw its own bright
+                // status/navigation glyphs at the framebuffer edges. Sample
+                // the actual interior canvas, excluding only the 1-cell OS
+                // overlay border; keep the strict <=2 bright pixel threshold.
+                for (iy in 1 until 43) {
+                    for (ix in 1 until 43) {
                         val px = ((ix + .5f) * physical.width / 44).toInt()
                             .coerceIn(0, physical.width - 1)
                         val py = ((iy + .5f) * physical.height / 44).toInt()

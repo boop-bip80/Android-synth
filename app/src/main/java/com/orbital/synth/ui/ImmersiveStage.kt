@@ -246,14 +246,11 @@ internal fun ImmersiveStage(
     DisposableEffect(mapper, performanceResetEpoch) {
         onDispose {
             deliver(mapper.cancelAll())
-            // A background/focus/panic epoch must turn OFF the visual lease as
-            // well as the note lease without leaving keyboardless FOCUS.
-            touchIntensity = 0f
-            flickKick = 0f
-            flickRevision++
-            touchX = .5f
-            touchY = .5f
-            reportTouchModulation(.5f, .5f, .5f, force = true)
+            // The old mapper owns only its note leases. Its pointerInput
+            // recognizer's finally block releases the shared visual/touch
+            // sources through StageTouchSessionOwner. An unconditional reset
+            // here can run AFTER a fresh epoch's DOWN and silently steal its
+            // live pressure, X/Y and caustic lease.
         }
     }
 

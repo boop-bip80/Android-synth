@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -328,7 +329,11 @@ fun ModulationConstellationPanel(
                 value = chosen.depth.coerceIn(-4f, 4f),
                 onValueChange = { onRouteChange(current, chosen.copy(depth = it, enabled = true)) },
                 valueRange = -4f..4f,
-                modifier = Modifier.fillMaxWidth().testTag("modulationDepthSlider"),
+                // Material3's stock Slider can measure only 44dp on this
+                // device. Give the *actual* interactive node a 48dp minimum
+                // so it remains physically tappable in the 350dp patch bay.
+                modifier = Modifier.fillMaxWidth().testTag("modulationDepthSlider")
+                    .heightIn(min = 48.dp),
                 colors = SliderDefaults.colors(
                     thumbColor = OrbitalPalette.Gold,
                     activeTrackColor = OrbitalPalette.Cyan,

@@ -36,12 +36,16 @@ collect_diagnostics() {
     if timeout 12s adb exec-out run-as com.orbital.synth \
         cat files/orbital-compact350-capture-failure.png \
         > artifacts/diagnostic-screen.png 2>/dev/null &&
-       [[ -s artifacts/diagnostic-screen.png ]]; then
+       [[ -s artifacts/diagnostic-screen.png ]] &&
+       [[ "$(file -b --mime-type artifacts/diagnostic-screen.png)" == "image/png" ]]; then
       sha256sum artifacts/diagnostic-screen.png \
         > artifacts/compact350-failed-frame-sha256.txt
       echo 'Preserved real failed compact350 foreground screenshot in diagnostics.'
-    elif [[ ! -s artifacts/diagnostic-screen.png ]]; then
+    else
+      # `adb run-as` can print an error to stdout after UTP uninstalls the app.
+      # Never label that text as a genuine Android framebuffer artifact.
       rm -f artifacts/diagnostic-screen.png
+      echo 'No valid real compact350 failure PNG was available after test cleanup.'
     fi
   fi
   timeout 8s adb devices -l > artifacts/compact350-devices-after.txt 2>&1

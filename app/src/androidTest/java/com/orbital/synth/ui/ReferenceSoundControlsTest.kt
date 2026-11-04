@@ -98,7 +98,7 @@ class ReferenceSoundControlsTest {
         }
     }
 
-    @Test fun fourMiniaturePanelsRepresentSavedSettingsAndOnlyAudibleEnabledRoutes() {
+    @Test fun fourMiniaturePanelsRepresentSavedSettingsAndConfiguredEnabledRoutes() {
         var liveRoute by mutableStateOf(
             ModulationRouteConfig(
                 enabled = true,
@@ -130,11 +130,13 @@ class ReferenceSoundControlsTest {
         compose.onNodeWithTag("referenceMiniExpr").assertExists()
         compose.onNodeWithTag("referenceMiniMod").assertExists()
         compose.onNodeWithText("TRIAN").assertExists()
-        compose.onNodeWithText("1 LIVE").assertExists()
+        // The tile deliberately says SET, not LIVE: some configured sources
+        // are stored in the patch before their physical DSP feed is active.
+        compose.onNodeWithText("1 SET").assertExists()
         compose.runOnIdle {
             liveRoute = liveRoute.copy(depth = 0f)
         }
-        compose.onNodeWithText("0 LIVE").assertExists()
+        compose.onNodeWithText("0 SET").assertExists()
     }
 
     @Test fun compactDeckSupportsOrbOverlaidRibbonWithoutHidingRealControls() {

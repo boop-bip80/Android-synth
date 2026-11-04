@@ -143,11 +143,15 @@ class ReferenceMiniSignalTapNavigationTest {
             val travel = when {
                 missingBounds ->
                     if (lastObservedEdge < 0) 60f else -60f
-                targetRect.top < editorRect.top -> {
+                targetRect.top < editorRect.top ||
+                    (targetRect.height < 48f * density - 1f &&
+                        targetRect.top <= editorRect.top + 5f) -> {
                     lastObservedEdge = -1
                     (editorRect.top - targetRect.top + 3f).coerceIn(30f, 60f)
                 }
-                targetRect.bottom > editorRect.bottom -> {
+                targetRect.bottom > editorRect.bottom ||
+                    (targetRect.height < 48f * density - 1f &&
+                        targetRect.bottom >= editorRect.bottom - 5f) -> {
                     lastObservedEdge = 1
                     -(targetRect.bottom - editorRect.bottom + 3f).coerceIn(30f, 60f)
                 }

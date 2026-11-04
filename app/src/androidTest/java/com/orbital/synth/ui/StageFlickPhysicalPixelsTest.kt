@@ -69,7 +69,10 @@ class StageFlickPhysicalPixelsTest {
                 advanceEventTime(900L)
                 moveTo(0, sameEndpoint)
             }
-            compose.mainClock.advanceTimeBy(36L)
+            // Give the real 90ms FOCUS luminance fade-in time to expose the
+            // caustics. A 36ms snapshot can still capture alpha=0 when the
+            // test clock was frozen before the first pointer event.
+            compose.mainClock.advanceTimeBy(160L)
             val slowA = sampledPhysicalFrame("same-pressure-slow-flick-a")
             val slowB = sampledPhysicalFrame("same-pressure-slow-flick-b")
             canvas.performTouchInput { up(0) }
@@ -80,7 +83,9 @@ class StageFlickPhysicalPixelsTest {
                 advanceEventTime(20L)
                 moveTo(0, sameEndpoint)
             }
-            compose.mainClock.advanceTimeBy(36L)
+            // Match the same elapsed *draw* time in both experiments; the
+            // physical 900ms/20ms motion timestamps remain the sole variable.
+            compose.mainClock.advanceTimeBy(160L)
             val fast = sampledPhysicalFrame("same-pressure-fast-flick")
 
             fun changedPixels(a: IntArray, b: IntArray): Pair<Int, Int> {

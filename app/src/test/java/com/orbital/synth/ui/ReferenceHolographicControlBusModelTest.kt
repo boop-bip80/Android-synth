@@ -14,6 +14,8 @@ class ReferenceHolographicControlBusModelTest {
         assertEquals(listOf(0f, .25f, .5f, .75f, 1f), controls.map { it.value })
         assertTrue(controls.zipWithNext().all { (a, b) -> a.x < b.x })
         assertTrue(controls.all { it.y in 0f..1f })
+        assertTrue("Signal bus must stay in the knob-disc band, above text labels",
+            controls.all { it.y in .31f.. .43f })
         assertTrue(controls.zipWithNext().all { (a, b) -> a.y > b.y })
     }
 

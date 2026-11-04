@@ -1,6 +1,8 @@
 package com.orbital.synth.core.preset
 
+import java.io.IOException
 import java.nio.charset.StandardCharsets
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -47,6 +49,38 @@ class PatchDirectoryStore(private val directory: Path) {
         }
     }
 
+    /**
+     * Publish a new patch atomically and exclusively across store instances.
+     * A same-directory hard link exposes only a complete temp file and fails if
+     * the destination already exists (including corrupt files or symlinks).
+     * Unlike ATOMIC_MOVE, link creation never replaces a competing destination.
+     *
+     * Requires hard-link support on the private filesystem; an unsupported
+     * provider fails closed rather than exposing a partially written patch.
+     */
+    fun saveNew(patch: SynthPatch): Boolean {
+        rejectSymlinkedBank()
+        Files.createDirectories(directory)
+        require(Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            "Patch bank must be a real directory"
+        }
+        val target = pathFor(patch.id)
+        val temporary = Files.createTempFile(directory, patch.id + "-", ".tmp")
+        try {
+            Files.write(temporary, PatchCodec.encode(patch).toByteArray(StandardCharsets.UTF_8))
+            return try {
+                Files.createLink(target, temporary)
+                true
+            } catch (_: FileAlreadyExistsException) {
+                false
+            } catch (error: UnsupportedOperationException) {
+                throw IOException("Patch filesystem does not support atomic no-clobber writes", error)
+            }
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
+    }
+
     fun load(id: String): SynthPatch? {
         rejectSymlinkedBank()
         val path = pathFor(id)
@@ -59,17 +93,24 @@ class PatchDirectoryStore(private val directory: Path) {
         return patch
     }
 
-    fun list(): List<SynthPatch> {
+    /**
+     * Reserve existing on-disk IDs without decoding patch data.
+     * Malformed or newer-version files must keep their filenames reserved so a
+     * save/import cannot overwrite user data merely because it cannot be read.
+     */
+    fun storedIds(): Set<String> {
         rejectSymlinkedBank()
-        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return emptyList()
-        val ids = Files.newDirectoryStream(directory, "*.orbital").use { entries ->
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return emptySet()
+        return Files.newDirectoryStream(directory, "*.orbital").use { entries ->
             entries.map { it.fileName.toString().removeSuffix(".orbital") }
                 .filter(SynthPatch::validId)
-                .sorted()
-                .toList()
+                .toSet()
         }
+    }
+
+    fun list(): List<SynthPatch> {
         // A malformed stored patch is surfaced to callers, never silently discarded.
-        return ids.mapNotNull(::load)
+        return storedIds().sorted().mapNotNull(::load)
     }
 
     fun delete(id: String): Boolean {

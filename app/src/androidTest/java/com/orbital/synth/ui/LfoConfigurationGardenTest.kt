@@ -102,7 +102,9 @@ class LfoConfigurationGardenTest {
             .fetchSemanticsNode().config[SemanticsProperties.Text].joinToString(" ")
         assertTrue(statusText.contains("CONNECTED ROUTES"))
         assertTrue(statusText.contains("2 CONFIGURED"))
-        assertTrue(statusText.contains("1 DSP TARGETS"))
+        // Layer gain is now genuinely wired into DSP alongside CUTOFF.
+        // Both routes are editable targets even while the LFO is paused.
+        assertTrue(statusText.contains("2 DSP TARGETS"))
         val nodeDescription = compose.onNodeWithTag("lfoGardenNode0")
             .fetchSemanticsNode().config[SemanticsProperties.ContentDescription]
             .joinToString(" ")
