@@ -263,6 +263,10 @@ internal fun AuroraFooter(
     onListen: () -> Unit,
     onEndGuide: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Patch name and stepping; when the host provides them a voice stepper replaces the octave pair. */
+    voiceName: String = "",
+    onPreviousVoice: (() -> Unit)? = null,
+    onNextVoice: (() -> Unit)? = null,
 ) {
     Column(modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (guide != null) {
@@ -294,6 +298,7 @@ internal fun AuroraFooter(
             }
         } else {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                val voiceStepping = onPreviousVoice != null && onNextVoice != null
                 GlassPill(
                     "♪ SONGS", false, Gold, "auroraSongs", "Open songs to learn",
                     modifier = Modifier.weight(1f), onClick = onSongs,
@@ -301,19 +306,62 @@ internal fun AuroraFooter(
                 GlassPill(
                     chord.label, chord != ChordAssist.OFF, accent, "auroraChord",
                     "Harmony ${chord.label.lowercase()}: ${chord.blurb}. Tap to change",
-                    modifier = Modifier.weight(1.1f), onClick = onChord,
+                    modifier = Modifier.weight(1f), onClick = onChord,
                 )
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    GlassPill("−", false, accent, "auroraOctaveDown", "Lower the bass register", fontSize = 16.sp, onClick = { onOctave(bassOctave - 1) })
-                    Text(
-                        "C$bassOctave", color = Soft, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.width(30.dp).testTag("auroraOctaveLabel"),
-                        textAlign = TextAlign.Center, maxLines = 1,
+                if (voiceStepping) {
+                    VoiceStepper(
+                        voiceName, accent, { onPreviousVoice?.invoke() }, { onNextVoice?.invoke() },
+                        Modifier.weight(1.8f),
                     )
-                    GlassPill("+", false, accent, "auroraOctaveUp", "Raise the bass register", fontSize = 16.sp, onClick = { onOctave(bassOctave + 1) })
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        GlassPill("−", false, accent, "auroraOctaveDown", "Lower the bass register", fontSize = 16.sp, onClick = { onOctave(bassOctave - 1) })
+                        Text(
+                            "C$bassOctave", color = Soft, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.width(30.dp).testTag("auroraOctaveLabel"),
+                            textAlign = TextAlign.Center, maxLines = 1,
+                        )
+                        GlassPill("+", false, accent, "auroraOctaveUp", "Raise the bass register", fontSize = 16.sp, onClick = { onOctave(bassOctave + 1) })
+                    }
                 }
             }
         }
+    }
+}
+
+/** `‹ NAME ›`: step through the instrument's voices without leaving the stage. */
+@Composable
+private fun VoiceStepper(
+    name: String,
+    accent: Color,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(16.dp)
+    Row(
+        modifier.heightIn(min = 48.dp).clip(shape)
+            .background(Brush.verticalGradient(listOf(Glass.copy(alpha = .92f), Ink.copy(alpha = .88f))), shape)
+            .border(1.dp, accent.copy(alpha = .35f), shape)
+            .testTag("auroraVoice")
+            .semantics { contentDescription = "Voice $name" },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(46.dp).clickable(role = Role.Button, onClick = onPrevious)
+                .testTag("auroraVoicePrev").semantics { contentDescription = "Previous voice" },
+            contentAlignment = Alignment.Center,
+        ) { Text("‹", color = accent, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
+        Text(
+            name.uppercase(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+            letterSpacing = .8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center, modifier = Modifier.weight(1f),
+        )
+        Box(
+            Modifier.size(46.dp).clickable(role = Role.Button, onClick = onNext)
+                .testTag("auroraVoiceNext").semantics { contentDescription = "Next voice" },
+            contentAlignment = Alignment.Center,
+        ) { Text("›", color = accent, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
     }
 }
 

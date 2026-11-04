@@ -24,7 +24,7 @@ object FactoryPatches {
         parameters = neutral + changes,
     )
 
-    val ALL: List<SynthPatch> = listOf(
+    private val authored: List<SynthPatch> = listOf(
         patch(
             "aurora", "AURORA", "Glass-bright moving wavetable pad, with a wide cinematic bloom.",
             "pad", "lush", "evolving",
@@ -305,6 +305,22 @@ object FactoryPatches {
                 "RELEASE" to .30f, "GLIDE" to .15f, "LFO_DEPTH" to .25f, "FX_AMOUNT" to .40f),
         ),
     )
+
+    /** Voices a player reaches first when stepping through patches from the stage. */
+    private val stageVoiceOrder = listOf(
+        "harp-glow", "nylon-pluck", "crystal-marimba", "music-box",
+        "velvet-keys", "sunbeam-lead", "moon-bass",
+    )
+
+    /**
+     * AURORA stays the default (first); the playable stage voices follow it so stepping from
+     * the default discovers plucks, mallets, keys, lead and bass immediately, then the rest.
+     */
+    val ALL: List<SynthPatch> = run {
+        val default = authored.first()
+        val featured = stageVoiceOrder.mapNotNull { id -> authored.firstOrNull { it.id == id } }
+        listOf(default) + featured + authored.filter { it !== default && it !in featured }
+    }
 
     val DEFAULT: SynthPatch get() = ALL.first()
     fun byId(id: String): SynthPatch? = ALL.firstOrNull { it.id == id }

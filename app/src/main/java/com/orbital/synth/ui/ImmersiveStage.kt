@@ -133,6 +133,9 @@ internal fun ImmersiveStage(
     audioVisualSource: (() -> AudioVisualSnapshot)? = null,
     /** Host revision invalidating all held performance voices on background/recall. */
     performanceResetEpoch: Long = 0L,
+    /** Optional patch stepping so the player can change voice without leaving the stage. */
+    onPreviousPatch: (() -> Unit)? = null,
+    onNextPatch: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -938,6 +941,9 @@ internal fun ImmersiveStage(
                     onOctave = { applySettings(stageSettings.copy(baseOctave = it.coerceIn(0, 6))) },
                     onListen = { guide?.let { startDemo(it.song) } },
                     onEndGuide = { endLesson() },
+                    voiceName = state.patchName,
+                    onPreviousVoice = onPreviousPatch,
+                    onNextVoice = onNextPatch,
                 )
             }
         }

@@ -262,6 +262,9 @@ fun OrbitalScreen(
     // keeps this layout independently buildable while its audio implementation lands.
     val engineId = remember { ParameterId.entries.firstOrNull { it.name == "ENGINE" } }
     val engineValue = engineId?.let(parameter) ?: 0f
+    // Optional physical-model source (oscillator / plucked string / struck glass).
+    val sourceId = remember { ParameterId.entries.firstOrNull { it.name == "SOURCE" } }
+    val sourceValue = sourceId?.let(parameter) ?: 0f
     val engineChoice = EngineArchitectures[engineArchitectureIndex(engineValue)]
     val requestedXyMode = ReferenceXyMode.entries.firstOrNull {
         it.name == soundXyModeName
@@ -351,6 +354,8 @@ fun OrbitalScreen(
             onPerformanceConfigChange = onStageTouchSettingsChange,
             audioVisualSource = onReadAudioVisual,
             performanceResetEpoch = state.performanceResetEpoch,
+            onPreviousPatch = onPreviousPatch,
+            onNextPatch = onNextPatch,
             onExit = { immersiveMode = false },
         )
     } else {
@@ -814,13 +819,22 @@ fun OrbitalScreen(
                                 .bringIntoViewRequester(engineEditorRequest)
                                 .testTag("referenceEngineActualEditor"),
                         ) {
-                            EngineArchitecturePanel(
-                                value = engineValue,
-                                enabled = engineId != null,
-                                onChoose = { value ->
-                                    engineId?.let { onParameterChange(it, value) }
-                                },
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                EngineArchitecturePanel(
+                                    value = engineValue,
+                                    enabled = engineId != null,
+                                    onChoose = { value ->
+                                        engineId?.let { onParameterChange(it, value) }
+                                    },
+                                )
+                                PhysicalSourceRow(
+                                    value = sourceValue,
+                                    enabled = sourceId != null,
+                                    onChoose = { value ->
+                                        sourceId?.let { onParameterChange(it, value) }
+                                    },
+                                )
+                            }
                         }
                         // Original engine controls remain genuine DSP inputs,
                         // accessible on demand instead of crowding the orb.
@@ -2766,12 +2780,91 @@ private fun CompactSoundPanel(
                         )
                     }
                 }
+                Row(
+                    Modifier.fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .testTag("compactSourceOptionsRow"),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    PhysicalSources.forEachIndexed { index, choice ->
+                        Pill(
+                            label = "SRC " + choice.name,
+                            active = physicalSourceIndex(parameterSource(parameter)) == index,
+                            onClick = { sourceIdOf()?.let { onParameterChange(it, choice.value) } },
+                            description = "Select sound source " + choice.name,
+                            role = Role.RadioButton,
+                            enabled = sourceIdOf() != null,
+                        )
+                    }
+                }
                 ParameterId.entries.firstOrNull { it.name == "CHARACTER" }?.let { id ->
                     CompactFxControl("CHARACTER", parameter(id), id, onParameterChange,
                         "Engine timbre and model character")
                 }
             }
         }
+    }
+}
+
+private fun sourceIdOf(): ParameterId? = ParameterId.entries.firstOrNull { it.name == "SOURCE" }
+
+private fun parameterSource(parameter: (ParameterId) -> Float): Float =
+    sourceIdOf()?.let(parameter) ?: 0f
+
+private data class PhysicalSource(val name: String, val hint: String, val value: Float)
+
+// The normalized SOURCE value mirrors OrbitalSynth: (value * 2 + .5).toInt() in 0..2.
+private val PhysicalSources = listOf(
+    PhysicalSource("OSCILLATOR", "The engine's own oscillator", 0f),
+    PhysicalSource("STRING", "Plucked string: WAVE = ring time, MORPH = brightness, CHARACTER = pick", .5f),
+    PhysicalSource("GLASS", "Struck bar or bell: WAVE = marimba to bell, MORPH = hardness, CHARACTER = ring", 1f),
+)
+
+internal fun physicalSourceIndex(value: Float): Int =
+    (value.coerceIn(0f, 1f) * 2f + .5f).toInt().coerceIn(0, PhysicalSources.lastIndex)
+
+/**
+ * Picks what makes the sound: the engine's oscillator, or a physical model of a plucked
+ * string or struck glass. The chosen ENGINE still shapes it as the filter and character stage.
+ */
+@Composable
+private fun PhysicalSourceRow(
+    value: Float,
+    enabled: Boolean,
+    onChoose: (Float) -> Unit,
+) {
+    val active = physicalSourceIndex(value)
+    Column(
+        Modifier.fillMaxWidth().testTag("physicalSourceRow")
+            .border(1.dp, OrbitalPalette.Gold.copy(alpha = .35f), RoundedCornerShape(16.dp))
+            .background(OrbitalPalette.Panel.copy(alpha = .55f), RoundedCornerShape(16.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "SOUND SOURCE", color = OrbitalPalette.Text, fontSize = 9.sp,
+                fontWeight = FontWeight.SemiBold, letterSpacing = 1.1.sp, maxLines = 1,
+            )
+            Spacer(Modifier.weight(1f))
+            Text("PHYSICAL MODELS", color = OrbitalPalette.Gold, fontSize = 8.sp, letterSpacing = .8.sp)
+        }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            PhysicalSources.forEachIndexed { index, choice ->
+                Pill(
+                    label = choice.name,
+                    active = index == active,
+                    onClick = { if (index != active) onChoose(choice.value) },
+                    description = "Select sound source " + choice.name,
+                    role = Role.RadioButton,
+                    enabled = enabled,
+                )
+            }
+        }
+        Text(PhysicalSources[active].hint, color = OrbitalPalette.Text.copy(alpha = .62f), fontSize = 9.sp)
     }
 }
 
