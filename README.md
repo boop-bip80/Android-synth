@@ -1,44 +1,37 @@
-# ORBITAL — Android multi-engine synthesizer
+# ORBITAL AURORA — a touch-first Android synthesizer
 
-> **Status · 3 November 2026:** developer alpha with working synthesis, touch performance and Android MIDI code; **not a finished commercial instrument or Play Store release**. The real running-app screenshots below are separate from the generated concept artwork.
->
-> **Verified source:** [`0494c2d`](https://github.com/boop-bip80/Android-synth/commit/0494c2dcb39cad0feecd5808e26471c55f967564) · [API 35 GitHub Actions run #41677043446](https://github.com/boop-bip80/Android-synth/actions/runs/41677043446) — **all nine required jobs passed** (host, seven emulator lanes, and two-shard test-method union). The screenshot-only follow-up is [`53f3cb4`](https://github.com/boop-bip80/Android-synth/commit/53f3cb45ae41b5dc8b1c1c3f61d4099a8a602dcb). Later application-code changes must pass again before inheriting this result.
+> **Status:** release candidate **0.3.0** — see [verification](#verification-and-release-gates) for exactly what has and has not been tested. It is a **debug-signed developer APK**, verified on a GitHub-hosted Android 15 (API 35) emulator. It has **not** been measured on physical phones (latency, thermals, speaker output), is **not** Play-signed, and no Play Store release exists yet.
 
-ORBITAL is a native Kotlin/Jetpack Compose instrument for Android 8.0+ (API 26+), designed around expressive touch interaction and a layered, polyphonic DSP engine.
+ORBITAL is a native Kotlin/Jetpack Compose instrument for Android 8.0+ (API 26+): a layered polyphonic synthesizer with five sound architectures plus two physical-model sources, built around an expressive touch surface that **teaches you to play**.
 
-## Real Android screenshots — captured from the running APK
+## AURORA — play real music with your fingers
 
-These five PNGs are committed, permanent **Android 15 / API 35 x86_64 emulator framebuffers**, not generated renders, Figma mockups, or photographs of physical hardware. Their dimensions, hashes, source run and capture methods are documented in [screenshot provenance](docs/screenshots/PROVENANCE.md).
+Open **STAGE** and the screen becomes a glowing instrument:
 
-| Playing / editing | Performance / small screen |
-| --- | --- |
-| ![Actual ORBITAL normal portrait UI on Android API35](docs/screenshots/orbital-portrait.png) | ![Actual 360 by 350 dp compact SOUND UI on Android API35](docs/screenshots/orbital-compact.png) |
-| **Normal portrait** | **360 × 350dp compact SOUND** |
-| ![Actual ORBITAL OSC1 sound design workbench on Android API35](docs/screenshots/orbital-oscillator-workbench.png) | ![Actual FOCUS performance screen during a held note, with PCM-reactive light](docs/screenshots/orbital-focus-held-note.png) |
-| **OSC1 workbench** | **FOCUS during a real held-note gesture** |
+- **Choose a key on top.** Twelve colour-coded keys (colours follow the circle of fifths) and a mode stepper across eleven scales — major, minor, Dorian, Mixolydian, Lydian, Phrygian, both pentatonics, blues, harmonic minor and Hirajoshi — each with a one-line mood (“dreamy and floating”, “no wrong notes, ever”).
+- **Every lane is a note of that key.** **Bass is at the bottom, treble at the top.** Because only scale tones exist, every touch is in key; slide a finger up and the melody climbs, slide sideways to brighten the tone and play harder.
+- **It is alive.** Each lane is a luminous string that leans toward your finger, rings like a plucked string when struck, and sends pulses of light along itself, with ripples, comet trails, sparks and fireflies that swarm toward your touch, and brightness that follows the real audio.
+- **One-finger harmony.** SOLO, OCTAVE, POWER, TRIAD or JAZZ 7th: tap a lane and get the right diatonic chord, with its name and Roman numeral (“Dm · ii”).
+- **Learn songs by following the light.** Thirteen traditional and public-domain tunes — Twinkle Twinkle, Ode to Joy, Frère Jacques, Canon in D, Oh! Susanna, Jingle Bells and more — are stored as scale steps, so each one plays correctly in *any* key and you can hear it in other modes. The next note glows gold and a ribbon shows the shape of the melody ahead; the lesson **waits for you**, wrong notes still sound but never stop the music, and you earn up to three stars. Press ▶ LISTEN and a ghost finger plays the song for you.
+- **Change voice without leaving the stage.** The stage voices — harp, nylon guitar, marimba, music box, electric keys, lead and bass — come right after the default patch.
+- **FOCUS** hides everything: pure black until you touch it, then light gathers around your fingers.
 
-![Actual ORBITAL landscape emulator screenshot](docs/screenshots/orbital-landscape.png)
-
-*Wide landscape. These frames prove the app rendered in those states during the successful test run. They do not prove real-phone frame rate, audio latency, thermals or pixel-level fidelity to the concept.*
-
-## Install the tested Android APK
-
-- **Tested debug build:** [download `orbital-debug-apk` ZIP from successful main run #41677043446](https://github.com/boop-bip80/Android-synth/actions/runs/41677043446/artifacts/13251586570). The ZIP contains the Android debug-signed APK built from [`0494c2d`](https://github.com/boop-bip80/Android-synth/commit/0494c2dcb39cad0feecd5808e26471c55f967564). GitHub Actions artifact retention is **14 days** (this artifact expires **17 November 2026**).
-- **Permanent release:** [check GitHub Releases](https://github.com/boop-bip80/Android-synth/releases). A permanently downloadable, independently verified release APK has **not yet been published**; do not mistake the expiring CI artifact for a final release.
-- Requires Android 8.0+; installing a debug APK may require enabling sideloading. This is not a Play-signed production build.
-
-To see the latest verified build rather than this dated snapshot, use [successful `main` workflow runs](https://github.com/boop-bip80/Android-synth/actions/workflows/android.yml?query=branch%3Amain+is%3Asuccess) and check the exact commit SHA and job conclusions before downloading.
+Thoroughly touch-first: 48 dp targets, haptics (opt-in), reduce-motion support and an accessible, balanced note lifecycle (every note-on has a note-off, even on gesture cancel, Back, or app switch).
 
 ## What is implemented
 
 | Area | Current implementation | Boundaries |
 | --- | --- | --- |
-| Synthesis | **Five selectable engines**; up to **16 voices**, eight editable oscillator layers, wavetable morphing/unison and analog-inspired/digital synthesis | A model-inspired design, **not calibrated 1:1 hardware emulation**; full-capacity device CPU headroom unknown |
+| Synthesis | **Five selectable engines** plus **two physical-model sources** (plucked STRING, struck GLASS/bell); up to **16 voices**, eight editable oscillator layers, wavetable morphing/unison and analog-inspired/digital synthesis; a transparent **master limiter** | Model-inspired designs, **not calibrated 1:1 hardware emulation** and not sampled instruments; full-capacity device CPU headroom unknown |
 | Modulation | Eight programmable LFOs, up to 64 routes, ADSR, performance morph/X/Y, pitch, filter and pan destinations | Finite capacities; not an unlimited modular graph |
 | Effects | Six ordered stereo FX slots; saturation, tremolo, chorus, delay, stereo FDN reverb, phaser and bitcrusher; wet/bypass and parameter controls | Quality and long-session performance need listening/hardware evaluation |
-| Touch | SOUND, PLAY, SEQ, FX and library controls; chromatic multitouch keyboard; on-screen oscillator and modulation editors; keyboardless **FOCUS** black canvas with live audio-reactive visuals | Screen-pressure behavior depends on device input; not a force sensor guarantee |
+| Touch | The **AURORA diatonic stage** (key picker, bass-to-treble lanes, one-finger harmony, song lessons); SOUND, PLAY, SEQ, FX and library controls; multitouch keyboard; on-screen oscillator and modulation editors; keyboardless **FOCUS** black canvas with live audio-reactive visuals | Screen-pressure behavior depends on device input; not a force sensor guarantee |
 | Musical tools | Source-aware arpeggiator, 1–64-step sequencer, scales, swing, patterns, touch and Android MIDI input | Physical MIDI keyboards, timing under load and per-note MPE are not fully qualified |
-| Presets / storage | 25 factory sound patches, 12 factory patterns, versioned patch and sequence persistence | Backup/migration and corruption handling still need broad real-device validation |
+| Presets / storage | **36 factory sound patches**, 12 factory patterns, 13 learnable songs, versioned patch and sequence persistence | Backup/migration and corruption handling still need broad real-device validation |
+
+### Sound sources and architectures
+
+The **SOURCE** control chooses what makes the sound: the engine's own **oscillator**, a **plucked STRING** (extended Karplus-Strong waveguide, pitch checked within 6 cents across C2–C6) or a **struck GLASS/bell** (six inharmonic modes morphing marimba → glass → bell). The chosen engine below still shapes it as the filter and character stage, so a plucked string can run through the ladder filter. Old patches load unchanged.
 
 ### Five sound architectures
 

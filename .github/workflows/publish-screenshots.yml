@@ -199,6 +199,53 @@ jobs:
               rows.append(f"| {label} | `{artifact}` | [{target_name}]({target_name}) | {width} x {height} | `{digest}` |")
               print(f"{label}: {width}x{height}, {len(data)} bytes, sha256={digest}")
 
+          # Optional gallery frames (real Android framebuffers with live motion). The capture is
+          # deliberately non-blocking, so each is published only if it genuinely exists and
+          # passes the same PNG integrity checks; a missing one never fails the publication.
+          optional = (
+              ("visuals", "orbital-aurora-play.png", "orbital-aurora-play.png", "AURORA stage: held chord, live motion"),
+              ("visuals", "orbital-aurora-lesson.png", "orbital-aurora-lesson.png", "AURORA stage: follow-the-light lesson"),
+          )
+          for suite, source_name, target_name, label in optional:
+              source = root / suite / source_name
+              if not source.is_file():
+                  print(f"{label}: not captured in the verified run; skipping")
+                  continue
+              data = source.read_bytes()
+              try:
+                  if not 20_000 <= len(data) <= 10_000_000:
+                      raise ValueError("implausible size")
+                  if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+                      raise ValueError("not a PNG")
+                  width, height = struct.unpack(">II", data[16:24])
+                  if width < 600 or height < 1000 or width >= height:
+                      raise ValueError(f"not a portrait frame {width}x{height}")
+                  pos = 8
+                  seen_end = False
+                  while pos < len(data):
+                      if pos + 12 > len(data):
+                          raise ValueError("truncated chunk")
+                      chunk_length = struct.unpack(">I", data[pos:pos+4])[0]
+                      end = pos + chunk_length + 12
+                      if end > len(data):
+                          raise ValueError("chunk exceeds file")
+                      expected_crc = struct.unpack(">I", data[end-4:end])[0]
+                      if zlib.crc32(data[pos+4:end-4]) & 0xFFFFFFFF != expected_crc:
+                          raise ValueError("bad CRC")
+                      if data[pos+4:pos+8] == b"IEND":
+                          seen_end = True
+                      pos = end
+                  if not seen_end:
+                      raise ValueError("no IEND")
+              except ValueError as problem:
+                  print(f"{label}: rejected ({problem}); skipping")
+                  continue
+              shutil.copyfile(source, output / target_name)
+              digest = hashlib.sha256(data).hexdigest()
+              artifact = f"orbital-api35-{suite}-emulator-screenshot"
+              rows.append(f"| {label} | `{artifact}` | [{target_name}]({target_name}) | {width} x {height} | `{digest}` |")
+              print(f"{label}: {width}x{height}, {len(data)} bytes, sha256={digest}")
+
           sha = os.environ["SOURCE_SHA"]
           run_id = os.environ["SOURCE_RUN_ID"]
           run_number = os.environ["SOURCE_RUN_NUMBER"]
