@@ -36,7 +36,7 @@ private class Rig(key: StageKey, octaves: Int = 3, chord: ChordAssist = ChordAss
     private fun route(events: List<SurfaceEvent>) {
         for (e in events) when (e) {
             is SurfaceEvent.Strike -> sim.strike(
-                e.pointerId, e.lane, e.x, lastY[e.pointerId] ?: .5f, e.velocity, e.slid,
+                e.pointerId, e.lane, e.x, e.y, e.velocity, e.slid,
                 e.chordSymbol, e.roman.ifEmpty { ordinal(grid.degreeNumber(e.lane)) }, e.lanes,
             )
             is SurfaceEvent.Release -> sim.release(e.pointerId)
@@ -45,9 +45,8 @@ private class Rig(key: StageKey, octaves: Int = 3, chord: ChordAssist = ChordAss
         }
     }
 
-    private val lastY = HashMap<Long, Float>()
-    fun down(id: Long, x: Float, y: Float) { lastY[id] = y; route(surface.touchDown(id, x, y, 1f, clockMs)) }
-    fun move(id: Long, x: Float, y: Float) { lastY[id] = y; sim.move(id, x, y); route(surface.touchMove(id, x, y, 1f, clockMs)) }
+    fun down(id: Long, x: Float, y: Float) { route(surface.touchDown(id, x, y, 1f, clockMs)) }
+    fun move(id: Long, x: Float, y: Float) { sim.move(id, x, y); route(surface.touchMove(id, x, y, 1f, clockMs)) }
     fun up(id: Long) = route(surface.touchUp(id))
 
     fun run(seconds: Float, perFrame: ((Float) -> Unit)? = null) {

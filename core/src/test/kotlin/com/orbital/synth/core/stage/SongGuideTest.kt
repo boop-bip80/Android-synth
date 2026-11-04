@@ -188,6 +188,24 @@ class SongGuideTest {
         assertEquals(1500L, line[2].startMs)
     }
 
+    @Test fun changingKeyMidSongKeepsProgressAndScore() {
+        val ode = SongBook.byId("ode")!!
+        val session = GuideSession(ode, gridFor(ode, 0))
+        repeat(5) { session.onStrike(session.target()!!.lane) }
+        session.onStrike(if (session.target()!!.lane == 0) 1 else 0) // one miss
+        val moved = session.withGrid(gridFor(ode, 9))
+        assertEquals(session.index, moved.index)
+        assertEquals(session.hits, moved.hits)
+        assertEquals(session.misses, moved.misses)
+        assertEquals(session.combo, moved.combo)
+        assertEquals(session.bestCombo, moved.bestCombo)
+        // The next target is the same melody note, now laid out in the new key.
+        val next = ode.playable[moved.index]
+        assertEquals(next.step + ode.laneOffset(gridFor(ode, 9)), moved.target()!!.lane)
+        while (!moved.finished) moved.onStrike(moved.target()!!.lane)
+        assertEquals(2, moved.result()!!.stars)
+    }
+
     @Test fun parserRejectsGarbage() {
         assertTrue(runCatching { Song.parse("0-1") }.isFailure)
         assertTrue(runCatching { Song.parse("x:1") }.isFailure)

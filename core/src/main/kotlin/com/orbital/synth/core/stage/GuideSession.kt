@@ -28,6 +28,20 @@ class GuideSession(val song: Song, private val grid: DiatonicGrid) {
         require(song.fitsIn(grid)) { "song '${song.id}' does not fit this grid" }
     }
 
+    /**
+     * The same session, progress and score intact, laid out on a different grid (the player
+     * changed key or octave range mid-song). Fails if the song cannot fit the new grid.
+     */
+    fun withGrid(newGrid: DiatonicGrid): GuideSession {
+        val moved = GuideSession(song, newGrid)
+        moved.index = index
+        moved.hits = hits
+        moved.misses = misses
+        moved.combo = combo
+        moved.bestCombo = bestCombo
+        return moved
+    }
+
     private val offset = song.laneOffset(grid)
 
     var index: Int = 0

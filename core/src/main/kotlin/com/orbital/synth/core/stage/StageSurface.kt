@@ -32,6 +32,8 @@ sealed interface SurfaceEvent {
         val slid: Boolean,
         /** Every lane that now sounds (the touched lane first, then chord tones). */
         val lanes: IntArray = intArrayOf(lane),
+        /** The finger's own height (0 = top), so renderers can place effects per finger. */
+        val y: Float = 0.5f,
     ) : SurfaceEvent
 
     /** A finger left the screen or was cancelled. */
@@ -121,7 +123,7 @@ class StageSurface(
         acquireVoicing(voicing, velocity, events)
         events += SurfaceEvent.Strike(
             pointerId, lane, velocity, px, voicing.symbol, voicing.roman, slid = false,
-            lanes = voicing.lanes,
+            lanes = voicing.lanes, y = py,
         )
         events += expression(px, py, pressure, 0f)
         return events
@@ -150,7 +152,7 @@ class StageSurface(
             if (abs(position - contact.lane) > LANE_HYSTERESIS) {
                 val next = grid.laneForY(py)
                 if (next != contact.lane) {
-                    slideTo(contact, next, velocity(px, pressure), pointerId, px, events)
+                    slideTo(contact, next, velocity(px, pressure), pointerId, px, py, events)
                 }
             }
         }
@@ -210,7 +212,7 @@ class StageSurface(
                 contact.voicing = voicing
                 events += SurfaceEvent.Strike(
                     id, lane, velocity, contact.x, voicing.symbol, voicing.roman, slid = true,
-                    lanes = voicing.lanes,
+                    lanes = voicing.lanes, y = contact.y,
                 )
             }
             contact.lane = lane
@@ -227,6 +229,7 @@ class StageSurface(
         velocity: Float,
         pointerId: Long,
         x: Float,
+        y: Float,
         events: MutableList<SurfaceEvent>,
     ) {
         val voicing = ChordVoicer.voice(grid, lane, chord)
@@ -237,7 +240,7 @@ class StageSurface(
         contact.lane = lane
         events += SurfaceEvent.Strike(
             pointerId, lane, velocity, x, voicing.symbol, voicing.roman, slid = true,
-            lanes = voicing.lanes,
+            lanes = voicing.lanes, y = y,
         )
     }
 

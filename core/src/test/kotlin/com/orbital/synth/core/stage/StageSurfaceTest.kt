@@ -48,7 +48,20 @@ class StageSurfaceTest {
         assertEquals(7L, strike.pointerId)
         assertEquals(grid.laneForY(0.5f), strike.lane)
         assertTrue(!strike.slid)
+        assertEquals(0.5f, strike.y, 1e-6f)
+        assertEquals(listOf(strike.lane), strike.lanes.toList())
         assertEquals(1, events.filterIsInstance<SurfaceEvent.Expression>().size)
+    }
+
+    @Test fun slidesAndChordsReportEachFingersOwnHeightAndEveryLane() {
+        val s = surface()
+        s.configure(chord = ChordAssist.TRIAD)
+        s.touchDown(1, 0.4f, grid.centerY(10))
+        val slide = s.touchMove(1, 0.4f, grid.centerY(13), eventTimeMs = 30)
+            .filterIsInstance<SurfaceEvent.Strike>().single()
+        assertTrue(slide.slid)
+        assertEquals(grid.centerY(13), slide.y, 1e-6f)
+        assertEquals(listOf(13, 15, 17), slide.lanes.toList())
     }
 
     @Test fun rightSideIsBrighterAndHarder() {

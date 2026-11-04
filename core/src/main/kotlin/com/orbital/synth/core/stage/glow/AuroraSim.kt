@@ -355,7 +355,8 @@ class AuroraSim(seed: Long = 7L) {
         releaseHeld(f)
         f.alive = false
         f.energy = 0f
-        f.ghost = GHOST_SECONDS
+        f.ghost = if (reducedMotion) 0f else GHOST_SECONDS
+        if (reducedMotion) popAge[f.slot % POPUPS] = POPUP_SECONDS + 1f
     }
 
     fun cancelAll() {
@@ -366,9 +367,12 @@ class AuroraSim(seed: Long = 7L) {
     val activeFingerCount: Int get() = fingers.count { it.alive }
 
     /** True while anything is moving; the host can stop requesting frames when false. */
-    val needsFrames: Boolean
+    val needsFrames: Boolean get() = (ambient && laneCountValue > 0) || busy
+
+    /** Real activity (touch, effects, audio), ignoring the idle ambient breathing. */
+    val busy: Boolean
         get() {
-            if (ambient && laneCountValue > 0) return true
+            if (laneCountValue == 0) return false
             if (fingers.any { it.alive || it.ghost > 0f } || guideCount > 0 || fireCount > 0) return true
             if (audioRms > 0.004f || audioFlash > 0.01f) return true
             for (i in 0 until laneCountValue) if (glow[i] > 0.01f || flash[i] > 0.01f) return true
@@ -400,8 +404,9 @@ class AuroraSim(seed: Long = 7L) {
         val n = laneCountValue
         if (n == 0) return
 
-        val riseK = 1f - exp(-18f * dt)
-        val fallK = 1f - exp(-3.4f * dt)
+        // Reduce-motion means no fades: light snaps on and off with the finger.
+        val riseK = if (reducedMotion) 1f else 1f - exp(-18f * dt)
+        val fallK = if (reducedMotion) 1f else 1f - exp(-3.4f * dt)
         for (i in 0 until n) {
             val target = if (held[i] > 0) 1f else 0f
             glow[i] += (target - glow[i]) * (if (target > glow[i]) riseK else fallK)
