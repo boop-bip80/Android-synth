@@ -105,9 +105,9 @@ class StageTouchActivityRestartTest {
         Files.write(preferenceFile, future.toByteArray(Charsets.UTF_8))
         ActivityScenario.launch(MainActivity::class.java).use {
             enterConfiguration()
-            awaitSelected("stageScale-CHROMATIC")
+            awaitSelected("stageScale-MAJOR") // the default scale
             val prior = store.requestedRevision()
-            compose.onNodeWithTag("stageScale-MAJOR").performScrollTo().performClick()
+            compose.onNodeWithTag("stageScale-DORIAN").performScrollTo().performClick()
             waitForHostSave(prior)
             assertEquals(
                 StageTouchSettingsSave.UnreadableExisting(

@@ -10,14 +10,28 @@ class StageTouchSettingsTest {
     private fun List<TouchVoiceEvent>.off() = filterIsInstance<TouchVoiceEvent.NoteOff>()
     private fun List<TouchVoiceEvent>.expression() = filterIsInstance<TouchVoiceEvent.Expression>()
 
-    @Test fun defaultsMaintainOriginalC4ToC6TouchPerformance() {
+    @Test fun defaultsGiveABassToTrebleMajorStage() {
+        // Aurora default: C major, three octaves rising from C2 at the bottom of the screen.
         val config = StageTouchSettings().toTouchConfig()
-        assertEquals(60, config.rootMidiNote)
-        assertEquals(25, config.noteCount)
-        assertEquals(TouchScale.CHROMATIC, config.scale)
-        assertEquals(TouchPitchAxis.HORIZONTAL, config.pitchAxis)
+        assertEquals(36, config.rootMidiNote)
+        assertEquals(22, config.noteCount)
+        assertEquals(TouchScale.MAJOR, config.scale)
+        assertEquals(TouchPitchAxis.VERTICAL, config.pitchAxis)
         assertTrue(config.glissando)
         assertEquals(.5f, config.pressureSensitivity, 0f)
+    }
+
+    @Test fun everyScaleMapsToACoreScaleAndBack() {
+        for (scale in TouchScale.entries) {
+            assertEquals(scale, TouchScale.fromScaleId(scale.scaleId))
+            val core = com.orbital.synth.core.music.MusicalScales.byId(scale.scaleId)
+            org.junit.Assert.assertNotNull("no core scale for $scale", core)
+            assertEquals(
+                scale.semitones.toList().sorted(),
+                core!!.degrees.sorted(),
+            )
+        }
+        assertEquals(TouchScale.MAJOR, TouchScale.fromScaleId("no-such-scale"))
     }
 
     @Test fun tonicAndMusicalOctaveRangeFollowScaleDegrees() {

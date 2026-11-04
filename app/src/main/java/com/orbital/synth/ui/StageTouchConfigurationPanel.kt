@@ -35,11 +35,13 @@ import androidx.compose.ui.window.Dialog
 /** UI preferences for the clear, keyboardless stage. Never overwrites a synth patch. */
 data class StageTouchSettings(
     val tonic: Int = 0,
-    val baseOctave: Int = 4,
-    val octaveRange: Int = 2,
-    val scale: TouchScale = TouchScale.CHROMATIC,
+    /** Octave of the lowest (bass) lane's tonic. 2 puts C2 at the bottom of the screen. */
+    val baseOctave: Int = 2,
+    val octaveRange: Int = 3,
+    val scale: TouchScale = TouchScale.MAJOR,
     val pressureSensitivity: Float = .5f,
-    val pitchAxis: TouchPitchAxis = TouchPitchAxis.HORIZONTAL,
+    /** Aurora lanes always run bass (bottom) to treble (top); kept for stored-file compatibility. */
+    val pitchAxis: TouchPitchAxis = TouchPitchAxis.VERTICAL,
     val glissando: Boolean = true,
     /** OFF by default; Android may decline even an opted-in one-shot accent. */
     val hapticsEnabled: Boolean = false,
@@ -62,10 +64,13 @@ private val PanelMuted = Color(0xFF899AAD)
 private val PanelBorder = Color(0xFF284458)
 private val Tonics = listOf("C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B")
 private val Scales = listOf(
-    TouchScale.CHROMATIC to "CHROMATIC", TouchScale.MAJOR to "MAJOR",
-    TouchScale.NATURAL_MINOR to "MINOR", TouchScale.DORIAN to "DORIAN",
-    TouchScale.MINOR_PENTATONIC to "PENTATONIC", TouchScale.BLUES to "BLUES",
-    TouchScale.WHOLE_TONE to "WHOLE TONE",
+    TouchScale.MAJOR to "MAJOR", TouchScale.NATURAL_MINOR to "MINOR",
+    TouchScale.DORIAN to "DORIAN", TouchScale.MIXOLYDIAN to "MIXOLYDIAN",
+    TouchScale.LYDIAN to "LYDIAN", TouchScale.PHRYGIAN to "PHRYGIAN",
+    TouchScale.MAJOR_PENTATONIC to "MAJOR PENT", TouchScale.MINOR_PENTATONIC to "MINOR PENT",
+    TouchScale.BLUES to "BLUES", TouchScale.HARMONIC_MINOR to "HARMONIC MINOR",
+    TouchScale.HIRAJOSHI to "HIRAJOSHI", TouchScale.WHOLE_TONE to "WHOLE TONE",
+    TouchScale.CHROMATIC to "CHROMATIC",
 )
 
 /** Dark-glass scrollable stage configuration dialog with >=48dp accessible controls. */
@@ -85,9 +90,9 @@ internal fun StageTouchConfigurationPanel(
                 .padding(horizontal = 18.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(15.dp),
         ) {
-            Text("FIELD / CONFIGURATION", color = PanelCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.2.sp)
-            Text("Compose a space for your hands", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-            Text("Choose what every touch plays. The performance screen stays completely clear.", color = PanelMuted, fontSize = 12.sp)
+            Text("STAGE / CONFIGURATION", color = PanelCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.2.sp)
+            Text("Tune the surface to your hands", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+            Text("Pick the key on the stage itself; use this panel for range, feel and tactile feedback.", color = PanelMuted, fontSize = 12.sp)
 
             ConfigSection(
                 "TACTILE / OPT IN",
@@ -109,7 +114,7 @@ internal fun StageTouchConfigurationPanel(
                 }
             }
 
-            ConfigSection("01 / SCALE", "Only notes in this scale are played.") {
+            ConfigSection("01 / SCALE", "Every lane is a note of this scale, so nothing can sound wrong.") {
                 ConfigChoiceRow {
                     Scales.forEach { (scale, name) ->
                         ConfigChip(name, settings.scale == scale, "Scale $name", "stageScale-" + scale.name) {
@@ -118,7 +123,7 @@ internal fun StageTouchConfigurationPanel(
                     }
                 }
             }
-            ConfigSection("02 / TONIC", "Root note at the edge of the screen.") {
+            ConfigSection("02 / KEY", "The home note. Its lanes glow brightest.") {
                 ConfigChoiceRow {
                     Tonics.forEachIndexed { i, name ->
                         ConfigChip(name, settings.tonic == i, "Tonic $name", "stageTonic-$i") {
@@ -127,7 +132,7 @@ internal fun StageTouchConfigurationPanel(
                     }
                 }
             }
-            ConfigSection("03 / START OCTAVE", "Lowest register of the sound field.") {
+            ConfigSection("03 / BASS OCTAVE", "Register of the lowest lane at the bottom of the screen.") {
                 ConfigChoiceRow {
                     (0..8).forEach { octave ->
                         ConfigChip("C$octave", settings.baseOctave == octave, "Starting octave $octave", "stageBaseOctave-$octave") {
@@ -136,7 +141,7 @@ internal fun StageTouchConfigurationPanel(
                     }
                 }
             }
-            ConfigSection("04 / RANGE", "How many octaves fit under your fingers.") {
+            ConfigSection("04 / RANGE", "How many octaves fit under your fingers (small screens may show fewer).") {
                 ConfigChoiceRow {
                     (1..4).forEach { range ->
                         ConfigChip("$range OCT", settings.octaveRange == range, "$range octave range", "stageOctaveRange-$range") {
@@ -145,13 +150,10 @@ internal fun StageTouchConfigurationPanel(
                     }
                 }
             }
-            ConfigSection("05 / PITCH AXIS", "Move sideways or vertically to select pitches.") {
+            ConfigSection("05 / LAYOUT", "Bass sits at the bottom, treble at the top. Slide sideways to brighten the tone.") {
                 ConfigChoiceRow {
-                    ConfigChip("X / LEFT → RIGHT", settings.pitchAxis == TouchPitchAxis.HORIZONTAL,
-                        "Horizontal pitch, vertical timbre", "stageAxisHorizontal") {
-                        onChange(settings.copy(pitchAxis = TouchPitchAxis.HORIZONTAL))
-                    }
-                    ConfigChip("Y / DOWN → UP", settings.pitchAxis == TouchPitchAxis.VERTICAL,
+                    // The stage has one musical layout; the chip keeps the stored setting honest.
+                    ConfigChip("BASS ↓  TREBLE ↑", true,
                         "Vertical pitch, horizontal timbre", "stageAxisVertical") {
                         onChange(settings.copy(pitchAxis = TouchPitchAxis.VERTICAL))
                     }
@@ -183,9 +185,7 @@ internal fun StageTouchConfigurationPanel(
                 )
             }
             Text(
-                if (settings.pitchAxis == TouchPitchAxis.HORIZONTAL)
-                    "LIVE MAP  ·  X PITCH / MORPH     Y FILTER     SPEED MOTION"
-                else "LIVE MAP  ·  Y PITCH / MORPH     X FILTER     SPEED MOTION",
+                "LIVE MAP  ·  HEIGHT = NOTE     SIDEWAYS = BRIGHTNESS + TOUCH FORCE     SPEED = MOTION",
                 color = PanelCyan.copy(alpha = .8f), fontSize = 9.sp, letterSpacing = .6.sp,
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {

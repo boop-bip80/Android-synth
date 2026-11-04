@@ -45,6 +45,10 @@ class FocusPointerExpressionDedupeTest {
                 onModulationTouchExpression = { x, y, pressure ->
                     touchModulation.add(Triple(x, y, pressure))
                 },
+                // These tests prove expression dedupe and ownership handoff, not pitch
+                // glide: HOLD keeps each finger on its starting note so a vertical drag
+                // (which changes pitch on the diatonic stage) adds no extra attacks.
+                initialPerformanceConfig = StageTouchSettings(glissando = false),
                 onExit = {},
             )
         }
@@ -134,6 +138,10 @@ class FocusPointerExpressionDedupeTest {
                 onModulationTouchExpression = { x, y, pressure ->
                     touchModulation.add(Triple(x, y, pressure))
                 },
+                // These tests prove expression dedupe and ownership handoff, not pitch
+                // glide: HOLD keeps each finger on its starting note so a vertical drag
+                // (which changes pitch on the diatonic stage) adds no extra attacks.
+                initialPerformanceConfig = StageTouchSettings(glissando = false),
                 onExit = {},
             )
         }
