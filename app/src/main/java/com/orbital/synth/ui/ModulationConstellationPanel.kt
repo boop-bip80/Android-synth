@@ -325,29 +325,21 @@ fun ModulationConstellationPanel(
                 color = if (chosen.depth >= 0f) OrbitalPalette.Cyan else OrbitalPalette.Violet,
                 fontSize = 12.sp, fontFamily = FontFamily.Monospace,
             )
-            // Material3's intrinsic Slider semantics were still 44dp tall
-            // when heightIn was placed directly on the control. Merge its
-            // real SetProgress semantics onto a 56dp layout/hit surface: the
-            // outer tagged node now occupies the full physical finger target
-            // in both 350dp and 360dp viewports.
-            Box(
-                modifier = Modifier.fillMaxWidth().height(56.dp)
-                    .semantics(mergeDescendants = true) {}
-                    .testTag("modulationDepthSlider"),
-                contentAlignment = Alignment.Center,
-            ) {
-                Slider(
-                    value = chosen.depth.coerceIn(-4f, 4f),
-                    onValueChange = { onRouteChange(current, chosen.copy(depth = it, enabled = true)) },
-                    valueRange = -4f..4f,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = SliderDefaults.colors(
-                        thumbColor = OrbitalPalette.Gold,
-                        activeTrackColor = OrbitalPalette.Cyan,
-                        inactiveTrackColor = OrbitalPalette.DeepBlue,
-                    ),
-                )
-            }
+            // Tag the Slider itself: Material3 marks this node as its own
+            // accessibility boundary, so a tagged parent Box cannot merge
+            // its SetProgress action. A definite 56dp height also provides
+            // the required physical touch target in the narrow viewport.
+            Slider(
+                value = chosen.depth.coerceIn(-4f, 4f),
+                onValueChange = { onRouteChange(current, chosen.copy(depth = it, enabled = true)) },
+                valueRange = -4f..4f,
+                modifier = Modifier.fillMaxWidth().height(56.dp).testTag("modulationDepthSlider"),
+                colors = SliderDefaults.colors(
+                    thumbColor = OrbitalPalette.Gold,
+                    activeTrackColor = OrbitalPalette.Cyan,
+                    inactiveTrackColor = OrbitalPalette.DeepBlue,
+                ),
+            )
             Text(
                 ModulationConstellationModel.destinationStatus(chosen.destination),
                 color = if (ModulationConstellationModel.audibleTarget(chosen.destination))

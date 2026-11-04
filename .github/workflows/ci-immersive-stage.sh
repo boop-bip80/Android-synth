@@ -275,6 +275,17 @@ for exit_attempt in 1 2; do
     exit 1
   fi
   dump_ui "exit-before-$exit_attempt"
+  # Android may deliver the previous real EXIT tap only after the preceding
+  # accessibility dump completed. If this fresh tree already shows the
+  # returned normal SOUND layout, the physical exit succeeded; do not try to
+  # tap an EXIT control that no longer exists or reject a valid transition.
+  if [[ "$exit_attempt" -gt 1 ]] &&
+     verify_ui "artifacts/immersive-exit-before-$exit_attempt.xml" normal >> "$summary" 2>&1; then
+    cp "artifacts/immersive-exit-before-$exit_attempt.xml" artifacts/immersive-returned.xml
+    exit_verified=1
+    printf 'real_exit_verified_after_taps=%s\n' "$((exit_attempt - 1))" >> "$summary"
+    break
+  fi
   verify_ui "artifacts/immersive-exit-before-$exit_attempt.xml" stage
   tap_action "artifacts/immersive-exit-before-$exit_attempt.xml" 'Exit immersive performance'
   sleep 2

@@ -195,12 +195,19 @@ class PhysicalOscillatorAudioTrackInstrumentedTest {
 
     private fun assertRealForegroundAndroidPixels() {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        val focused = checkNotNull(automation.rootInActiveWindow) {
-            "Real foreground Android accessibility window is required"
+        // UiAutomation's accessibility connection occasionally returns null
+        // immediately after the Compose rule has finished a physical gesture.
+        // Wait for Android to publish a REAL active window owned by the synth;
+        // never substitute a Compose capture or skip the foreground assertion.
+        var focused = automation.rootInActiveWindow
+        for (attempt in 0 until 30) {
+            if (focused?.packageName?.toString() == compose.activity.packageName) break
+            SystemClock.sleep(120)
+            focused = automation.rootInActiveWindow
         }
         assertEquals(
             "Synth must own Android window focus while fingers sound-design",
-            compose.activity.packageName, focused.packageName.toString(),
+            compose.activity.packageName, focused?.packageName?.toString(),
         )
         val frame = checkNotNull(automation.takeScreenshot()) {
             "Actual Android framebuffer is required (no synthetic Compose mock)"

@@ -102,19 +102,52 @@ timeout 20s adb shell am force-stop com.orbital.synth
 
 runner=com.orbital.synth.test/androidx.test.runner.AndroidJUnitRunner
 test_class=com.orbital.synth.ui.StepProcessRestartInstrumentedTest
+run_verified_instrumentation() {
+  local method="$1" phase_name="$2" out="$3"
+  local attempt
+  for attempt in 1 2 3; do
+    # The fresh API35 emulator occasionally drops ADB's transport while ART
+    # loads the test dex (am instrument exits 255 without a single byte).
+    # Retry ONLY an empty-output transport failure. Never retry, overlook or
+    # reclassify an assertion failure emitted by AndroidJUnitRunner.
+    if timeout 180s adb shell am instrument -w -r \
+      -e class "${test_class}#${method}" \
+      -e orbitalStepRestartPhase "$phase_name" "$runner" \
+      | tee "$out"; then
+      grep -Eq 'OK [(]1 test[)]' "$out" || {
+        echo "$phase_name returned without one passing instrumentation test." >&2
+        return 1
+      }
+      grep -Eq 'INSTRUMENTATION_CODE:[[:space:]]*-1' "$out" || {
+        echo "$phase_name returned a non-success instrumentation result." >&2
+        return 1
+      }
+      return 0
+    fi
+    [[ ! -s "$out" ]] || {
+      echo "$phase_name runner failed after emitting test output; no retry." >&2
+      return 1
+    }
+    printf '%s_empty_adb_transport_attempt=%s\n' "$phase_name" "$attempt" >> "$summary"
+    [[ "$attempt" -lt 3 ]] || break
+    # If Android finished the prepare phase but ADB lost the reply, a marker
+    # may already exist. Do not re-run a mutating save or overrun its result.
+    if timeout 8s adb shell run-as com.orbital.synth \
+      test -e files/orbital-step-process-smoke.marker >/dev/null 2>&1; then
+      echo 'STEP marker exists after lost ADB response; refusing duplicate prepare.' >&2
+      return 1
+    fi
+    timeout 20s adb wait-for-device || return 1
+    timeout 12s adb shell getprop sys.boot_completed | tr -d '\r\n' | grep -qx 1 || return 1
+    sleep 5
+  done
+  echo "$phase_name could not reach AndroidJUnitRunner after three actual transports." >&2
+  return 1
+}
 printf 'prepare-real-step-patch-before-process-death\n' > "$phase"
-timeout 180s adb shell am instrument -w -r \
-  -e class "${test_class}#prepareStepPatchAndProveFocusPlayStateBeforeProcessDeath" \
-  -e orbitalStepRestartPhase prepare "$runner" \
-  | tee artifacts/step-restart-prepare.txt
-grep -Eq 'OK [(]1 test[)]' artifacts/step-restart-prepare.txt || {
-  echo 'STEP prepare did not complete one real AndroidJUnitRunner method.' >&2
-  exit 1
-}
-grep -Eq 'INSTRUMENTATION_CODE:[[:space:]]*-1' artifacts/step-restart-prepare.txt || {
-  echo 'AndroidJUnitRunner returned non-success after STEP preparation.' >&2
-  exit 1
-}
+run_verified_instrumentation \
+  prepareStepPatchAndProveFocusPlayStateBeforeProcessDeath \
+  prepare artifacts/step-restart-prepare.txt
 
 printf 'actual-operating-system-force-stop\n' > "$phase"
 timeout 20s adb shell am force-stop com.orbital.synth
@@ -132,17 +165,8 @@ fi
 # No pre-launch here. The second instrumentation's ActivityScenario launches
 # the real MainActivity and asserts old PID != Process.myPid() from marker.
 printf 'verify-different-os-pid-and-delete-only-test-patch\n' > "$phase"
-timeout 180s adb shell am instrument -w -r \
-  -e class "${test_class}#verifyAfterForcedDeathColdRestartAndDeleteOnlyOurPatch" \
-  -e orbitalStepRestartPhase verify "$runner" \
-  | tee artifacts/step-restart-verify.txt
-grep -Eq 'OK [(]1 test[)]' artifacts/step-restart-verify.txt || {
-  echo 'STEP V5 cold-process recall did not pass one true AndroidJUnitRunner method.' >&2
-  exit 1
-}
-grep -Eq 'INSTRUMENTATION_CODE:[[:space:]]*-1' artifacts/step-restart-verify.txt || {
-  echo 'AndroidJUnitRunner returned non-success after cold-process verification.' >&2
-  exit 1
-}
+run_verified_instrumentation \
+  verifyAfterForcedDeathColdRestartAndDeleteOnlyOurPatch \
+  verify artifacts/step-restart-verify.txt
 printf 'step_v5_persistence=PASS\nprocess_death=REAL_FORCE_STOP\nfresh_android_pid=ASSERTED_BY_INSTRUMENTATION\nstep_audio_clock=PASS\nfocus_play_transition=PASS\nprepare_method=PASS\nverify_method=PASS\n' >> "$summary"
 printf 'complete-real-two-process-proof\n' > "$phase"
