@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.UiAutomation
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -107,8 +109,9 @@ internal class RealAndroidFrameCapture(
         }
         var strongestMarker = 0
         var evidence = "not collected"
+        var recoveredLauncherAnr = false
         try {
-            for (attempt in 0 until 6) {
+            for (attempt in 0 until 12) {
                 val dump = foregroundShell(automation, "dumpsys window")
                 val currentWindow = dump.lineSequence()
                     .firstOrNull { it.contains("mCurrentFocus=") }.orEmpty().trim()
@@ -139,6 +142,31 @@ internal class RealAndroidFrameCapture(
                     " focused=" + focusedApp + " root=" + activeRootPackage +
                     " markerHits=" + strongestMarker +
                     " localFocus=" + activity.window.decorView.hasWindowFocus()
+                // A fresh Google API35 emulator can show an ANR for its HOME
+                // launcher *over* an otherwise healthy foreground test Activity.
+                // Recover only that exact emulator-system failure, once. Never
+                // dismiss a synth ANR or accept pixels while another window owns
+                // SurfaceFlinger; the physical magenta marker is still mandatory.
+                val emulator = Build.HARDWARE.equals("ranchu", ignoreCase = true) ||
+                    Build.HARDWARE.equals("goldfish", ignoreCase = true) ||
+                    Build.PRODUCT.startsWith("sdk_")
+                if (!recoveredLauncherAnr && emulator &&
+                    currentWindow.contains(
+                        "Application Not Responding: com.google.android.apps.nexuslauncher",
+                    ) &&
+                    focusedApp.contains("com.orbital.synth/androidx.activity.ComponentActivity") &&
+                    activeRootPackage == "android"
+                ) {
+                    recoveredLauncherAnr = true
+                    println("REAL_ANDROID_EMULATOR_LAUNCHER_ANR_RECOVERY " + evidence)
+                    ParcelFileDescriptor.AutoCloseInputStream(
+                        automation.executeShellCommand(
+                            "am force-stop com.google.android.apps.nexuslauncher",
+                        ),
+                    ).use { it.readBytes() }
+                    Thread.sleep(650L)
+                    continue
+                }
                 if (belongsToSynthWindow(currentWindow) &&
                     activeRootPackage?.startsWith("com.orbital.synth") == true &&
                     strongestMarker >= 50
@@ -146,7 +174,7 @@ internal class RealAndroidFrameCapture(
                     println("REAL_ANDROID_FOREGROUND_INSTANCE " + evidence)
                     return
                 }
-                Thread.sleep(180L)
+                Thread.sleep(250L)
             }
             throw AssertionError(
                 "This exact Compose test Activity did not own the real " +

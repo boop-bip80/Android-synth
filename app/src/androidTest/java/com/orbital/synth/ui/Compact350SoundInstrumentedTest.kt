@@ -551,4 +551,156 @@ class Compact350SoundInstrumentedTest {
         compose.runOnIdle { assertTrue("Pinned piano lost note ingress", noteOns.isNotEmpty()) }
         Log.i(TAG, "phase=engine-finished")
     }
+
+    /** Require the complete physical 48dp action, not a merely clipped semantics node. */
+    private fun assertCompactEditorTouchTarget(
+        node: SemanticsNodeInteraction,
+        label: String,
+    ) {
+        val density = compose.activity.resources.displayMetrics.density
+        val editor = compose.onNodeWithTag("soundEditorScroll")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val bounds = node.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            label + " needs a complete physical 48dp touch target: " + bounds,
+            bounds.width >= 48f * density - 1f &&
+                bounds.height >= 48f * density - 1f,
+        )
+        assertTrue(
+            label + " must be fully inside the real compact editor: " +
+                "target=" + bounds + " editor=" + editor,
+            bounds.left >= editor.left - 1f &&
+                bounds.right <= editor.right + 1f &&
+                bounds.top >= editor.top - 1f &&
+                bounds.bottom <= editor.bottom + 1f,
+        )
+    }
+
+    private fun assertCompactPianoStillPlays(
+        attacks: List<Int>,
+        releases: List<Int>,
+        expectedNotes: Int,
+    ) {
+        val density = compose.activity.resources.displayMetrics.density
+        val editor = compose.onNodeWithTag("soundEditorScroll")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val keyboard = compose.onNodeWithContentDescription(
+            "Multitouch piano keyboard", substring = true,
+        ).assertIsDisplayed()
+        val bounds = keyboard.fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            "The real 82dp piano must remain below the scrolling editor: " +
+                "piano=" + bounds + " editor=" + editor,
+            bounds.height >= 82f * density - 1f &&
+                bounds.top >= editor.bottom - 1f,
+        )
+        keyboard.performTouchInput { down(center); up() }
+        compose.runOnIdle {
+            assertEquals("Each physical piano touch must emit exactly one note-on",
+                expectedNotes, attacks.size)
+            assertEquals("Physical note-offs must balance every note-on", attacks, releases)
+        }
+    }
+
+    /** Changing the visible panel must not reset the selected SOUND page. */
+    @Test fun compactSoundPageRetainsSelectionAcrossOscillatorRoundTrips() {
+        val slots = mutableStateOf(List(8) { OscillatorSlot() })
+        val attacks = mutableListOf<Int>()
+        val releases = mutableListOf<Int>()
+        compose.setContent {
+            Box(Modifier.width(360.dp).height(350.dp)) {
+                OrbitalScreen(
+                    state = OrbitalUiState(oscillatorSlots = slots.value),
+                    onNoteOn = { attacks += it }, onNoteOff = { releases += it },
+                    onParameterChange = { _, _ -> },
+                    onModeChange = {}, onOctaveChange = {},
+                    onOscillatorSlotChange = { index, next ->
+                        slots.value = slots.value.toMutableList().apply { set(index, next) }
+                    },
+                )
+            }
+        }
+        val toggle = compose.onNodeWithTag("compactOscillatorToggle")
+        listOf("ENGINE", "VOICE", "TONE").forEachIndexed { index, page ->
+            val tab = compose.onNodeWithContentDescription("Sound rack $page")
+            assertCompactEditorTouchTarget(tab, page + " selector")
+            tab.performTouchInput { down(center); up() }
+            tab.assertIsSelected()
+            when (page) {
+                "ENGINE" -> compose.onNodeWithTag("compactEngineOptionsRow").assertExists()
+                "VOICE" -> compose.onNodeWithTag("compactFxBar_UNISON").assertExists()
+                "TONE" -> compose.onNodeWithTag("compactFxBar_CUTOFF").assertExists()
+            }
+            assertCompactEditorTouchTarget(toggle, "Expand OSC")
+            toggle.performTouchInput { down(center); up() }
+            compose.onNodeWithTag("oscillatorRack").assertExists()
+            // The five-action rail stays mounted; selected page controls
+            // disappear while OSC is open, rather than remaining hidden twins.
+            assertCompactEditorTouchTarget(tab, page + " selector while OSC is open")
+            when (page) {
+                "ENGINE" -> compose.onNodeWithTag("compactEngineOptionsRow").assertDoesNotExist()
+                "VOICE" -> compose.onNodeWithTag("compactFxBar_UNISON").assertDoesNotExist()
+                "TONE" -> compose.onNodeWithTag("compactFxBar_CUTOFF").assertDoesNotExist()
+            }
+            assertCompactEditorTouchTarget(toggle, "Collapse OSC")
+            toggle.performTouchInput { down(center); up() }
+            compose.onNodeWithTag("oscillatorRack").assertDoesNotExist()
+            // Selection and actual control identity survive the round trip.
+            tab.assertIsSelected()
+            when (page) {
+                "ENGINE" -> compose.onNodeWithTag("compactEngineOptionsRow").assertExists()
+                "VOICE" -> compose.onNodeWithTag("compactFxBar_UNISON").assertExists()
+                "TONE" -> compose.onNodeWithTag("compactFxBar_CUTOFF").assertExists()
+            }
+            assertCompactPianoStillPlays(attacks, releases, expectedNotes = index + 1)
+        }
+        Log.i(TAG, "phase=page-round-trips-and-balanced-piano-finished")
+    }
+
+    /**
+     * Reach both real preset arrows with physical finger scrolling. Require
+     * full 48dp targets before clicking; offscreen existence alone is not proof.
+     */
+    @Test fun compactPatchArrowsReachableByRealVerticalScrollAndPianoRemainsPlayable() {
+        val slots = mutableStateOf(List(8) { OscillatorSlot() })
+        var previous = 0
+        var next = 0
+        val attacks = mutableListOf<Int>()
+        val releases = mutableListOf<Int>()
+        compose.setContent {
+            Box(Modifier.width(360.dp).height(350.dp)) {
+                OrbitalScreen(
+                    state = OrbitalUiState(
+                        patchName = "AURORA",
+                        oscillatorSlots = slots.value,
+                    ),
+                    onNoteOn = { attacks += it },
+                    onNoteOff = { releases += it },
+                    onParameterChange = { _, _ -> },
+                    onModeChange = {}, onOctaveChange = {},
+                    onPreviousPatch = { previous++ },
+                    onNextPatch = { next++ },
+                    onOscillatorSlotChange = { index, replacement ->
+                        slots.value = slots.value.toMutableList().apply { set(index, replacement) }
+                    },
+                )
+            }
+        }
+        compose.onNodeWithTag("compactPatchHeader").assertExists()
+        // Reuse the bounded geometry-directed real finger-scroll helper.
+        // Its 3px outer gutter is outside child parameter drag recognizers.
+        physicallyRevealWithinCompactEditor("compactPatchControls", minHeightDp = 48f)
+        val previousArrow = compose.onNodeWithContentDescription("Previous factory preset")
+        val nextArrow = compose.onNodeWithContentDescription("Next factory preset")
+        assertCompactEditorTouchTarget(previousArrow, "Previous preset")
+        assertCompactEditorTouchTarget(nextArrow, "Next preset")
+        previousArrow.performTouchInput { down(center); up() }
+        nextArrow.performTouchInput { down(center); up() }
+        compose.runOnIdle {
+            assertEquals("Previous preset callback", 1, previous)
+            assertEquals("Next preset callback", 1, next)
+        }
+        assertCompactPianoStillPlays(attacks, releases, expectedNotes = 1)
+        Log.i(TAG, "phase=preset-physical-touch-and-balanced-piano-finished")
+    }
 }

@@ -17,14 +17,19 @@ data class AudioVisualSnapshot(
     val peak: Float = 0f,
     val transient: Float = 0f,
     val brightness: Float = 0f,
+    /** Broad perceptual LOW/MID/HIGH energy fractions, not FFT bins. */
+    val lowBand: Float = 0f,
+    val midBand: Float = 0f,
+    val highBand: Float = 0f,
 )
 
 /**
  * A single audio worker computes meters in primitive fields without locks or
  * allocations. It publishes at <= [maxRefreshHz] using ONE atomic 64-bit word
  * containing four quantized 16-bit channels. UI snapshot() allocates the
- * immutable value on the UI thread only, so all four channels come from the
- * same completed meter window.
+ * immutable value on the UI thread only. A second quantized 64-bit word holds
+ * three broad LOW/MID/HIGH energies. The worker's bounded publication sequence
+ * makes all seven fields come from the same completed post-AudioTrack PCM window.
  *
  * The worker owns observe* and its accumulators. The lifecycle thread may call
  * stop() while the worker unwinds; snapshot() immediately returns zero while
@@ -45,6 +50,12 @@ class AudioVisualTelemetry(
     private val framesPerPublication =
         ((sampleRate + maxRefreshHz - 1) / maxRefreshHz).coerceAtLeast(1)
     private val packed = AtomicLong(0L)
+    private val packedBands = AtomicLong(0L)
+    // Only the audio worker publishes. Odd means either of two atomic words is changing.
+    private val publicationVersion = AtomicLong(0L)
+    // stop()/begin() can race a UI read. A separate lifecycle epoch closes that seam.
+    private val lifecycleRevision = AtomicLong(0L)
+    private val bandCrossover = AudioVisualBandCrossover(sampleRate)
     @Volatile private var active = false
 
     // Only the render worker mutates these fields while active.
@@ -61,15 +72,20 @@ class AudioVisualTelemetry(
     /** Called before a new worker starts; never while another worker is alive. */
     fun begin() {
         active = false
+        lifecycleRevision.incrementAndGet()
         packed.set(0L)
+        packedBands.set(0L)
         resetAccumulators()
+        bandCrossover.resetAll()
         active = true
     }
 
     /** Immediately hide stale audio activity, including during asynchronous stop. */
     fun stop() {
         active = false
+        lifecycleRevision.incrementAndGet()
         packed.set(0L)
+        packedBands.set(0L)
     }
 
     /** Process the exact float PCM submitted to the track, after a successful write. */
@@ -96,12 +112,37 @@ class AudioVisualTelemetry(
 
     /** One coherent allocation on the reader, none on the render worker. */
     fun snapshot(): AudioVisualSnapshot {
-        val value = if (active) packed.get() else 0L
+        val session = lifecycleRevision.get()
+        if (!active) return AudioVisualSnapshot()
+        var levelBits = 0L
+        var bandBits = 0L
+        var coherent = false
+        // Never block the UI waiting for a render worker. A publication spans only
+        // two primitive atomic stores and at most 30 updates/second in production.
+        for (attempt in 0 until 8) {
+            val before = publicationVersion.get()
+            if ((before and 1L) != 0L) continue
+            val levels = packed.get()
+            val bands = packedBands.get()
+            val after = publicationVersion.get()
+            if (before == after && (after and 1L) == 0L) {
+                levelBits = levels
+                bandBits = bands
+                coherent = true
+                break
+            }
+        }
+        // Stop/fast restart always suppresses stale meter windows, even if the
+        // reader straddled a session while the worker published concurrently.
+        if (!coherent || !active || session != lifecycleRevision.get()) return AudioVisualSnapshot()
         return AudioVisualSnapshot(
-            rms = decode((value ushr 48) and 0xffffL),
-            peak = decode((value ushr 32) and 0xffffL),
-            transient = decode((value ushr 16) and 0xffffL),
-            brightness = decode(value and 0xffffL),
+            rms = decode((levelBits ushr 48) and 0xffffL),
+            peak = decode((levelBits ushr 32) and 0xffffL),
+            transient = decode((levelBits ushr 16) and 0xffffL),
+            brightness = decode(levelBits and 0xffffL),
+            lowBand = decode((bandBits ushr 48) and 0xffffL),
+            midBand = decode((bandBits ushr 32) and 0xffffL),
+            highBand = decode((bandBits ushr 16) and 0xffffL),
         )
     }
 
@@ -120,6 +161,9 @@ class AudioVisualTelemetry(
         precedingLeft = left
         precedingRight = right
         havePreceding = true
+        // Same sanitized stereo frames, after a successful full AudioTrack write.
+        // This crossover has no frame-time allocations, locks, or FFT buffers.
+        bandCrossover.observe(left, right)
 
         windowFrames++
         if (windowFrames >= framesPerPublication) publishWindow()
@@ -138,12 +182,27 @@ class AudioVisualTelemetry(
         val brightness = if (rms < .0001f) 0f else
             (sumDifference / (2.0 * sumAbsolute + 1e-9)).toFloat().coerceIn(0f, 1f)
 
-        // A stop may race the final frame. A stopped UI always reads zero.
+        // Approximate THREE BROAD CROSSOVER BANDS, not individual spectral bins.
+        // Near-silence is explicitly dark, even when IIR filter memory decays.
+        val audible = rms >= .0001f
+        val lowBand = if (audible) bandCrossover.lowFraction else 0f
+        val midBand = if (audible) bandCrossover.midFraction else 0f
+        val highBand = if (audible) bandCrossover.highFraction else 0f
+
+        // Stop can race the final audio frame; active reader gating keeps it dark.
+        // Publish both 64-bit words inside an odd/even worker-only sequence so the
+        // Compose reader never invents mismatched level and timbre windows.
         if (active) {
-            val bits = (encode(rms) shl 48) or (encode(peak) shl 32) or
+            val levelBits = (encode(rms) shl 48) or (encode(peak) shl 32) or
                 (encode(transient) shl 16) or encode(brightness)
-            packed.set(bits)
+            val bandBits = (encode(lowBand) shl 48) or (encode(midBand) shl 32) or
+                (encode(highBand) shl 16)
+            publicationVersion.incrementAndGet()
+            packed.set(levelBits)
+            packedBands.set(bandBits)
+            publicationVersion.incrementAndGet()
         }
+        bandCrossover.resetWindow()
         windowFrames = 0
         sumSquared = 0.0
         windowPeak = 0f

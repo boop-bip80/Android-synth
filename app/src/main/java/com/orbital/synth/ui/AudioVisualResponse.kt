@@ -16,6 +16,10 @@ internal data class AudioVisualResponse(
     val energyBoost: Float,
     val radiusBoost: Float,
     val filamentBoost: Float,
+    /** Real accepted-PCM spectral contrast: three broad crossover energy lanes. */
+    val lowGold: Float = 0f,
+    val midViolet: Float = 0f,
+    val highCyan: Float = 0f,
 ) {
     companion object {
         fun from(
@@ -23,6 +27,9 @@ internal data class AudioVisualResponse(
             peak: Float,
             transient: Float,
             brightness: Float,
+            lowBand: Float = 0f,
+            midBand: Float = 0f,
+            highBand: Float = 0f,
         ): AudioVisualResponse {
             fun safe(value: Float): Float =
                 if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
@@ -31,6 +38,16 @@ internal data class AudioVisualResponse(
             val p = safe(peak)
             val hit = safe(transient)
             val bright = safe(brightness)
+            val low = safe(lowBand)
+            val mid = safe(midBand)
+            val high = safe(highBand)
+            val total = low + mid + high
+            // Bands are normalized relative energy, not absolute brightness.
+            // Silence or an old host without these meters MUST leave artwork unchanged.
+            val audible = if (r > .004f || p > .02f) {
+                (r * 2.6f + p * .5f).coerceIn(0f, 1f)
+            } else 0f
+            val bandScale = if (total >= .0001f) audible / total else 0f
             return AudioVisualResponse(
                 rms = r,
                 peak = p,
@@ -39,6 +56,9 @@ internal data class AudioVisualResponse(
                 energyBoost = .13f * r + .09f * p,
                 radiusBoost = .08f * r + .035f * p,
                 filamentBoost = .032f * r + .020f * bright,
+                lowGold = low * bandScale,
+                midViolet = mid * bandScale,
+                highCyan = high * bandScale,
             )
         }
     }

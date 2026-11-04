@@ -22,7 +22,13 @@ class SequenceDirectoryStore(private val directory: Path) {
         return directory.resolve(id + extension)
     }
 
+    /** Reject a substituted bank directory before touching any sequence data. */
+    private fun rejectSymlinkedBank() {
+        require(!Files.isSymbolicLink(directory)) { "Sequence bank cannot be a symlink" }
+    }
+
     fun save(sequence: UserSequence) {
+        rejectSymlinkedBank()
         Files.createDirectories(directory)
         require(Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
             "Sequence bank must be a real directory"
@@ -48,6 +54,7 @@ class SequenceDirectoryStore(private val directory: Path) {
     }
 
     fun load(id: String): UserSequence? {
+        rejectSymlinkedBank()
         val source = pathFor(id)
         if (!Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) return null
         require(Files.size(source) <= SequenceCodec.MAX_BYTES) { "Stored sequence too large" }
@@ -59,6 +66,7 @@ class SequenceDirectoryStore(private val directory: Path) {
     }
 
     fun list(): List<UserSequence> {
+        rejectSymlinkedBank()
         if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return emptyList()
         val ids = Files.newDirectoryStream(directory, "*" + extension).use { files ->
             files.map { it.fileName.toString().removeSuffix(extension) }
@@ -70,5 +78,10 @@ class SequenceDirectoryStore(private val directory: Path) {
         return ids.mapNotNull(::load)
     }
 
-    fun delete(id: String): Boolean = Files.deleteIfExists(pathFor(id))
+    fun delete(id: String): Boolean {
+        rejectSymlinkedBank()
+        val path = pathFor(id)
+        require(!Files.isSymbolicLink(path)) { "Refusing to delete sequence symlink" }
+        return Files.deleteIfExists(path)
+    }
 }

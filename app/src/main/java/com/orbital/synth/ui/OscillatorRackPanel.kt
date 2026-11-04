@@ -418,7 +418,10 @@ fun OscillatorRackPanel(
                             layer.copy(enabled = true, level = .28f, morph = 1f),
                         )
                     },
-                    modifier = Modifier.testTag("oscillatorEnable"),
+                    // TextButton's visible glyph can be only 35dp tall on
+                    // compact Android windows. The actual node needs a full
+                    // physical 48dp finger target, not just a semantics click.
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("oscillatorEnable"),
                 ) { Text("+ ADD OSCILLATOR", color = OrbitalPalette.Cyan, fontSize = 13.sp) }
             }
         }

@@ -16,10 +16,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -49,8 +52,13 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -123,9 +131,10 @@ fun ModulationConstellationPanel(
             fontSize = 10.sp,
             fontFamily = FontFamily.Monospace,
         )
-        ConstellationGraph(lanes, patch, current)
+        ConstellationGraph(lanes, patch, current, stepConfig)
         Text(
-            "Animated cables change real audio; dim static cables are saved for future DSP. This graph is not a measured spectrum.",
+            "Moving photons are decorative paths for configured, enabled periodic DSP sources; " +
+                "they are NOT measured PCM, LFO phase or loudness. Silent, touch and unwired routes stay static.",
             color = OrbitalPalette.Muted,
             fontSize = 10.sp,
         )
@@ -179,42 +188,64 @@ fun ModulationConstellationPanel(
 
         Text("PATCH BAY  /  SELECT ANY OF 64 ROUTES", color = OrbitalPalette.Text,
             fontSize = 11.sp, letterSpacing = .7.sp)
-        Column(Modifier.testTag("modulationRouteGrid")) {
-            repeat(8) { row ->
-                Row(Modifier.fillMaxWidth()) {
-                    repeat(8) { col ->
-                        val index = row * 8 + col
-                        val route = patch[index]
-                        val selected = index == current
-                        val tint = if (route.enabled) sourceTint(route.source) else OrbitalPalette.Muted
-                        val live = route.enabled &&
-                            ModulationConstellationModel.audibleTarget(route.destination)
-                        Box(
-                            Modifier.weight(1f).padding(2.dp).height(39.dp)
-                                .border(
-                                    if (selected) 1.4.dp else .6.dp,
-                                    if (selected) OrbitalPalette.Gold else tint.copy(alpha = .45f),
-                                    RoundedCornerShape(7.dp),
+        BoxWithConstraints(Modifier.fillMaxWidth().testTag("modulationRouteGrid")) {
+            // maxWidth is the REAL inside-panel width after its 12dp side
+            // padding; six columns fit 350/360dp phones without sub-48dp
+            // thumbs. Larger screens can fit up to eight, reflowing all 64 IDs.
+            val columns = ModulationRouteGridSizing.columnsForWidth(maxWidth.value)
+            Column {
+                repeat(ModulationRouteGridSizing.rowsFor(64, columns)) { row ->
+                    Row(Modifier.fillMaxWidth()) {
+                        repeat(columns) { col ->
+                            val index = ModulationRouteGridSizing.index(row, col, columns)
+                            if (index >= ModulationRouteGridSizing.ROUTES) {
+                                // Final partial row keeps the SAME cell width.
+                                Spacer(Modifier.weight(1f))
+                            } else {
+                                val route = patch[index]
+                                val isSelected = index == current
+                                // A destination being DSP-capable does NOT make
+                                // this routed source audible.
+                                val live = ModulationSourceAvailability.showConfiguredPhoton(
+                                    route, lanes, stepConfig,
                                 )
-                                .background(
-                                    if (live) tint.copy(alpha = .15f)
-                                    else if (route.enabled) tint.copy(alpha = .06f)
-                                    else Color(0xFF061020), RoundedCornerShape(7.dp),
-                                )
-                                .clickable(role = Role.Button) { current = index }
-                                .semantics {
-                                    contentDescription = "Route " + (index + 1) +
-                                        (if (!route.enabled) ", empty"
-                                        else if (live) ", audible" else ", reserved")
+                                val tint = when {
+                                    !route.enabled -> OrbitalPalette.Muted
+                                    live -> sourceTint(route.source)
+                                    else -> sourceTint(route.source).copy(alpha = .55f)
                                 }
-                                .testTag("modRouteSlot" + index),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                ModulationConstellationModel.slotLabel(index),
-                                color = if (selected) OrbitalPalette.Gold else tint,
-                                fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-                            )
+                                Box(
+                                    Modifier.weight(1f).padding(2.dp).height(48.dp)
+                                        .border(
+                                            if (isSelected) 1.4.dp else .6.dp,
+                                            if (isSelected) OrbitalPalette.Gold
+                                            else tint.copy(alpha = .45f),
+                                            RoundedCornerShape(7.dp),
+                                        )
+                                        .background(
+                                            if (live) tint.copy(alpha = .15f)
+                                            else if (route.enabled) tint.copy(alpha = .06f)
+                                            else Color(0xFF061020), RoundedCornerShape(7.dp),
+                                        )
+                                        .clickable(role = Role.Button) { current = index }
+                                        .semantics {
+                                            selected = isSelected
+                                            contentDescription = "Route " + (index + 1) +
+                                                (if (!route.enabled) ", empty"
+                                                else ", " + ModulationSourceAvailability.routeStatus(
+                                                    route, lanes, stepConfig,
+                                                ))
+                                        }
+                                        .testTag("modRouteSlot" + index),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        ModulationConstellationModel.slotLabel(index),
+                                        color = if (isSelected) OrbitalPalette.Gold else tint,
+                                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -238,17 +269,18 @@ fun ModulationConstellationPanel(
                         color = OrbitalPalette.Gold, fontSize = 15.sp,
                         fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                     Text(
-                        when {
-                            !chosen.enabled -> "AVAILABLE SLOT"
-                            ModulationConstellationModel.audibleTarget(chosen.destination) ->
-                                "LIVE AUDIO CONNECTION"
-                            else -> "SAVED / DSP RESERVED"
-                        },
-                        color = if (chosen.enabled &&
-                            ModulationConstellationModel.audibleTarget(chosen.destination))
-                            OrbitalPalette.Teal else OrbitalPalette.Muted,
+                        ModulationSourceAvailability.routeStatus(chosen, lanes, stepConfig),
+                        color = if (ModulationSourceAvailability.showConfiguredPhoton(
+                            chosen, lanes, stepConfig
+                        )) OrbitalPalette.Teal else OrbitalPalette.Gold,
                         fontSize = 9.sp,
                         modifier = Modifier.testTag("modulationConnectionState"),
+                    )
+                    Text(
+                        ModulationSourceAvailability.sourceLabel(chosen.source),
+                        color = OrbitalPalette.Muted,
+                        fontSize = 9.sp,
+                        modifier = Modifier.testTag("modulationSourceAvailability"),
                     )
                 }
                 Row {
@@ -272,7 +304,7 @@ fun ModulationConstellationPanel(
             ) {
                 EnumPicker(
                     "SOURCE", chosen.source, ModSource.entries,
-                    { ModulationConstellationModel.enumLabel(it.name) },
+                    { ModulationSourceAvailability.pickerLabel(it) },
                     { onRouteChange(current, chosen.copy(source = it, enabled = true)) }, Modifier.weight(1f),
                 )
                 Text("→", color = OrbitalPalette.Gold, fontSize = 22.sp)
@@ -293,17 +325,40 @@ fun ModulationConstellationPanel(
                 color = if (chosen.depth >= 0f) OrbitalPalette.Cyan else OrbitalPalette.Violet,
                 fontSize = 12.sp, fontFamily = FontFamily.Monospace,
             )
-            Slider(
-                value = chosen.depth.coerceIn(-4f, 4f),
-                onValueChange = { onRouteChange(current, chosen.copy(depth = it, enabled = true)) },
-                valueRange = -4f..4f,
-                modifier = Modifier.fillMaxWidth().testTag("modulationDepthSlider"),
-                colors = SliderDefaults.colors(
-                    thumbColor = OrbitalPalette.Gold,
-                    activeTrackColor = OrbitalPalette.Cyan,
-                    inactiveTrackColor = OrbitalPalette.DeepBlue,
-                ),
-            )
+            // Material3 Slider exposes an inner 44dp semantics region even
+            // when its outer Modifier requests 56dp. Expose one 56dp target
+            // with an explicit SetProgress action routed to the SAME state
+            // callback as actual finger movement. A semantics merge alone
+            // cannot import Slider's independent SetProgress boundary.
+            Box(
+                modifier = Modifier.fillMaxWidth().height(56.dp)
+                    .semantics(mergeDescendants = true) {
+                        progressBarRangeInfo = ProgressBarRangeInfo(
+                            chosen.depth.coerceIn(-4f, 4f), -4f..4f,
+                        )
+                        setProgress { progress ->
+                            onRouteChange(
+                                current,
+                                chosen.copy(depth = progress.coerceIn(-4f, 4f), enabled = true),
+                            )
+                            true
+                        }
+                    }
+                    .testTag("modulationDepthSlider"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Slider(
+                    value = chosen.depth.coerceIn(-4f, 4f),
+                    onValueChange = { onRouteChange(current, chosen.copy(depth = it, enabled = true)) },
+                    valueRange = -4f..4f,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = OrbitalPalette.Gold,
+                        activeTrackColor = OrbitalPalette.Cyan,
+                        inactiveTrackColor = OrbitalPalette.DeepBlue,
+                    ),
+                )
+            }
             Text(
                 ModulationConstellationModel.destinationStatus(chosen.destination),
                 color = if (ModulationConstellationModel.audibleTarget(chosen.destination))
@@ -313,8 +368,7 @@ fun ModulationConstellationPanel(
             )
         }
         Text(
-            "LIVE AUDIO TARGETS  /  PITCH · MORPH · CUTOFF · RESONANCE · AMP · PAN. " +
-                "All other destinations remain saved/editable but are not yet audible.",
+            ModulationConstellationModel.liveTargetsLegend,
             color = OrbitalPalette.Muted, fontSize = 10.sp,
             modifier = Modifier.testTag("modulationLiveDestinationsLegend"),
         )
@@ -354,14 +408,29 @@ private fun StepRhythmPanel(
                 onChange(config.copy(enabled = !config.enabled))
             }
         }
-        repeat(2) { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                repeat(8) { column ->
-                    val index = row * 8 + column
-                    StepRhythmPad(
-                        index, config, config.enabled && index == playhead,
-                        onChange, Modifier.weight(1f),
-                    )
+        BoxWithConstraints(Modifier.fillMaxWidth().testTag("modStepPadGrid")) {
+            // The STEP editor is nested inside two padded panels. Eight fixed
+            // columns made its real phone hit boxes narrower than 48dp. Use
+            // the same measured-width policy and 2dp gutters as the route bank;
+            // preserve all sixteen IDs while adding scrollable rows as needed.
+            val columns = ModulationRouteGridSizing.columnsForWidth(maxWidth.value)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                repeat(ModulationRouteGridSizing.rowsFor(config.values.size, columns)) { row ->
+                    Row(Modifier.fillMaxWidth()) {
+                        repeat(columns) { column ->
+                            val index = ModulationRouteGridSizing.index(row, column, columns)
+                            if (index >= config.values.size) {
+                                Spacer(Modifier.weight(1f))
+                            } else {
+                                StepRhythmPad(
+                                    index, config, config.enabled && index == playhead,
+                                    onChange, Modifier.weight(1f).padding(
+                                        horizontal = ModulationRouteGridSizing.CELL_GUTTER_DP.dp,
+                                    ),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -450,6 +519,21 @@ private fun StepRhythmPad(
                 .semantics {
                     contentDescription = "STEP pad " + (index + 1) +
                         ", " + ("%.2f".format(value)) + ", tap vertically to edit"
+                    stateDescription = java.lang.String.format(
+                        java.util.Locale.getDefault(), "%+.2f bipolar", value,
+                    )
+                    progressBarRangeInfo = ProgressBarRangeInfo(value, -1f..1f)
+                    // A described Canvas is not enough for TalkBack/Switch
+                    // Access. Publish through the SAME immutable host callback
+                    // as physical painting, without arming or resetting STEP.
+                    setProgress { requested ->
+                        if (!requested.isFinite()) return@setProgress false
+                        val bounded = requested.coerceIn(-1f, 1f)
+                        val current = latestConfig
+                        if (current.values[index] == bounded) return@setProgress false
+                        latestCallback(current.withStep(index, bounded))
+                        true
+                    }
                 }
                 .pointerInput(index) {
                     detectTapGestures { position ->
@@ -679,15 +763,24 @@ private fun ConstellationGraph(
     lfos: List<ModulationLfoConfig>,
     routes: List<ModulationRouteConfig>,
     selected: Int,
+    stepConfig: ModulationStepConfig?,
 ) {
     val motionAllowed = remember { ValueAnimator.areAnimatorsEnabled() }
-    val clock = rememberInfiniteTransition(label = "modulation-clock")
-    val phase by clock.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(9_000, easing = LinearEasing), RepeatMode.Restart),
-        label = "modulation-route-particles",
+    val eligibleForPhoton = ModulationSourceAvailability.hasAnimatedPeriodicRoute(
+        routes, lfos, stepConfig,
     )
-    val animate = if (motionAllowed) phase else 0f
+    // An unconditional infinite transition spins 60Hz Compose frames even if
+    // all 64 cables are empty/paused/unwired/zero. Keep the entire visual
+    // constellation still when there is nothing genuine to illustrate.
+    val animate = if (motionAllowed && eligibleForPhoton) {
+        val clock = rememberInfiniteTransition(label = "modulation-clock")
+        val phase by clock.animateFloat(
+            0f, 1f,
+            infiniteRepeatable(tween(9_000, easing = LinearEasing), RepeatMode.Restart),
+            label = "modulation-route-particles",
+        )
+        phase
+    } else 0f
     Canvas(
         Modifier.fillMaxWidth().height(212.dp)
             .border(1.dp, OrbitalPalette.PanelEdge, RoundedCornerShape(14.dp))
@@ -742,12 +835,16 @@ private fun ConstellationGraph(
             val control1 = Offset(w * .42f, sy + (ey - sy) * .05f)
             val control2 = Offset(w * .58f, ey - (ey - sy) * .05f)
             val tint = sourceTint(route.source)
-            val audible = ModulationConstellationModel.audibleTarget(route.destination)
+            val dspDestination = ModulationConstellationModel.audibleTarget(route.destination)
+            val illustratedGenerator = ModulationSourceAvailability.showConfiguredPhoton(
+                route, lfos, stepConfig
+            )
             val alpha = when {
-                index == selected && audible -> .93f
+                index == selected && illustratedGenerator -> .93f
                 index == selected -> .58f
-                audible -> .54f
-                else -> .25f
+                illustratedGenerator -> .54f
+                dspDestination -> .32f
+                else -> .18f
             }
             val stroke = if (index == selected) 2.0.dp.toPx() else .9.dp.toPx()
             val path = Path().apply {
@@ -759,9 +856,11 @@ private fun ConstellationGraph(
             drawPath(path, tint.copy(alpha = alpha),
                 style = Stroke(width = stroke, cap = StrokeCap.Round))
             drawCircle(tint.copy(alpha = alpha), 2.4.dp.toPx(), Offset(ex, ey))
-            // Photons imply an active connection to DSP; reserved cables never
-            // show animated audio flow even when their metadata is enabled.
-            if (motionAllowed && audible) {
+            // Decorative particles require an actually enabled *periodic*
+            // source and nonzero signed depth, NOT merely a configured DSP
+            // destination. TOUCH/UNWIRED/paused/zero routes remain static;
+            // even eligible photons are never measured PCM or actual LFO phase.
+            if (motionAllowed && illustratedGenerator) {
                 val t = (animate + index * .17f) % 1f
                 val q = 1f - t
                 fun bezier(a: Float, b: Float, c: Float, d: Float): Float =

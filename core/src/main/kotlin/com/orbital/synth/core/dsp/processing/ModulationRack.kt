@@ -166,6 +166,22 @@ class ModulationRack(
         stepSequencer.advance(samples)
     }
 
+    /**
+     * Prime destination slews to their dry normalized baseline without
+     * advancing LFO/STEP phase or evaluating any routes. Called only at the
+     * worker's block boundary while every published DSP cable is dormant.
+     * A zero-depth -> live depth gesture then begins from dry, without a
+     * one-sample full-depth jump on first activation.
+     */
+    fun primeSmoothingAtBase(base: FloatArray) {
+        require(base.size >= ModDestination.entries.size)
+        for (i in smoothedValues.indices) {
+            val value = base[i]
+            smoothedValues[i] = if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
+            smoothingReady[i] = true
+        }
+    }
+
     /** Useful when loading a new preset: avoids old glide targets leaking in. */
     fun resetSmoothing() {
         smoothingReady.fill(false)

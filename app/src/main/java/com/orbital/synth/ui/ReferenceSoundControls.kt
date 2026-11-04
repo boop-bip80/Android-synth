@@ -19,6 +19,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -33,11 +35,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -77,6 +83,9 @@ fun ReferenceSoundControls(
     compact: Boolean = false,
     showExpressionRibbon: Boolean = true,
     synthSampleRate: Int = 48_000,
+    /** Existing destinations only; null leaves standalone previews read-only. */
+    onOpenMiniSignal: ((ReferenceMiniSignalDestination) -> Unit)? = null,
+    canEditModulationRack: Boolean = false,
 ) {
     fun param(id: ParameterId): Float =
         ReferenceSoundUiModel.normalized(parameters[id] ?: .5f)
@@ -107,10 +116,19 @@ fun ReferenceSoundControls(
                 },
             )
         }
-        Row(
-            Modifier.fillMaxWidth().testTag("referenceKnobRack"),
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
+        Box(Modifier.fillMaxWidth().testTag("referenceKnobRack")) {
+            // The five *existing functional* controls float over this cheap,
+            // host-macro/accepted-PCM-linked holographic circuit path.
+            // Its Canvas is behind the entire Row and owns NO pointer input.
+            ReferenceHolographicControlBus(
+                macros = ReferenceSoundUiModel.knobOrder.map { param(it) },
+                acceptedRms = audioRms,
+                modifier = Modifier.matchParentSize(),
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
             val tints = listOf(
                 OrbitalPalette.Violet, OrbitalPalette.Cyan, OrbitalPalette.Gold,
                 OrbitalPalette.Violet, OrbitalPalette.Cyan,
@@ -141,6 +159,7 @@ fun ReferenceSoundControls(
                     spokenValue = value.spoken,
                     compactTypography = compact,
                 )
+            }
             }
         }
 
@@ -191,17 +210,29 @@ fun ReferenceSoundControls(
                 values = envelope,
                 tint = OrbitalPalette.Violet,
                 tag = "referenceMiniEnv",
+                editorLabel = "Edit ADSR envelope",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
+                onOpen = onOpenMiniSignal
+                    ?.takeIf { ReferenceMiniSignalDestination.ENVELOPE.canOpen(canEditModulationRack) }
+                    ?.let { handler -> { handler(ReferenceMiniSignalDestination.ENVELOPE) } },
             )
             ReferenceMiniSignal(
                 title = "LFO",
-                caption = if (lfo == null) "OFF" else lfo.shape.name.take(5),
+                caption = if (!canEditModulationRack && onOpenMiniSignal != null)
+                    "CORE" // Wires to the legacy core LFO when rack edits are disconnected.
+                else if (lfo == null) "OFF" else lfo.shape.name.take(5),
                 values = lfoPreview,
                 tint = OrbitalPalette.Cyan,
                 tag = "referenceMiniLfo",
+                editorLabel = if (canEditModulationRack)
+                    "Edit matching configured eight-LFO source"
+                else "Edit core LFO rate and depth",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
+                onOpen = onOpenMiniSignal
+                    ?.takeIf { ReferenceMiniSignalDestination.LFO.canOpen(canEditModulationRack) }
+                    ?.let { handler -> { handler(ReferenceMiniSignalDestination.LFO) } },
             )
             ReferenceMiniSignal(
                 title = "EXPR",
@@ -209,17 +240,27 @@ fun ReferenceSoundControls(
                 values = expressionPreview,
                 tint = OrbitalPalette.Gold,
                 tag = "referenceMiniExpr",
+                editorLabel = "Edit XY routing modes",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
+                onOpen = onOpenMiniSignal
+                    ?.takeIf { ReferenceMiniSignalDestination.EXPRESSION.canOpen(canEditModulationRack) }
+                    ?.let { handler -> { handler(ReferenceMiniSignalDestination.EXPRESSION) } },
             )
             ReferenceMiniSignal(
                 title = "MOD",
-                caption = liveRouteCount.toString() + " LIVE",
+                // Counts configured nonzero destination routes; some saved
+                // sources are not DSP-wired, so \"LIVE\" would be misleading.
+                caption = liveRouteCount.toString() + " SET",
                 values = routePreview,
                 tint = OrbitalPalette.Violet,
                 tag = "referenceMiniMod",
+                editorLabel = "Edit 64-route modulation matrix",
                 modifier = Modifier.weight(1f),
                 height = if (compact) 64.dp else 80.dp,
+                onOpen = onOpenMiniSignal
+                    ?.takeIf { ReferenceMiniSignalDestination.MODULATION.canOpen(canEditModulationRack) }
+                    ?.let { handler -> { handler(ReferenceMiniSignalDestination.MODULATION) } },
             )
         }
     }
@@ -612,22 +653,69 @@ private fun ReferenceMiniSignal(
     values: List<Float>,
     tint: Color,
     tag: String,
+    editorLabel: String,
     modifier: Modifier,
     height: Dp,
+    onOpen: (() -> Unit)?,
 ) {
+    // SOUND PCM telemetry updates at 20Hz. Keep one physical detector across
+    // those recompositions; only swap its latest routing callback.
+    val latestOpen by rememberUpdatedState(onOpen)
+    var pressed by remember { mutableStateOf(false) }
     Column(
         modifier
             .height(height)
-            .border(1.dp, tint.copy(alpha = .42f), RoundedCornerShape(8.dp))
-            .background(
-                Brush.verticalGradient(listOf(ReferenceGlass, ReferenceBlack)),
+            .border(
+                1.dp, tint.copy(alpha = when {
+                    pressed -> .98f
+                    onOpen != null -> .72f
+                    else -> .42f
+                }),
                 RoundedCornerShape(8.dp),
+            )
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        if (pressed) tint.copy(alpha = .15f) else ReferenceGlass,
+                        ReferenceBlack,
+                    ),
+                ),
+                RoundedCornerShape(8.dp),
+            )
+            // A real full-card finger target. Use a separate semantics click
+            // so the original caption Text nodes remain discoverable to tests
+            // and assistive navigation (clickable would merge them away).
+            .then(
+                if (onOpen != null) Modifier.pointerInput(Unit) {
+                    detectTapGestures(
+                        onPress = {
+                            pressed = true
+                            try {
+                                tryAwaitRelease()
+                            } finally {
+                                pressed = false
+                            }
+                        },
+                        onTap = { latestOpen?.invoke() },
+                    )
+                } else Modifier
             )
             .padding(horizontal = 5.dp, vertical = 5.dp)
             .testTag(tag)
             .semantics {
                 contentDescription = title + " configured preview, " + caption +
-                    ". This is not sampled audio"
+                    ". This is not sampled audio. " +
+                    (if (onOpen != null) "Double tap to " + editorLabel + "." else
+                        "Editing unavailable in this view.")
+                if (onOpen != null) {
+                    stateDescription = if (pressed) "Touch engaged" else "Ready to edit"
+                    role = Role.Button
+                    onClick(label = editorLabel) {
+                        val action = latestOpen ?: return@onClick false
+                        action()
+                        true
+                    }
+                }
             },
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
@@ -641,10 +729,36 @@ private fun ReferenceMiniSignal(
         Canvas(Modifier.fillMaxWidth().height(if (height <= 64.dp) 29.dp else 45.dp)) {
             if (values.size < 2) return@Canvas
             val path = Path()
+            val glassFill = Path()
             values.forEachIndexed { index, raw ->
                 val px = index.toFloat() / (values.size - 1) * size.width
                 val py = size.height * (1f - ReferenceSoundUiModel.normalized(raw))
-                if (index == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                if (index == 0) {
+                    path.moveTo(px, py)
+                    glassFill.moveTo(px, py)
+                } else {
+                    path.lineTo(px, py)
+                    glassFill.lineTo(px, py)
+                }
+            }
+            glassFill.lineTo(size.width, size.height)
+            glassFill.lineTo(0f, size.height)
+            glassFill.close()
+            // Saved config traces get genuine dimensional glass: no new
+            // measured spectrum, animation clock, hidden audio state or GPU blur.
+            drawPath(
+                glassFill,
+                Brush.verticalGradient(
+                    listOf(tint.copy(alpha = .13f), tint.copy(alpha = .025f),
+                        Color.Transparent),
+                ),
+            )
+            for (division in 1..3) {
+                val x = size.width * division / 4f
+                drawLine(
+                    tint.copy(alpha = .075f),
+                    Offset(x, 0f), Offset(x, size.height), .6.dp.toPx(),
+                )
             }
             drawLine(tint.copy(alpha = .11f),
                 Offset(0f, size.height * .5f),
@@ -653,6 +767,15 @@ private fun ReferenceMiniSignal(
                 style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round))
             drawPath(path, tint,
                 style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round))
+            val terminal = Offset(
+                (size.width - 2.dp.toPx()).coerceAtLeast(0f),
+                size.height *
+                    (1f - ReferenceSoundUiModel.normalized(values.last())),
+            )
+            drawCircle(tint.copy(alpha = .21f), radius = 5.dp.toPx(),
+                center = terminal)
+            drawCircle(Color.White.copy(alpha = .87f), radius = 1.3.dp.toPx(),
+                center = terminal)
         }
     }
 }

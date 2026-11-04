@@ -31,15 +31,31 @@ finish_compact_e2e() {
 }
 trap finish_compact_e2e EXIT
 
+# Only the display geometry differs in this lane; no special build flags are
+# needed. Consume the same-run HOST/lint APK instead of compiling under QEMU.
+# Fail closed if artifact delivery is missing/corrupt; do not rebuild a substitute.
+app_apk=app/build/outputs/apk/debug/app-debug.apk
+printf '%s\n' 'host-apk-preflight' > "$stage_file"
+if [[ ! -s "$app_apk" ]]; then
+  printf '%s\n' 'COMPACT requires the same-run orbital-debug-apk host artifact.' >&2
+  exit 1
+fi
+unzip -tq "$app_apk"
+unzip -Z1 "$app_apk" | grep -Fx 'AndroidManifest.xml' >/dev/null
+{
+  printf 'source_sha=%s\nrun_id=%s\napk_source=orbital-debug-apk\n' \
+    "${GITHUB_SHA:-unavailable}" "${GITHUB_RUN_ID:-unavailable}"
+  sha256sum "$app_apk"
+} | tee artifacts/compact-apk-provenance.txt
+
 for attempt in {1..40}; do
   if timeout 8s adb shell pm list packages com.android.settings 2>/dev/null | grep -q 'package:com.android.settings'; then
     break
   fi
   sleep 2
 done
-printf '%s\n' 'build-install' > "$stage_file"
-timeout 15m gradle :app:assembleDebug --no-daemon --console=plain
-timeout 120s adb install -r app/build/outputs/apk/debug/app-debug.apk
+printf '%s\n' 'host-apk-install' > "$stage_file"
+timeout 120s adb install -r "$app_apk"
 
 raw_density="$(timeout 10s adb shell wm density | tr -d '\r' | grep -Eo '[0-9]+' | tail -n 1)"
 if [[ ! "$raw_density" =~ ^[0-9]+$ ]] || (( raw_density < 120 || raw_density > 1000 )); then

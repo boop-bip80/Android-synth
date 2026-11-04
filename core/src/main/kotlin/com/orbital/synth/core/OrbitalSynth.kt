@@ -108,6 +108,16 @@ class OrbitalSynth(
     private val filterControlInterval = max(1, sampleRate / 800)
     private var filterControlFrame = 0
     private var wasFilterRoutingActive = false
+    // A held note's conservative wavetable mip/fade reservation must not change
+    // solely because the audio host chose 192 vs 512 frames per callback.
+    // A removed PITCH cable still de-clicks at audio rate; retain its +6-semitone
+    // alias-safety headroom until the sounding note and its tails are finished.
+    // This is worker-owned state, never read or written by the UI thread.
+    private var pitchMipReservationWhileSounding = false
+    // Per-layer pitch release must not change a held note's harmonic ceiling
+    // at whichever callback boundary happens to follow the last slew sample.
+    // Reserve only the lanes actually routed during this sounding interval.
+    private var oscillatorPitchMipReservationWhileSounding = 0
     private val events = ConcurrentLinkedQueue<Event>()
     // Only note/source events reserve slots; hostile MIDI floods cannot retain an
     // unbounded queue or strand releases behind millions of stale note-ons.
@@ -306,7 +316,8 @@ class OrbitalSynth(
     /**
      * Freely route any of eight LFOs, touch/pressure expression or other
      * modulator sources. Real audio targets: MORPH, PITCH, CUTOFF,
-     * RESONANCE, AMP and PAN. All other typed targets remain reserved.
+     * RESONANCE, AMP, PAN, OSC1..OSC8_GAIN and OSC1..OSC8_PITCH.
+     * Remaining typed targets are reserved until their DSP engines exist.
      * Edits replace bounded atomic snapshots (no unbounded event queue).
      */
     fun setModulationRoute(
@@ -572,7 +583,23 @@ class OrbitalSynth(
             voice.configureEngine(engineModel, character, cutoffHz.toFloat(),
                 resonance, wave, morph, updateFilter = !filterRoutingActive)
         }
+        // Reset BEFORE processing newly queued notes: a fresh dry note after
+        // full silence must never inherit an older note's mip reservation.
+        if (voices.none { it.active || it.hasTail }) {
+            pitchMipReservationWhileSounding = false
+            oscillatorPitchMipReservationWhileSounding = 0
+            // A voice can end INSIDE the preceding callback. If a new note is
+            // queued immediately, there is no idle callback/advanceSilence()
+            // to clear its old oscillator slew. Retire those inaudible values
+            // now, using the current route masks already observed by syncBlock.
+            liveModulation.resetOscillatorModulationWhileSilent()
+        }
         drainEvents(glideSec, wave, morph)
+        if (voices.any { it.active || it.hasTail }) {
+            if (liveModulation.pitchRouteActive) pitchMipReservationWhileSounding = true
+            oscillatorPitchMipReservationWhileSounding =
+                oscillatorPitchMipReservationWhileSounding or liveModulation.oscillatorPitchMipMask
+        }
         for (slot in 0 until fxSlotCount) {
             blockFxSlots[slot] = fxSlots.get(slot)
             modularFx.setSlot(slot, blockFxSlots[slot])
@@ -581,8 +608,11 @@ class OrbitalSynth(
 
         // Reserve room for upward bend and vibrato when selecting anti-alias mip levels.
         val highestPitchMultiplier = 2.0.pow((max(0.0, pitchBend) +
-            modulationDepth * 0.5 + (if (liveModulation.pitchRouteActive) 6.0 else 0.0)) / 12.0)
-        for (voice in voices) voice.preparePitch(highestPitchMultiplier)
+            modulationDepth * 0.5 + (if (pitchMipReservationWhileSounding) 6.0 else 0.0)) / 12.0)
+        // Headroom is per routed oscillator, so an OSC1 pitch cable cannot
+        // dull OSC2..OSC8's unrelated wavetable/mip selection.
+        val oscillatorPitchMipMask = oscillatorPitchMipReservationWhileSounding
+        for (voice in voices) voice.preparePitch(highestPitchMultiplier, oscillatorPitchMipMask)
 
         var active = 0
         for (voice in voices) if (voice.active) active++
@@ -677,11 +707,22 @@ class OrbitalSynth(
                 (pitchBend + vibratoSemitones + routedPitchSemitones) / 12.0
             )
 
+            // These arrays are constructed once per synthesizer. The worker
+            // updates them once per sample, then all sixteen voices consume
+            // the same eight immutable-for-this-frame bus values.
+            val oscillatorRouteActive = liveModulation.oscillatorModulationActive
+            val oscillatorGains = if (oscillatorRouteActive)
+                liveModulation.oscillatorGainMultipliers else null
+            val oscillatorPitches = if (oscillatorRouteActive)
+                liveModulation.oscillatorPitchMultipliers else null
             var left = 0f
             var right = 0f
             for (voice in voices) {
                 if (voice.active || voice.hasTail) {
-                    val sample = voice.nextSample(wave, movingMorph, pitchMultiplier)
+                    val sample = voice.nextSample(
+                        wave, movingMorph, pitchMultiplier,
+                        oscillatorGains, oscillatorPitches,
+                    )
                     left += sample * voice.panLeft
                     right += sample * voice.panRight
                 }

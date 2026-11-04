@@ -443,12 +443,12 @@ class AndroidAudioOutput(
                 if (restartAllowed || boundedRecovery) {
                     if (!start()) {
                         failureRecovery.publishFatalNotice(
-                            "Audio output could not restart. Reopen the app to retry."
+                            "Audio output could not restart. Check your device audio settings and try again."
                         )
                     }
                 } else if (sameForegroundFailure) {
                     failureRecovery.publishFatalNotice(
-                        "Audio output stopped unexpectedly. Reopen the app to retry."
+                        "Audio output stopped unexpectedly. Check your device audio settings and try again."
                     )
                 }
             }

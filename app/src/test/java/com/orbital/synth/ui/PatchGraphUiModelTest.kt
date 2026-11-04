@@ -22,7 +22,8 @@ class PatchGraphUiModelTest {
         routes: List<ModulationRouteConfig> = emptyList(),
         fx: List<FxModuleConfig> = List(6) { FxModuleConfig() },
         steps: ModulationStepConfig? = null,
-    ): PatchGraphSnapshot = PatchGraphUiModel.build(oscillators, lfos, routes, fx, steps)
+        bank: PatchGraphTargetBank = PatchGraphTargetBank.GLOBAL,
+    ): PatchGraphSnapshot = PatchGraphUiModel.build(oscillators, lfos, routes, fx, steps, bank)
 
     @Test fun physicalBackboneContainsOnlyRealFixedAudioEdges() {
         val graph = snapshot()
@@ -58,13 +59,24 @@ class PatchGraphUiModelTest {
                 ModDestination.PITCH, ModDestination.MORPH,
                 ModDestination.CUTOFF, ModDestination.RESONANCE,
                 ModDestination.AMP, ModDestination.PAN,
+                ModDestination.OSC1_GAIN, ModDestination.OSC2_GAIN,
+                ModDestination.OSC3_GAIN, ModDestination.OSC4_GAIN,
+                ModDestination.OSC5_GAIN, ModDestination.OSC6_GAIN,
+                ModDestination.OSC7_GAIN, ModDestination.OSC8_GAIN,
+                ModDestination.OSC1_PITCH, ModDestination.OSC2_PITCH,
+                ModDestination.OSC3_PITCH, ModDestination.OSC4_PITCH,
+                ModDestination.OSC5_PITCH, ModDestination.OSC6_PITCH,
+                ModDestination.OSC7_PITCH, ModDestination.OSC8_PITCH,
             ),
             PatchGraphUiModel.liveTargets,
         )
         assertEquals("CORE", PatchGraphUiModel.destinationEndpoint(ModDestination.MORPH))
         assertEquals("FILTER", PatchGraphUiModel.destinationEndpoint(ModDestination.CUTOFF))
         assertEquals("AMP", PatchGraphUiModel.destinationEndpoint(ModDestination.PAN))
-        assertNull(PatchGraphUiModel.destinationEndpoint(ModDestination.OSC1_GAIN))
+        assertEquals("OSC 1 GAIN",
+            PatchGraphUiModel.destinationEndpoint(ModDestination.OSC1_GAIN))
+        assertEquals("OSC 8 PITCH",
+            PatchGraphUiModel.destinationEndpoint(ModDestination.OSC8_PITCH))
         assertNull(PatchGraphUiModel.destinationEndpoint(ModDestination.DRIVE))
     }
 
@@ -92,15 +104,29 @@ class PatchGraphUiModelTest {
     }
 
     @Test fun reservedTargetsNeverProduceFictitiousAudioCable() {
-        val graph = snapshot(routes = listOf(
+        val routes = listOf(
             ModulationRouteConfig(true, ModSource.LFO1, ModDestination.DRIVE, .5f),
             ModulationRouteConfig(true, ModSource.LFO2, ModDestination.OSC2_PITCH, .4f),
             ModulationRouteConfig(true, ModSource.LFO3, ModDestination.PAN, .3f),
-        ))
-        assertEquals(2, graph.reservedRouteCount)
-        assertEquals(1, graph.liveRouteCount)
-        assertEquals(1, graph.patchCables.size)
-        assertEquals("BUSPAN", graph.patchCables.single().to.id)
+        )
+        val global = snapshot(routes = routes)
+        assertEquals(1, global.reservedRouteCount)
+        assertEquals(2, global.liveRouteCount)
+        assertEquals(1, global.hiddenLiveRouteCount)
+        assertEquals(1, global.patchCables.size)
+        assertEquals("BUSPAN", global.patchCables.single().to.id)
+        val osc2 = snapshot(
+            oscillators = List(8) {
+                OscillatorSlot(enabled = it == 1, level = if (it == 1) .55f else 0f)
+            },
+            routes = routes,
+            bank = PatchGraphTargetBank.OSC2,
+        )
+        assertEquals(1, osc2.patchCables.size)
+        assertEquals("BUSOSC2_PITCH", osc2.patchCables.single().to.id)
+        assertTrue(osc2.patchCables.single().active)
+        assertEquals(1, osc2.hiddenLiveRouteCount)
+        assertEquals(1, osc2.reservedRouteCount)
     }
 
     @Test fun nonLfoSourceCanBeLiveWithoutPretendingItComesFromAnLfo() {
@@ -146,9 +172,15 @@ class PatchGraphUiModelTest {
             bank, ModSource.LFO2, ModDestination.CUTOFF,
         )
         assertEquals(0 to active, found)
-        assertNull(PatchGraphUiModel.findOrCreateLiveRoute(
-            bank, ModSource.LFO2, ModDestination.OSC3_GAIN,
-        ))
+        assertEquals(
+            1 to ModulationRouteConfig(
+                enabled = true, source = ModSource.LFO2,
+                destination = ModDestination.OSC3_GAIN, depth = .35f,
+            ),
+            PatchGraphUiModel.findOrCreateLiveRoute(
+                bank, ModSource.LFO2, ModDestination.OSC3_GAIN,
+            ),
+        )
         assertNull(PatchGraphUiModel.findOrCreateLiveRoute(
             bank, ModSource.TOUCH_X, ModDestination.CUTOFF,
         ))
@@ -267,6 +299,124 @@ class PatchGraphUiModelTest {
         }.map { it.fxType })
         assertEquals(listOf("REVERB", "PHASE", "CRUSH"), types.map(PatchGraphUiModel::slotName))
         assertTrue(graph.fixedAudio.any { it.from.id == "FX2" && it.to.id == "OUT" })
+    }
+
+    @Test fun allTwentyTwoRealTargetsAreReachableInNineNonoverlappingBanks() {
+        val allTargets = PatchGraphTargetBank.entries.flatMap(PatchGraphUiModel::visibleTargets)
+        assertEquals(22, allTargets.size)
+        assertEquals(22, allTargets.toSet().size)
+        assertEquals(PatchGraphUiModel.liveTargets.toSet(), allTargets.toSet())
+        assertEquals(6, PatchGraphUiModel.visibleTargets(PatchGraphTargetBank.GLOBAL).size)
+        PatchGraphTargetBank.entries.drop(1).forEach { bank ->
+            assertEquals(2, PatchGraphUiModel.visibleTargets(bank).size)
+            assertTrue(PatchGraphUiModel.visibleTargets(bank).all { target ->
+                PatchGraphUiModel.bankForTarget(target) == bank
+            })
+        }
+        assertTrue(PatchGraphTargetBank.entries.all { bank ->
+            PatchGraphUiModel.visibleTargets(bank).none { it == ModDestination.DRIVE }
+        })
+    }
+
+    @Test fun everyVisibleBankPortIsIndividuallyHitAt350dpWithoutWrongBankNode() {
+        val oscillators = List(8) { OscillatorSlot(enabled = true, level = .55f) }
+        for (bank in PatchGraphTargetBank.entries) {
+            val graph = snapshot(oscillators = oscillators, bank = bank)
+            val buses = graph.nodes.filter { it.kind == PatchNodeKind.MOD_BUS }
+            assertEquals(PatchGraphUiModel.visibleTargets(bank).size, buses.size)
+            for (i in buses.indices) {
+                val bus = buses[i]
+                assertEquals(
+                    "At 350dp a real bus must be reachable by its unique 48dp pointer target",
+                    bus,
+                    PatchGraphUiModel.hitNode(graph, bus.x, bus.y, 350f, 790f, 48f),
+                )
+                for (j in (i + 1) until buses.size) {
+                    val other = buses[j]
+                    val dx = (bus.x - other.x) * 350f
+                    val dy = (bus.y - other.y) * 790f
+                    assertTrue(
+                        "Physical 48dp bus targets must not collide: ${bus.id}/${other.id}",
+                        kotlin.math.hypot(dx, dy) >= 48f,
+                    )
+                }
+            }
+            val hidden = PatchGraphUiModel.liveTargets.toSet() -
+                buses.mapNotNull { it.destination }.toSet()
+            assertTrue("Invisible bank terminals must never be hit-testable",
+                graph.nodes.none { it.destination in hidden })
+        }
+    }
+
+    @Test fun oscillatorGainPitchRoutesAreRealAndHonestAcrossBypassAndBankSwitch() {
+        val route = ModulationRouteConfig(
+            enabled = true,
+            source = ModSource.LFO3,
+            destination = ModDestination.OSC8_PITCH,
+            depth = .65f,
+        )
+        val disabled = snapshot(
+            oscillators = List(8) { OscillatorSlot(enabled = false) },
+            routes = listOf(route),
+            bank = PatchGraphTargetBank.OSC8,
+        )
+        assertEquals(1, disabled.liveRouteCount)
+        assertEquals(0, disabled.reservedRouteCount)
+        assertEquals(1, disabled.dormantOscillatorTargetRouteCount)
+        assertEquals(0, disabled.hiddenLiveRouteCount)
+        assertEquals("BUSOSC8_PITCH", disabled.patchCables.single().to.id)
+        assertFalse(disabled.patchCables.single().active)
+
+        // Gain modulation multiplies the configured slot level: zero stays
+        // silent even if the OSC is enabled and the LFO is producing output.
+        val zeroLevel = snapshot(
+            oscillators = List(8) {
+                OscillatorSlot(enabled = true, level = if (it == 7) 0f else .55f)
+            },
+            routes = listOf(route),
+            bank = PatchGraphTargetBank.OSC8,
+        )
+        assertEquals(1, zeroLevel.dormantOscillatorTargetRouteCount)
+        assertFalse(zeroLevel.nodes.single {
+            it.id == "BUSOSC8_PITCH"
+        }.active)
+        assertFalse(zeroLevel.patchCables.single().active)
+
+        val enabled = snapshot(
+            oscillators = List(8) { OscillatorSlot(enabled = true, level = .55f) },
+            routes = listOf(route),
+            bank = PatchGraphTargetBank.OSC8,
+        )
+        assertTrue(enabled.patchCables.single().active)
+        val global = snapshot(routes = listOf(route))
+        assertEquals(1, global.hiddenLiveRouteCount)
+        assertEquals(0, global.patchCables.size)
+        assertEquals(1, global.liveRouteCount)
+        assertEquals(0, global.reservedRouteCount)
+    }
+
+    @Test fun eightOrderedFxStagesAvoidAmbiguousSub48dpCanvasHitZones() {
+        val graph = snapshot(fx = List(8) {
+            FxModuleConfig(type = FxModuleType.DELAY, enabled = true, wet = .75f)
+        })
+        val nodes = graph.nodes.filter { it.kind == PatchNodeKind.FX_SLOT }
+        assertEquals(8, nodes.size)
+        for (i in nodes.indices) {
+            assertEquals(
+                nodes[i],
+                PatchGraphUiModel.hitNode(
+                    graph, nodes[i].x, nodes[i].y, 350f, 790f, 48f,
+                ),
+            )
+            for (j in (i + 1) until nodes.size) {
+                val dx = (nodes[i].x - nodes[j].x) * 350f
+                val dy = (nodes[i].y - nodes[j].y) * 790f
+                assertTrue("FX ports must have distinct 48dp physical centers",
+                    kotlin.math.hypot(dx, dy) >= 48f)
+            }
+        }
+        assertTrue(graph.fixedAudio.any { it.from.id == "FX6" && it.to.id == "FX7" })
+        assertTrue(graph.fixedAudio.any { it.from.id == "FX7" && it.to.id == "OUT" })
     }
 
 }

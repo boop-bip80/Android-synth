@@ -6,6 +6,38 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AudioVisualResponseTest {
+    @Test fun equalLevelBassMiddleTrebleHaveDifferentSpatialVisualResponses() {
+        val bass = AudioVisualResponse.from(.42f, .57f, 0f, .45f, .82f, .17f, .01f)
+        val middle = AudioVisualResponse.from(.42f, .57f, 0f, .45f, .04f, .87f, .09f)
+        val treble = AudioVisualResponse.from(.42f, .57f, 0f, .45f, .01f, .16f, .83f)
+        assertEquals(bass.energyBoost, treble.energyBoost)
+        assertEquals(bass.radiusBoost, middle.radiusBoost)
+        assertTrue("LOW exposes amber outer aperture", bass.lowGold > .75f)
+        assertTrue("MID braids purple ribbons", middle.midViolet > .80f)
+        assertTrue("HIGH sharpens cyan filaments", treble.highCyan > .75f)
+        assertTrue(bass.lowGold > middle.lowGold + .5f)
+        assertTrue(middle.midViolet > treble.midViolet + .5f)
+        assertTrue(treble.highCyan > bass.highCyan + .5f)
+    }
+
+    @Test fun absentOrSilentBandTelemetryNeverInventsSpectralArtwork() {
+        val legacy = AudioVisualResponse.from(.55f, .8f, .2f, .6f)
+        assertEquals(0f, legacy.lowGold)
+        assertEquals(0f, legacy.midViolet)
+        assertEquals(0f, legacy.highCyan)
+        val silent = AudioVisualResponse.from(0f, 0f, 0f, .8f, 1f, 0f, 0f)
+        assertEquals(0f, silent.lowGold)
+        assertEquals(0f, silent.midViolet)
+        assertEquals(0f, silent.highCyan)
+        val malformed = AudioVisualResponse.from(
+            .5f, .6f, 0f, .2f,
+            Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY,
+        )
+        assertEquals(0f, malformed.lowGold)
+        assertEquals(0f, malformed.midViolet)
+        assertEquals(0f, malformed.highCyan)
+    }
+
     @Test fun silenceLeavesOriginalReferenceControlsUnchanged() {
         val meter = AudioVisualResponse.from(0f, 0f, 0f, 0f)
         assertEquals(0f, meter.energyBoost)

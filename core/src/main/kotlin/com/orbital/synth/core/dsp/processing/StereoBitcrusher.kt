@@ -61,8 +61,12 @@ class StereoBitcrusher(val sampleRate: Int = 48_000) {
 
     private fun quantize(value: Float, bits: Int): Float {
         val sample = (if (value.isFinite()) value else 0f).coerceIn(-1f, 1f)
-        val scale = (1 shl (bits - 1)).toFloat()
-        return (sample * scale).roundToInt().toFloat() / scale
+        val scale = 1 shl (bits - 1)
+        val scaleFloat = scale.toFloat()
+        // Signed N-bit PCM has codes -2^(N-1)..2^(N-1)-1: +1.0 is
+        // not representable, while -1.0 must remain exact.
+        val code = (sample * scaleFloat).roundToInt().coerceIn(-scale, scale - 1)
+        return code.toFloat() / scaleFloat
     }
 
     private fun safe(value: Float, fallback: Float): Float =

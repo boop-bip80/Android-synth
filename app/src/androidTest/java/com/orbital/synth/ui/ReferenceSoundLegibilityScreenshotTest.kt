@@ -32,7 +32,6 @@ import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.ParameterId
 import java.io.File
 import java.io.FileOutputStream
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -51,24 +50,56 @@ class ReferenceSoundLegibilityScreenshotTest {
         compose.onNodeWithTag(tag, useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
 
-    private fun takeRealScreenshot(fileName: String): Bitmap {
+    private fun fixtureSentinelPixels(screenshot: Bitmap): Int {
+        var count = 0
+        val row = IntArray(screenshot.width)
+        for (y in 0 until screenshot.height step 4) {
+            screenshot.getPixels(row, 0, screenshot.width, 0, y, screenshot.width, 1)
+            for (x in 0 until screenshot.width step 4) {
+                val pixel = row[x]
+                if (PixelColor.red(pixel) > 226 && PixelColor.green(pixel) < 45 &&
+                    PixelColor.blue(pixel) > 175) count++
+            }
+        }
+        return count
+    }
+
+    private fun takeRealScreenshot(
+        fileName: String,
+        requireFixtureSentinel: Boolean = false,
+    ): Bitmap {
         compose.waitForIdle()
         compose.waitUntil(timeoutMillis = 8_000) { compose.activity.hasWindowFocus() }
-        // UIAutomation samples SurfaceFlinger, which can lag a committed Compose frame.
-        Thread.sleep(220L)
-        assertTrue("Only an actual focused host can prove SurfaceFlinger pixels",
-            compose.activity.hasWindowFocus())
-        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-        assertNotNull("Real API35 screenshot is required; never fabricate a frame", bitmap)
-        val image = bitmap!!
-        val out = File(compose.activity.getExternalFilesDir(null), fileName)
-        FileOutputStream(out).use { stream ->
-            assertTrue("Could not write genuine screenshot", image.compress(
-                Bitmap.CompressFormat.PNG, 100, stream,
-            ))
+        // A Compose semantics frame can precede SurfaceFlinger's actual
+        // committed frame, especially on the long-running GENERAL shard.
+        // Never accept an old launcher/host frame: retry real OS screenshots
+        // until the separately composed magenta fixture marker is *visible*.
+        var strongestSentinel = 0
+        repeat(10) { attempt ->
+            Thread.sleep(if (attempt == 0) 220L else 260L)
+            assertTrue("Only an actual focused host can prove SurfaceFlinger pixels",
+                compose.activity.hasWindowFocus())
+            val image = InstrumentationRegistry.getInstrumentation()
+                .uiAutomation.takeScreenshot() ?: return@repeat
+            val count = if (requireFixtureSentinel) fixtureSentinelPixels(image) else 0
+            strongestSentinel = maxOf(strongestSentinel, count)
+            if (requireFixtureSentinel && count < 30) {
+                image.recycle()
+                return@repeat
+            }
+            val out = File(compose.activity.getExternalFilesDir(null), fileName)
+            FileOutputStream(out).use { stream ->
+                assertTrue("Could not write genuine screenshot", image.compress(
+                    Bitmap.CompressFormat.PNG, 100, stream,
+                ))
+            }
+            println("LEGIBILITY_REAL_SCREENSHOT name=$fileName pixels=${image.width}x${image.height} path=${out.absolutePath} sentinel=$count")
+            return image
         }
-        println("LEGIBILITY_REAL_SCREENSHOT name=$fileName pixels=${image.width}x${image.height} path=${out.absolutePath}")
-        return image
+        throw AssertionError(
+            "Real focused fixture never appeared in ten SurfaceFlinger frames; " +
+                "strongest magenta sentinel=$strongestSentinel",
+        )
     }
 
     @Test fun native411dpHostedSoundStillFitsAllFourTilesAndRealTouchControls() {
@@ -173,21 +204,14 @@ class ReferenceSoundLegibilityScreenshotTest {
                 b.height >= 48f * density - .5f &&
                     b.width >= 48f * density - .5f)
         }
-        val screenshot = takeRealScreenshot("orbital-legibility-360-font130.png")
+        val screenshot = takeRealScreenshot(
+            "orbital-legibility-360-font130.png", requireFixtureSentinel = true,
+        )
         assertTrue("UIAutomation must capture real phone framebuffer",
             screenshot.width > 900 && screenshot.height > 1800)
         // Count the separately composed magenta sentinel, proving it is
         // our live fixture rather than an old or external launcher screen.
-        var sentinelPixels = 0
-        val row = IntArray(screenshot.width)
-        for (y in 0 until screenshot.height step 4) {
-            screenshot.getPixels(row, 0, screenshot.width, 0, y, screenshot.width, 1)
-            for (x in 0 until screenshot.width step 4) {
-                val px = row[x]
-                if (PixelColor.red(px) > 226 && PixelColor.green(px) < 45 &&
-                    PixelColor.blue(px) > 175) sentinelPixels++
-            }
-        }
+        val sentinelPixels = fixtureSentinelPixels(screenshot)
         assertTrue("Genuine fixture sentinel missing from real screen: $sentinelPixels",
             sentinelPixels >= 30)
         screenshot.recycle()

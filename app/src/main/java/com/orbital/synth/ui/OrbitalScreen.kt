@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
@@ -39,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
@@ -52,10 +55,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -159,6 +164,7 @@ private val MainGradient = Brush.verticalGradient(
  * Public UI entry point. Everything audible crosses the supplied callbacks;
  * UI and DSP never secretly instantiate separate audio engines.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun OrbitalScreen(
     state: OrbitalUiState,
@@ -212,6 +218,10 @@ fun OrbitalScreen(
     }
     var immersiveMode by remember { mutableStateOf(false) }
     var soundAdvancedExpanded by remember { mutableStateOf(false) }
+    // A new physical ENGINE-title tap requests ONE reveal; PCM repaint cannot retrigger it.
+    var engineRevealEpoch by remember { mutableIntStateOf(0) }
+    var completedEngineRevealEpoch by remember { mutableIntStateOf(0) }
+    val engineEditorRequest = remember { BringIntoViewRequester() }
     var soundGraphExpanded by remember { mutableStateOf(false) }
     var compactOscillatorExpanded by remember { mutableStateOf(false) }
     // Preserve compact LIVE/TONE/VOICE/ENGINE selection across OSC paging and tab switches.
@@ -304,6 +314,30 @@ fun OrbitalScreen(
     }
 
     val editorScroll = rememberScrollState()
+    // Mini signal previews are genuine, large finger targets. On tap, route to
+    // the existing FX edit controls (or the same XY palette), never a dummy.
+    var pendingMiniSignal by remember { mutableStateOf<ReferenceMiniSignalDestination?>(null) }
+    var miniSignalNavigationEpoch by remember { mutableIntStateOf(0) }
+    var requestedLfoGardenLane by remember { mutableIntStateOf(0) }
+    val envelopeEditorRequest = remember { BringIntoViewRequester() }
+    val lfoEditorRequest = remember { BringIntoViewRequester() }
+    val modulationEditorRequest = remember { BringIntoViewRequester() }
+    val matchingLfoGardenRequest = remember { BringIntoViewRequester() }
+    val modulationRackConnected = state.modulationLfos.isNotEmpty() &&
+        state.modulationRoutes.isNotEmpty() &&
+        onModulationLfoChange != null && onModulationRouteChange != null &&
+        onModulationRouteClear != null && onModulationTempoChange != null
+    val miniGardenReveal = if (selectedTab == Tab.FX &&
+        pendingMiniSignal == ReferenceMiniSignalDestination.LFO && modulationRackConnected
+    ) {
+        LfoGardenRevealRequest(
+            requester = matchingLfoGardenRequest,
+            // Capture the preview's live lane AT the tap, not on every DSP
+            // snapshot recomposition while its bring-into-view is running.
+            laneIndex = requestedLfoGardenLane,
+            navigationEpoch = miniSignalNavigationEpoch,
+        )
+    } else null
 
     if (immersiveMode) {
         ImmersiveStage(
@@ -331,6 +365,43 @@ fun OrbitalScreen(
         // editor content; preserving scroll still permits deliberate user scrolling.
         LaunchedEffect(selectedTab, compactHeight) {
             if (!compactHeight) editorScroll.scrollTo(0)
+        }
+        val modPeekHeightPx = with(LocalDensity.current) { 88.dp.toPx() }
+        LaunchedEffect(selectedTab, miniSignalNavigationEpoch, compactHeight) {
+            val destination = pendingMiniSignal
+            if (selectedTab != Tab.FX) {
+                pendingMiniSignal = null
+                return@LaunchedEffect
+            }
+            if (compactHeight || destination == null) return@LaunchedEffect
+            // The FX subtree must be measured AFTER the tab's own scroll reset.
+            // Bring an actual live slider/matrix into the SAME editor viewport.
+            withFrameNanos { }
+            when (destination) {
+                ReferenceMiniSignalDestination.ENVELOPE ->
+                    envelopeEditorRequest.bringIntoView()
+                ReferenceMiniSignalDestination.LFO ->
+                    if (modulationRackConnected) {
+                        // The mini trace depicts the FIRST enabled rack LFO.
+                        // Reveal exactly that existing 84dp live node, never
+                        // pretend legacy core LFO_RATE edits this waveform.
+                        matchingLfoGardenRequest.bringIntoView()
+                    } else {
+                        // No writable 8-LFO garden: clearly labeled core
+                        // legacy controls are still real audible parameters.
+                        lfoEditorRequest.bringIntoView()
+                    }
+                ReferenceMiniSignalDestination.MODULATION ->
+                    if (modulationRackConnected) {
+                        // The matrix may be taller than one screen: reveal its
+                        // FIRST 88dp of real controls, not its entire height.
+                        modulationEditorRequest.bringIntoView(
+                            Rect(0f, 0f, 1f, modPeekHeightPx),
+                        )
+                    }
+                ReferenceMiniSignalDestination.EXPRESSION -> Unit
+            }
+            if (pendingMiniSignal == destination) pendingMiniSignal = null
         }
         // The short-landscape performance layout has a strict vertical budget.
         // Its waveform panel remains scrollable; the keyboard must retain space.
@@ -621,9 +692,29 @@ fun OrbitalScreen(
                         ) { { showPatchLibrary = true } } else null,
                         onPreviousPatch = onPreviousPatch,
                         onNextPatch = onNextPatch,
-                        onOpenEngine = { soundAdvancedExpanded = true },
+                        onOpenEngine = {
+                            soundAdvancedExpanded = true
+                            engineRevealEpoch++
+                        },
                         xyMode = effectiveXyMode,
                         onXyModeSelected = { mode -> soundXyModeName = mode.name },
+                        canEditModulationRack = modulationRackConnected,
+                        onOpenMiniSignal = { destination ->
+                            if (destination != ReferenceMiniSignalDestination.EXPRESSION &&
+                                destination.canOpen(modulationRackConnected)
+                            ) {
+                                if (destination == ReferenceMiniSignalDestination.LFO &&
+                                    modulationRackConnected
+                                ) {
+                                    requestedLfoGardenLane =
+                                        state.modulationLfos.indexOfFirst { it.enabled }
+                                            .coerceAtLeast(0)
+                                }
+                                pendingMiniSignal = destination
+                                miniSignalNavigationEpoch++
+                                selectedTab = Tab.FX
+                            }
+                        },
                     )
                     Row(
                         Modifier
@@ -708,13 +799,29 @@ fun OrbitalScreen(
                         }
                     }
                     if (soundAdvancedExpanded) {
-                        EngineArchitecturePanel(
-                            value = engineValue,
-                            enabled = engineId != null,
-                            onChoose = { value ->
-                                engineId?.let { onParameterChange(it, value) }
-                            },
-                        )
+                        // The ENGINE title is a navigation promise: bring actual
+                        // architecture choices into the scroll viewport, above
+                        // the still-pinned keyboard. No invented modal or DSP write.
+                        LaunchedEffect(engineRevealEpoch) {
+                            if (engineRevealEpoch > completedEngineRevealEpoch) {
+                                withFrameNanos { } // Engine panel measured after expand.
+                                engineEditorRequest.bringIntoView()
+                                completedEngineRevealEpoch = engineRevealEpoch
+                            }
+                        }
+                        Box(
+                            Modifier.fillMaxWidth()
+                                .bringIntoViewRequester(engineEditorRequest)
+                                .testTag("referenceEngineActualEditor"),
+                        ) {
+                            EngineArchitecturePanel(
+                                value = engineValue,
+                                enabled = engineId != null,
+                                onChoose = { value ->
+                                    engineId?.let { onParameterChange(it, value) }
+                                },
+                            )
+                        }
                         // Original engine controls remain genuine DSP inputs,
                         // accessible on demand instead of crowding the orb.
                         val voiceParameters =
@@ -811,7 +918,10 @@ fun OrbitalScreen(
                 onSaveSequence,
             )
             Tab.FX -> {
-                FxPanel(parameter, onParameterChange, compactHeight)
+                FxPanel(
+                    parameter, onParameterChange, compactHeight,
+                    envelopeEditorRequest, lfoEditorRequest,
+                )
                 if (state.fxSlots.isNotEmpty() &&
                     onFxSlotChange != null && onFxMoveSlot != null
                 ) {
@@ -821,25 +931,29 @@ fun OrbitalScreen(
                         onMoveSlot = onFxMoveSlot,
                     )
                 }
-                if (state.modulationLfos.isNotEmpty() &&
-                    state.modulationRoutes.isNotEmpty() &&
-                    onModulationLfoChange != null &&
-                    onModulationRouteChange != null &&
-                    onModulationRouteClear != null &&
-                    onModulationTempoChange != null
-                ) {
-                    ModulationConstellationPanel(
-                        lfos = state.modulationLfos,
-                        routes = state.modulationRoutes,
-                        tempoBpm = state.sequencerTempo.toFloat(),
-                        onLfoChange = onModulationLfoChange,
-                        onRouteChange = onModulationRouteChange,
-                        onRouteClear = onModulationRouteClear,
-                        onTempoChange = onModulationTempoChange,
-                        stepConfig = state.modulationSteps,
-                        stepPlayhead = state.modulationStepPlayhead,
-                        onStepChange = onModulationStepsChange,
-                    )
+                if (modulationRackConnected) {
+                    Box(
+                        Modifier.fillMaxWidth()
+                            .bringIntoViewRequester(modulationEditorRequest)
+                            .testTag("miniModActualEditor"),
+                    ) {
+                        CompositionLocalProvider(
+                            LocalLfoGardenRevealRequest provides miniGardenReveal,
+                        ) {
+                        ModulationConstellationPanel(
+                            lfos = state.modulationLfos,
+                            routes = state.modulationRoutes,
+                            tempoBpm = state.sequencerTempo.toFloat(),
+                            onLfoChange = onModulationLfoChange!!,
+                            onRouteChange = onModulationRouteChange!!,
+                            onRouteClear = onModulationRouteClear!!,
+                            onTempoChange = onModulationTempoChange!!,
+                            stepConfig = state.modulationSteps,
+                            stepPlayhead = state.modulationStepPlayhead,
+                            onStepChange = onModulationStepsChange,
+                        )
+                        }
+                    }
                 }
             }
         }
@@ -2670,11 +2784,14 @@ private enum class CompactFxPage(val caption: String) {
  * subtree in one eager scrolling column. Page it by effect family, keeping
  * every parameter editable and the 82dp piano keyboard anchored below.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun FxPanel(
     parameter: (ParameterId) -> Float,
     onParameterChange: (ParameterId, Float) -> Unit,
     compactHeight: Boolean,
+    envelopeEditorRequest: BringIntoViewRequester,
+    lfoEditorRequest: BringIntoViewRequester,
 ) {
     if (compactHeight) {
         var page by remember { mutableStateOf(CompactFxPage.QUICK) }
@@ -2721,13 +2838,23 @@ private fun FxPanel(
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("ENVELOPES  /  EFFECTS", color = OrbitalPalette.Text, fontSize = 13.sp, letterSpacing = 1.8.sp)
             SignalTile("ENV", parameter(ParameterId.ATTACK), OrbitalPalette.Violet, Modifier.fillMaxWidth())
-            ParameterSlider("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
+            Box(
+                Modifier.fillMaxWidth().bringIntoViewRequester(envelopeEditorRequest)
+                    .testTag("miniEnvActualEditor"),
+            ) {
+                ParameterSlider("ATTACK", parameter(ParameterId.ATTACK), ParameterId.ATTACK, onParameterChange, "Fade-in time")
+            }
             ParameterSlider("DECAY", parameter(ParameterId.DECAY), ParameterId.DECAY, onParameterChange, "Transient fall")
             ParameterSlider("SUSTAIN", parameter(ParameterId.SUSTAIN), ParameterId.SUSTAIN, onParameterChange, "Held volume")
             ParameterSlider("RELEASE", parameter(ParameterId.RELEASE), ParameterId.RELEASE, onParameterChange, "Fade-out time")
             Spacer(Modifier.height(3.dp))
             SignalTile("LFO", parameter(ParameterId.LFO_RATE), OrbitalPalette.Cyan, Modifier.fillMaxWidth())
-            ParameterSlider("LFO RATE", parameter(ParameterId.LFO_RATE), ParameterId.LFO_RATE, onParameterChange, "Modulation speed")
+            Box(
+                Modifier.fillMaxWidth().bringIntoViewRequester(lfoEditorRequest)
+                    .testTag("miniLfoActualEditor"),
+            ) {
+                ParameterSlider("LFO RATE", parameter(ParameterId.LFO_RATE), ParameterId.LFO_RATE, onParameterChange, "Modulation speed")
+            }
             ParameterSlider("LFO DEPTH", parameter(ParameterId.LFO_DEPTH), ParameterId.LFO_DEPTH, onParameterChange, "Modulation strength")
             ParameterSlider("FX AMOUNT", parameter(ParameterId.FX_AMOUNT), ParameterId.FX_AMOUNT, onParameterChange, "Stereo space and texture")
         }

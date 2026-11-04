@@ -121,8 +121,23 @@ jobs:
           local_sha="$(git rev-parse HEAD)"
           remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
           if [[ "$local_sha" != "$remote_sha" ]]; then
-            echo "Main changed during checkout; refusing stale APK." >&2
-            exit 1
+            # The screenshot publisher can commit its verified docs-only child
+            # between checkout and this check. Do not accept a stale checkout
+            # of any other source, and fail on a moving remote during fetch.
+            [[ "$local_sha" == "$source_sha" ]] || {
+              echo "Checkout is stale and not the exact verified source." >&2
+              exit 1
+            }
+            git fetch --no-tags --depth=2 origin refs/heads/main
+            [[ "$(git rev-parse FETCH_HEAD)" == "$remote_sha" ]] || {
+              echo "Main changed while fetching the screenshot bot child." >&2
+              exit 1
+            }
+            # No scripts from fetched main are executed. The existing strict
+            # child check immediately below verifies the parent, author,
+            # changed paths, and exact run provenance before this is accepted.
+            git checkout --detach FETCH_HEAD
+            local_sha="$(git rev-parse HEAD)"
           fi
           if [[ "$source_sha" != "$local_sha" ]]; then
             # The screenshot publisher uses GITHUB_TOKEN; its purely image
@@ -146,7 +161,7 @@ jobs:
               }
             done
             grep -Fq "$source_sha" docs/screenshots/PROVENANCE.md &&
-              grep -Fq "actions/runs/$VERIFIED_RUN_ID" docs/screenshots/PROVENANCE.md || {
+              grep -Fq "https://github.com/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID)" docs/screenshots/PROVENANCE.md || {
                 echo "Screenshot bot child has no matching source SHA / run provenance." >&2
                 exit 1
               }
@@ -198,8 +213,45 @@ jobs:
           set -euo pipefail
           remote_sha="$(git ls-remote origin refs/heads/main | cut -f1)"
           if [[ "$remote_sha" != "$VALIDATED_MAIN_SHA" ]]; then
-            echo "Main advanced after source/provenance verification; refuse stale APK release." >&2
-            exit 1
+            # Screenshot persistence and this publisher start from the same
+            # successful main run. The screenshot bot can fast-forward main
+            # after our earlier SHA check. Accept only that one exact child,
+            # never a new application/doc commit or a second bot child.
+            [[ "$VALIDATED_MAIN_SHA" == "$SOURCE_SHA" ]] || {
+              echo "Main advanced beyond an already verified screenshot child." >&2
+              exit 1
+            }
+            git fetch --no-tags --depth=2 origin refs/heads/main
+            [[ "$(git rev-parse FETCH_HEAD)" == "$remote_sha" &&
+               "$(git rev-parse FETCH_HEAD^)" == "$SOURCE_SHA" ]] || {
+              echo "Main advanced to something other than the verified source's immediate child." >&2
+              exit 1
+            }
+            [[ "$(git show -s --format=%an FETCH_HEAD)" == "github-actions[bot]" &&
+               "$(git show -s --format=%ae FETCH_HEAD)" == "41898282+github-actions[bot]@users.noreply.github.com" ]] || {
+              echo "New main child is not the screenshot publishing bot." >&2
+              exit 1
+            }
+            mapfile -t changed_paths < <(git diff --name-only FETCH_HEAD^ FETCH_HEAD)
+            (( ${#changed_paths[@]} > 0 )) || exit 1
+            for path in "${changed_paths[@]}"; do
+              [[ "$path" == docs/screenshots/* ]] || {
+                echo "Unverified non-screenshot child path $path." >&2
+                exit 1
+              }
+            done
+            # Read once: a grep -q pipeline under pipefail can fail with
+            # SIGPIPE even on valid matches when its producer is still writing.
+            provenance="$(git show FETCH_HEAD:docs/screenshots/PROVENANCE.md)" || {
+              echo "New screenshot child has no readable provenance file." >&2
+              exit 1
+            }
+            [[ "$provenance" == *"$SOURCE_SHA"* &&
+               "$provenance" == *"https://github.com/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID)"* ]] || {
+              echo "New screenshot child lacks exact source SHA or CI run provenance." >&2
+              exit 1
+            }
+            echo "Accepted one newly published screenshot-only bot child of $SOURCE_SHA."
           fi
           tag="orbital-debug-$SOURCE_SHORT"
           asset="ORBITAL-$SOURCE_SHORT-debug.apk"
@@ -211,12 +263,17 @@ jobs:
           # sha256:... digest per uploaded Release asset.
           verify_release_asset() {
             local required_run="${1:-}"
+            [[ "$required_run" == "actions/runs/$VERIFIED_RUN_ID" ]] || {
+              echo "Exact verified source run reference is required." >&2
+              return 1
+            }
             local release_json
             release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")" || return 1
             jq -e \
               --arg tag "$tag" \
               --arg source "$SOURCE_SHA" \
               --arg run "$required_run" \
+              --arg repo "$GITHUB_REPOSITORY" \
               --arg checksum "$digest" \
               --arg asset "$asset" \
               --arg asset_digest "sha256:$digest" \
@@ -225,7 +282,9 @@ jobs:
                 .draft == false and
                 .prerelease == true and
                 (.body | contains($source)) and
-                (.body | contains($run)) and
+                # Match the complete run hyperlink, not an empty string or
+                # a prefix such as run 12345 inside run 123456.
+                (.body | contains("](https://github.com/" + $repo + "/" + $run + ")")) and
                 (.body | contains($checksum)) and
                 (.assets | length) == 1 and
                 any(.assets[];
@@ -243,7 +302,7 @@ jobs:
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # Strict idempotence: existing tag AND actual one uploaded asset
             # must match this verified source APK byte-for-byte by SHA-256.
-            if ! verify_tag_and_asset; then
+            if ! verify_tag_and_asset "actions/runs/$VERIFIED_RUN_ID"; then
               echo "Existing release lacks the matching APK asset, digest, run or tag; refusing overwrite." >&2
               exit 1
             fi

@@ -1,6 +1,11 @@
 package com.orbital.synth.ui
 
+import android.graphics.Color as PixelColor
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.Color
+import kotlin.math.abs
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -23,6 +28,140 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ImmersiveVisualFieldTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+
+    @Test fun equalRmsLowMidHighChangeSpatialPixelsOnRealAndroidCompositor() {
+        var low by mutableFloatStateOf(.82f)
+        var mid by mutableFloatStateOf(.17f)
+        var high by mutableFloatStateOf(.01f)
+        compose.setContent {
+            ImmersiveVisualField(
+                modifier = Modifier.fillMaxSize(),
+                morph = .64f,
+                movement = .46f,
+                cutoff = .58f,
+                resonance = .72f,
+                touchIntensity = 0f,
+                // Identical actual-output level; ONLY the measured relative
+                // crossover energies differ between captures.
+                audioRms = .42f,
+                audioPeak = .57f,
+                audioTransient = 0f,
+                audioBrightness = .42f,
+                audioLowBand = low,
+                audioMidBand = mid,
+                audioHighBand = high,
+            )
+        }
+        val field = compose.onNodeWithTag("immersiveVisualField")
+        field.assertIsDisplayed()
+        val source = RealAndroidFrameCapture(compose, compose.activity)
+        val sampleWidth = 64
+        val sampleHeight = 64
+        fun physicalPixels(label: String): IntArray = source.capture(field, label).use { real ->
+            val samples = IntArray(sampleWidth * sampleHeight)
+            for (y in 0 until sampleHeight) {
+                for (x in 0 until sampleWidth) {
+                    val px = ((x + .5f) * real.width / sampleWidth).toInt()
+                        .coerceIn(0, real.width - 1)
+                    val py = ((y + .5f) * real.height / sampleHeight).toInt()
+                        .coerceIn(0, real.height - 1)
+                    samples[y * sampleWidth + x] = real.argbAt(px, py)
+                }
+            }
+            samples
+        }
+        fun changed(a: IntArray, b: IntArray): Pair<Int, Int> {
+            var all = 0
+            var core = 0
+            for (y in 0 until sampleHeight) {
+                for (x in 0 until sampleWidth) {
+                    val index = y * sampleWidth + x
+                    val first = a[index]
+                    val second = b[index]
+                    val delta = abs(PixelColor.red(first) - PixelColor.red(second)) +
+                        abs(PixelColor.green(first) - PixelColor.green(second)) +
+                        abs(PixelColor.blue(first) - PixelColor.blue(second))
+                    if (delta >= 25) {
+                        all++
+                        if (x in 14..50 && y in 19..44) core++
+                    }
+                }
+            }
+            return Pair(all, core)
+        }
+        // The first pair measures genuine animated-PCM drift without ANY band
+        // change, so a moving background alone cannot satisfy the next assertions.
+        val lowA = physicalPixels("timbre-same-rms-low-a")
+        val lowB = physicalPixels("timbre-same-rms-low-b")
+        compose.runOnIdle {
+            low = .04f
+            mid = .87f
+            high = .09f
+        }
+        val middle = physicalPixels("timbre-same-rms-mid")
+        compose.runOnIdle {
+            low = .01f
+            mid = .16f
+            high = .83f
+        }
+        val highFrame = physicalPixels("timbre-same-rms-high")
+        val unchanged = changed(lowA, lowB)
+        val changedLowMid = changed(lowB, middle)
+        val changedMidHigh = changed(middle, highFrame)
+        assertTrue(
+            "PCM crossover must change REAL spatial light beyond same-mode temporal drift; " +
+                "baseline=" + unchanged + " low-mid=" + changedLowMid,
+            changedLowMid.first >= unchanged.first + 30 && changedLowMid.second >= 18,
+        )
+        assertTrue(
+            "A 7kHz-equivalent high-band shape must differ from a 1kHz-equivalent braid " +
+                "at the SAME RMS; baseline=" + unchanged + " mid-high=" + changedMidHigh,
+            changedMidHigh.first >= unchanged.first + 30 && changedMidHigh.second >= 18,
+        )
+    }
+
+    @Test fun stoppedFocusDrawGateLeavesMeasuredPhysicalBlackInsteadOfPhantomTimbre() {
+        compose.setContent {
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                ImmersiveVisualField(
+                    modifier = Modifier.fillMaxSize(),
+                    morph = .5f, movement = .5f, cutoff = .5f, resonance = .5f,
+                    touchIntensity = 0f,
+                    audioRms = 0f, audioPeak = 0f,
+                    audioLowBand = 0f, audioMidBand = 0f, audioHighBand = 0f,
+                    skipArtwork = true,
+                )
+            }
+        }
+        val field = compose.onNodeWithTag("immersiveVisualField")
+        field.assertIsDisplayed()
+        RealAndroidFrameCapture(compose, compose.activity)
+            .capture(field, "focus-post-stop-black").use { physical ->
+                var brightPixels = 0
+                // This standalone ComponentActivity test does not invoke
+                // FocusSystemBarsEffect: Android may draw its own bright
+                // status/navigation glyphs at the framebuffer edges. Sample
+                // the actual interior canvas, excluding only the 1-cell OS
+                // overlay border; keep the strict <=2 bright pixel threshold.
+                for (iy in 1 until 43) {
+                    for (ix in 1 until 43) {
+                        val px = ((ix + .5f) * physical.width / 44).toInt()
+                            .coerceIn(0, physical.width - 1)
+                        val py = ((iy + .5f) * physical.height / 44).toInt()
+                            .coerceIn(0, physical.height - 1)
+                        val color = physical.argbAt(px, py)
+                        if (maxOf(PixelColor.red(color), PixelColor.green(color),
+                                PixelColor.blue(color)) > 10) brightPixels++
+                    }
+                }
+                assertTrue(
+                    "Stopped, fully faded FOCUS field must be actual black SurfaceFlinger pixels; " +
+                        "bright=" + brightPixels,
+                    brightPixels <= 2,
+                )
+            }
+    }
 
     @Test fun measuredPcmChangesActualCanvasPixels() {
         var actualRms by mutableFloatStateOf(0f)

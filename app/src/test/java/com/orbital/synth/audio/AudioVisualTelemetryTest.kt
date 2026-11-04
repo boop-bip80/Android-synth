@@ -150,6 +150,113 @@ class AudioVisualTelemetryTest {
         assertEquals(0f, meter.snapshot().transient, .0001f)
     }
 
+
+    @Test
+    fun equalRmsLowMidHighTonesPublishDistinctRealPcmBandFractions() {
+        fun measure(hz: Int): AudioVisualSnapshot {
+            val meter = AudioVisualTelemetry(sampleRate)
+            meter.begin()
+            meter.observeFloat(stereoTone(hz, .62f), window)
+            return meter.snapshot()
+        }
+        val bass = measure(100)
+        val middle = measure(1_000)
+        val treble = measure(7_000)
+        assertEquals(bass.rms, middle.rms, .015f)
+        assertEquals(middle.rms, treble.rms, .015f)
+        assertTrue("100Hz must energize the measured gold LOW crossover", bass.lowBand > .65f)
+        assertTrue("1kHz must energize the measured violet MID crossover", middle.midBand > .70f)
+        assertTrue("7kHz must energize the measured cyan HIGH crossover", treble.highBand > .70f)
+        for (snapshot in listOf(bass, middle, treble)) {
+            assertEquals("Crossover powers must normalize to an approximate 100% composition",
+                1f, snapshot.lowBand + snapshot.midBand + snapshot.highBand, .008f)
+        }
+    }
+
+    @Test
+    fun pcm16AndFloatInputHaveEquivalentPhysicalBandEnergy() {
+        val tone = stereoTone(1_000, .53f)
+        val signedPcm = ShortArray(tone.size) { index ->
+            (tone[index] * 32767f).toInt().coerceIn(-32768, 32767).toShort()
+        }
+        val floatMeter = AudioVisualTelemetry(sampleRate)
+        val shortMeter = AudioVisualTelemetry(sampleRate)
+        floatMeter.begin()
+        shortMeter.begin()
+        floatMeter.observeFloat(tone, window)
+        shortMeter.observePcm16(signedPcm, window)
+        val a = floatMeter.snapshot()
+        val b = shortMeter.snapshot()
+        assertEquals(a.rms, b.rms, .001f)
+        assertEquals(a.lowBand, b.lowBand, .015f)
+        assertEquals(a.midBand, b.midBand, .015f)
+        assertEquals(a.highBand, b.highBand, .015f)
+    }
+
+    @Test
+    fun stoppedSilenceAndNewWorkerNeverInheritPastLowFrequencyEnergy() {
+        val meter = AudioVisualTelemetry(sampleRate)
+        meter.begin()
+        meter.observeFloat(stereoTone(100, .7f), window)
+        assertTrue(meter.snapshot().lowBand > .60f)
+        meter.stop()
+        assertEquals(AudioVisualSnapshot(), meter.snapshot())
+        // Stale calls from an unwinding worker cannot illuminate a stopped stage.
+        meter.observeFloat(stereoTone(100, .8f), window)
+        assertEquals(AudioVisualSnapshot(), meter.snapshot())
+        meter.begin()
+        meter.observeFloat(stereoTone(7_000, .7f), window)
+        val treble = meter.snapshot()
+        assertTrue(treble.highBand > .70f)
+        assertTrue(treble.lowBand < .10f)
+        meter.observeFloat(FloatArray(window * 2), window)
+        val silence = meter.snapshot()
+        assertEquals(0f, silence.rms, 0f)
+        assertEquals(0f, silence.lowBand, 0f)
+        assertEquals(0f, silence.midBand, 0f)
+        assertEquals(0f, silence.highBand, 0f)
+    }
+
+    @Test
+    fun repeatedConcurrentReadDuringWorkerWindowsNeverReportsTornBandComposition() {
+        val meter = AudioVisualTelemetry(sampleRate)
+        meter.begin()
+        val bass = stereoTone(100, .23f)
+        val treble = stereoTone(7_000, .82f)
+        val done = java.util.concurrent.atomic.AtomicBoolean(false)
+        val problem = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        val producer = Thread {
+            for (index in 0 until 64) {
+                meter.observeFloat(if (index % 2 == 0) bass else treble, window)
+            }
+            done.set(true)
+        }
+        producer.start()
+        var reads = 0
+        while (!done.get() && reads < 250_000) {
+            val v = meter.snapshot()
+            if (v.rms > .0001f) {
+                val total = v.lowBand + v.midBand + v.highBand
+                if (!total.isFinite() || kotlin.math.abs(total - 1f) > .01f ||
+                    (v.rms >= .12f && v.rms <= .25f && v.lowBand < .52f) ||
+                    (v.rms > .45f && v.highBand < .52f)
+                ) {
+                    problem.set("Torn meter/timbre window: " + v)
+                    break
+                }
+            }
+            reads++
+        }
+        producer.join(5_000L)
+        assertTrue("The finite PCM producer must finish", !producer.isAlive)
+        assertEquals("No torn pair of worker-published meter words", null, problem.get())
+    }
+
+    private fun stereoTone(hz: Int, amplitude: Float): FloatArray =
+        FloatArray(window * 2) { index ->
+            (sin(2.0 * PI * hz * (index / 2) / sampleRate) * amplitude).toFloat()
+        }
+
     private fun stereoSine(hz: Int): FloatArray = FloatArray(window * 2) { index ->
         sin(2.0 * PI * hz * (index / 2) / sampleRate).toFloat()
     }
