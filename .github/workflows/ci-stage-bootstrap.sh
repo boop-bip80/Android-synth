@@ -16,6 +16,17 @@ finish() {
   if [[ "$status" != 0 ]]; then
     timeout 10s adb devices -l > artifacts/focus-bootstrap-adb.txt 2>&1
     timeout 12s adb logcat -d -t 900 -v threadtime > artifacts/focus-bootstrap-logcat.txt 2>&1
+    # Artifacts are not always reachable from the review tooling, so also put a
+    # short, bounded digest in the job log itself. Purely diagnostic.
+    printf '\n=== focus bootstrap failure digest (phase=%s) ===\n' "$(cat "$phase" 2>/dev/null)"
+    tail -n 24 "$summary" 2>/dev/null | cut -c 1-260
+    printf -- '--- crash / ANR / app lines from logcat ---\n'
+    grep -E 'FATAL EXCEPTION|AndroidRuntime|ANR in|Application Not Responding|has died|am_crash|am_anr|Force finishing|Splash|StrictMode|OrbitalAurora|com[.]orbital[.]synth' \
+      artifacts/focus-bootstrap-logcat.txt 2>/dev/null | tail -n 45 | cut -c 1-260
+    printf -- '--- focus / process state ---\n'
+    timeout 8s adb shell pidof com.orbital.synth 2>&1 | head -n 2
+    grep -E 'mCurrentFocus|mFocusedApp|mTopFullscreenOpaqueWindowState' \
+      artifacts/focus-bootstrap-window.txt 2>/dev/null | head -n 6 | cut -c 1-260
   fi
   exit "$status"
 }

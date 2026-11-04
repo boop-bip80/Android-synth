@@ -63,6 +63,13 @@ collect_diagnostics() {
   printf '\n=== isolated test JUnit assertions ===\n'
   if [[ -d app/build/outputs/androidTest-results ]]; then
     find app/build/outputs/androidTest-results -name '*.xml' -type f -print
+    # Show the actual assertion text so a failed lane is diagnosable from the log.
+    while IFS= read -r report; do
+      if grep -Eq '<failure|<error' "$report"; then
+        printf 'XML failure excerpt: %s\n' "$report"
+        grep -n -m 3 -A 6 -E '<failure|<error' "$report" | cut -c 1-420
+      fi
+    done < <(find app/build/outputs/androidTest-results -type f -name '*.xml' -print)
   fi
   exit "$status"
 }
