@@ -10,11 +10,8 @@ import com.orbital.synth.core.stage.ChordAssist
  * rating the player has earned for each song. Nothing here is personal data.
  */
 internal class AuroraPrefs private constructor(private val prefs: SharedPreferences?) {
-    constructor(context: Context) : this(
-        runCatching {
-            context.applicationContext.getSharedPreferences("orbital_aurora", Context.MODE_PRIVATE)
-        }.getOrNull(),
-    )
+    // A companion function (not a lambda): a delegating constructor call must not touch `this`.
+    constructor(context: Context) : this(openPrefs(context))
 
     /** Preferences that keep nothing; used by previews and tests. */
     constructor() : this(null as SharedPreferences?)
@@ -53,6 +50,12 @@ internal class AuroraPrefs private constructor(private val prefs: SharedPreferen
     }
 
     private companion object {
+        fun openPrefs(context: Context): SharedPreferences? = try {
+            context.applicationContext.getSharedPreferences("orbital_aurora", Context.MODE_PRIVATE)
+        } catch (_: Exception) {
+            null
+        }
+
         const val KEY_CHORD = "chord"
         const val KEY_RIBBON = "ribbon"
         const val KEY_STARS = "stars_"
