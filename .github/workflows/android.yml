@@ -211,6 +211,7 @@ jobs:
           path: |
             artifacts/emulator-logcat.txt
             artifacts/aurora-gallery-*.txt
+            artifacts/general-system-anr-watch.txt
             artifacts/compact-test-live-logcat.txt
             artifacts/compact350-*.txt
             artifacts/instrumentation-suite.txt
