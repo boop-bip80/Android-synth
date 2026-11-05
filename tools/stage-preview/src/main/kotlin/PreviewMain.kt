@@ -9,7 +9,9 @@ import com.orbital.synth.core.stage.StageKey
 import com.orbital.synth.core.stage.StageSurface
 import com.orbital.synth.core.stage.SurfaceEvent
 import com.orbital.synth.core.stage.glow.AuroraSim
+import com.orbital.synth.core.stage.glow.GlowTheme
 import java.awt.Color
+import java.awt.GradientPaint
 import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
@@ -58,20 +60,31 @@ private class Rig(key: StageKey, octaves: Int = 3, chord: ChordAssist = ChordAss
         }
     }
 
-    fun render(file: File, backdrop: Boolean = true) {
+    fun render(file: File, backdrop: Boolean = true, theme: GlowTheme = GlowTheme.DARK) {
         val image = BufferedImage(sim.let { W }, H, BufferedImage.TYPE_INT_ARGB)
         val g = image.createGraphics()
-        g.color = Color.BLACK
+        if (theme == GlowTheme.DARK) {
+            g.color = Color.BLACK
+        } else {
+            g.paint = GradientPaint(0f, 0f, Color(theme.backdropTop), 0f, H.toFloat(), Color(theme.backdropBottom))
+        }
         g.fillRect(0, 0, W, H)
         g.dispose()
-        val canvas = Java2dGlowCanvas(image)
-        if (backdrop) {
+        val raw = Java2dGlowCanvas(image)
+        if (backdrop && theme == GlowTheme.DARK) {
             // A hint of the audio-reactive field behind the lanes (approximation only).
-            canvas.glow(W * 0.5f, H * 0.45f, 700f, 0x3A2A8C, 0.28f)
+            raw.glow(W * 0.5f, H * 0.45f, 700f, 0x3A2A8C, 0.28f)
         }
-        sim.draw(canvas)
-        canvas.dispose()
+        // The same simulation, drawn through the theme exactly as the Android app does.
+        sim.draw(theme.wrap(raw))
+        raw.dispose()
         ImageIO.write(image, "png", file)
+    }
+
+    /** `name.png` in the dark world and `name-light.png` in normal (light) mode. */
+    fun renderBoth(dir: File, name: String) {
+        render(File(dir, "$name.png"))
+        render(File(dir, "$name-light.png"), theme = GlowTheme.LIGHT)
     }
 }
 
@@ -80,7 +93,7 @@ fun main(args: Array<String>) {
     val cMajor = StageKey(0, MusicalScales.MAJOR)
 
     // 1. Untouched: the surface should already feel awake.
-    Rig(cMajor).apply { run(2.5f); render(File(out, "01-idle-c-major.png")) }
+    Rig(cMajor).apply { run(2.5f); renderBoth(out, "01-idle-c-major") }
 
     // 2. A melodic slide: finger drags up through the lanes, leaving a comet and sparks.
     Rig(StageKey(2, MusicalScales.MAJOR)).apply {
@@ -88,14 +101,14 @@ fun main(args: Array<String>) {
         run(.35f)
         var y = .82f
         run(.6f) { t -> y = .82f - t * .55f; move(1, .3f + t * .5f, y) }
-        render(File(out, "02-slide-d-major.png"))
+        renderBoth(out, "02-slide-d-major")
     }
 
     // 3. Three-finger chord with triad assist, struck a moment ago.
     Rig(StageKey(9, MusicalScales.NATURAL_MINOR), chord = ChordAssist.TRIAD).apply {
         down(1, .25f, .62f); down(2, .55f, .45f); down(3, .8f, .72f)
         run(.22f)
-        render(File(out, "03-chord-a-minor.png"))
+        renderBoth(out, "03-chord-a-minor")
     }
 
     // 4. Follow the light: Ode to Joy ribbon with the player about to hit the first note.
@@ -105,7 +118,7 @@ fun main(args: Array<String>) {
         sim.setGuide(session.upcoming(7), 0)
         down(1, .62f, grid.centerY(session.target()!!.lane) + 0.01f)
         run(.3f)
-        render(File(out, "04-guide-ode-g-major.png"))
+        renderBoth(out, "04-guide-ode-g-major")
         // ...and after three correct notes with a combo.
         repeat(3) {
             val target = session.target()!!
@@ -116,14 +129,14 @@ fun main(args: Array<String>) {
             move(1, .55f + it * .1f, grid.centerY(next.lane))
             run(.25f)
         }
-        render(File(out, "05-guide-after-hits.png"))
+        renderBoth(out, "05-guide-after-hits")
     }
 
     // 5. All twelve keys: palette check (each a half-size crop of the idle surface).
     for (tonic in 0..11) {
         Rig(StageKey(tonic, if (tonic % 2 == 0) MusicalScales.MAJOR else MusicalScales.NATURAL_MINOR)).apply {
             down(1, .5f, .5f); run(.25f)
-            render(File(out, "key-%02d.png".format(tonic)))
+            renderBoth(out, "key-%02d".format(tonic))
         }
     }
 
@@ -138,13 +151,13 @@ fun main(args: Array<String>) {
     }
 
     // 6. Celebration finale.
-    Rig(cMajor).apply { sim.celebrate(3); run(1.1f); render(File(out, "06-celebrate.png")) }
+    Rig(cMajor).apply { sim.celebrate(3); run(1.1f); renderBoth(out, "06-celebrate") }
 
     // 7. Dense play: both hands, a chord and a fast run.
     Rig(StageKey(5, MusicalScales.MINOR_PENTATONIC), chord = ChordAssist.POWER).apply {
         down(1, .2f, .9f); down(2, .7f, .3f)
         run(.3f) { t -> move(2, .7f - t * .3f, .3f + sin(t * 20f) * .05f) }
-        render(File(out, "07-dense-f-minor-pent.png"))
+        renderBoth(out, "07-dense-f-minor-pent")
     }
     println("rendered to ${out.absolutePath}")
 }
