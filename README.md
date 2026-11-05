@@ -1,6 +1,6 @@
 # ORBITAL AURORA — a touch-first Android synthesizer
 
-> **Status:** release candidate **0.3.0** — see [verification](#verification-and-release-gates) for exactly what has and has not been tested. It is a **debug-signed developer APK**, verified on a GitHub-hosted Android 15 (API 35) emulator. It has **not** been measured on physical phones (latency, thermals, speaker output), is **not** Play-signed, and no Play Store release exists yet.
+> **Status:** release candidate **0.3.1** — see [verification](#verification-and-release-gates) for exactly what has and has not been tested. It is a **debug-signed developer APK**, verified on a GitHub-hosted Android 15 (API 35) emulator. It has **not** been measured on physical phones (latency, thermals, speaker output), is **not** Play-signed, and no Play Store release exists yet.
 
 ORBITAL is a native Kotlin/Jetpack Compose instrument for Android 8.0+ (API 26+): a layered polyphonic synthesizer with five sound architectures plus two physical-model sources, built around an expressive touch surface that **teaches you to play**.
 
