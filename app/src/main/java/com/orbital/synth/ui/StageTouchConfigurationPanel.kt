@@ -118,27 +118,6 @@ internal fun StageTouchConfigurationPanel(
                 }
             }
 
-            if (onThemeChange != null) {
-                ConfigSection(
-                    "LOOK / DARK OR NORMAL",
-                    "Dark glows on black. Normal draws the same living surface in ink on pale paper. " +
-                        "Auto follows your phone. FOCUS is always pure black.",
-                ) {
-                    ConfigChoiceRow {
-                        StageThemeMode.entries.forEach { mode ->
-                            val name = when (mode) {
-                                StageThemeMode.DARK -> "DARK · DEFAULT"
-                                StageThemeMode.LIGHT -> "NORMAL"
-                                StageThemeMode.SYSTEM -> "AUTO · FOLLOW PHONE"
-                            }
-                            ConfigChip(name, themeMode == mode, "Look: ${mode.label}", "stageTheme-${mode.name}") {
-                                onThemeChange(mode)
-                            }
-                        }
-                    }
-                }
-            }
-
             ConfigSection("01 / SCALE", "Every lane is a note of this scale, so nothing can sound wrong.") {
                 ConfigChoiceRow {
                     Scales.forEach { (scale, name) ->
@@ -209,6 +188,28 @@ internal fun StageTouchConfigurationPanel(
                         .semantics { contentDescription = "Optional pressure sensitivity" },
                 )
             }
+            // Last on purpose: every control above keeps exactly the position it always had.
+            if (onThemeChange != null) {
+                ConfigSection(
+                    "LOOK / DARK OR NORMAL",
+                    "Dark glows on black. Normal draws the same living surface in ink on pale paper. " +
+                        "Auto follows your phone. FOCUS is always pure black.",
+                ) {
+                    ConfigChoiceRow {
+                        StageThemeMode.entries.forEach { mode ->
+                            val name = when (mode) {
+                                StageThemeMode.DARK -> "DARK · DEFAULT"
+                                StageThemeMode.LIGHT -> "NORMAL"
+                                StageThemeMode.SYSTEM -> "AUTO · FOLLOW PHONE"
+                            }
+                            ConfigChip(name, themeMode == mode, "Look: ${mode.label}", "stageTheme-${mode.name}") {
+                                onThemeChange(mode)
+                            }
+                        }
+                    }
+                }
+            }
+
             Text(
                 "LIVE MAP  ·  HEIGHT = NOTE     SIDEWAYS = BRIGHTNESS + TOUCH FORCE     SPEED = MOTION",
                 color = PanelCyan.copy(alpha = .8f), fontSize = 9.sp, letterSpacing = .6.sp,
