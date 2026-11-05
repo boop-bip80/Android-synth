@@ -89,6 +89,13 @@ class AuroraJazzInstrumentedTest {
         compose.waitForIdle()
     }
 
+    /**
+     * Plain (non-clickable) nodes inside the song sheet sit under its clickable container, which
+     * merges their semantics. Address them in the unmerged tree, as the rest of this suite does;
+     * clickable nodes (PLAY, the tabs, clear) remain their own nodes either way.
+     */
+    private fun plain(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true)
+
     private fun pitchClass(note: Int) = Math.floorMod(note, 12)
 
     /**
@@ -122,16 +129,16 @@ class AuroraJazzInstrumentedTest {
     @Test fun theJazzTabListsAllFourHundredTunesAndSearchNarrowsThem() {
         render()
         openJazz()
-        compose.onNodeWithTag("auroraJazzList").assertIsDisplayed()
-        compose.onNodeWithTag("auroraJazzCount").assertTextEquals("400 tunes")
+        plain("auroraJazzList").assertIsDisplayed()
+        plain("auroraJazzCount").assertTextEquals("400 tunes")
         search("take five")
-        compose.onNodeWithTag("auroraJazz-take-five").assertIsDisplayed()
-        compose.onNodeWithTag("auroraJazzCount").assertTextEquals("1 of 400 tunes")
+        plain("auroraJazz-take-five").assertIsDisplayed()
+        plain("auroraJazzCount").assertTextEquals("1 of 400 tunes")
         compose.onNodeWithTag("auroraJazzSearchClear").performClick()
         compose.waitForIdle()
-        compose.onNodeWithTag("auroraJazzCount").assertTextEquals("400 tunes")
+        plain("auroraJazzCount").assertTextEquals("400 tunes")
         search("zzzz-no-such-tune")
-        compose.onNodeWithTag("auroraJazzEmpty").assertIsDisplayed()
+        plain("auroraJazzEmpty").assertIsDisplayed()
     }
 
     @Test fun playingATuneLoadsItsOwnSoundAndPutsTheStageInItsKeyWithJazzHarmony() {
