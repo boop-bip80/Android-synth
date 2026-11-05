@@ -23,6 +23,26 @@ finish() {
     printf -- '--- crash / ANR / app lines from logcat ---\n'
     grep -E 'FATAL EXCEPTION|AndroidRuntime|ANR in|Application Not Responding|has died|am_crash|am_anr|Force finishing|Splash|StrictMode|OrbitalAurora|com[.]orbital[.]synth' \
       artifacts/focus-bootstrap-logcat.txt 2>/dev/null | tail -n 45 | cut -c 1-260
+    printf -- '--- last accessibility dump (what the UI exposed) ---\n'
+    if [[ -s artifacts/focus-bootstrap-normal.xml ]]; then
+      python3 - artifacts/focus-bootstrap-normal.xml <<'PYDIG' 2>&1 | head -n 20 | cut -c1-200
+import sys
+import xml.etree.ElementTree as ET
+try:
+    nodes = list(ET.parse(sys.argv[1]).iter("node"))
+except Exception as problem:
+    print("unreadable dump:", problem)
+    raise SystemExit(0)
+labels = [n.attrib.get("content-desc") or n.attrib.get("text") or "" for n in nodes]
+labels = [l for l in labels if l]
+packages = sorted({n.attrib.get("package", "?") for n in nodes})
+print("nodes=%d labelled=%d packages=%s" % (len(nodes), len(labels), packages))
+for label in labels[:12]:
+    print("  -", label)
+PYDIG
+    else
+      printf 'no accessibility dump was captured\n'
+    fi
     printf -- '--- focus / process state ---\n'
     timeout 8s adb shell pidof com.orbital.synth 2>&1 | head -n 2
     grep -E 'mCurrentFocus|mFocusedApp|mTopFullscreenOpaqueWindowState' \
@@ -146,7 +166,11 @@ sleep 2
 # Both supported keybed variants are exclusive: legacy piano or liquid-glass.
 printf 'verify-live-normal-keyboard-accessibility\n' > "$phase"
 keyboard_ready=0
-for attempt in 1 2 3; do
+# The assertion below is unchanged and still fail-closed; only the patience grew.
+# After an emulator system ANR the Compose accessibility tree can take well over
+# ten seconds to reappear on this CPU-starved runner (seen: three dumps ~5 s apart
+# all empty although MainActivity already held focus).
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
   if timeout 35s adb shell uiautomator dump /sdcard/orbital-baseline-normal.xml \
        > artifacts/focus-bootstrap-normal-dump.txt 2>&1 &&
      timeout 15s adb exec-out cat /sdcard/orbital-baseline-normal.xml \
@@ -169,7 +193,7 @@ PY
     break
   fi
   printf 'normal_keyboard_retry=%s\n' "$attempt" >> "$summary"
-  sleep 2
+  sleep 3
 done
 [[ "$keyboard_ready" == 1 ]] || {
   echo 'Focused MainActivity did not expose its genuine normal keyboard and STAGE control.' >&2
