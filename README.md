@@ -18,6 +18,16 @@ Open **STAGE** and the screen becomes a glowing instrument:
 
 Thoroughly touch-first: 48 dp targets, haptics (opt-in), reduce-motion support and an accessible, balanced note lifecycle (every note-on has a note-off, even on gesture cancel, Back, or app switch).
 
+## What it looks like (real emulator screenshots)
+
+These are genuine Android API 35 emulator framebuffers of the debug APK, not mock-ups; the exact source commit, CI run and SHA-256 of every image are in [docs/screenshots/PROVENANCE.md](docs/screenshots/PROVENANCE.md).
+
+| AURORA stage: a held D-major triad on the HARP GLOW voice | AURORA stage: "follow the light" lesson (Ode to Joy) | Main screen (SOUND page) |
+| --- | --- | --- |
+| ![AURORA stage with a held chord, glowing lanes and rippling light](docs/screenshots/orbital-aurora-play.png) | ![AURORA lesson: the next note glows gold with the melody ribbon ahead](docs/screenshots/orbital-aurora-lesson.png) | ![Main SOUND screen](docs/screenshots/orbital-portrait.png) |
+
+Known visual defects on the main screen, visible above and **not fixed in this release**: the XY PERF chip overlaps the left edge of the waveform editor, and the "ENGINE / OSCILLATORS / ADVANCED" row is partly clipped by the keybed. Only the AURORA stage was redesigned.
+
 ## What is implemented
 
 | Area | Current implementation | Boundaries |
@@ -51,7 +61,7 @@ The **SOURCE** control chooses what makes the sound: the engine's own **oscillat
 
 ## Verification and release gates
 
-The AURORA release-candidate source (pull-request head [`a349e46`](https://github.com/boop-bip80/Android-synth/commit/a349e46), before squash-merge) passed **all nine required jobs** on a GitHub-hosted API 35 emulator in [run 41934822397](https://github.com/boop-bip80/Android-synth/actions/runs/41934822397), without waiving or weakening any assertion. In an earlier run of the previous commit, COMPACT350 failed once and passed on an unchanged re-run, and RESTART failed twice before passing on the next commit; both are emulator-foreground checks, and their cause is not established beyond that, so treat those two lanes as occasionally timing-sensitive. The nine jobs:
+The merged source ([`4f2ae58`](https://github.com/boop-bip80/Android-synth/commit/4f2ae581492a193b9e9587e286194b0cdac37f6e) on `main`) passed **all nine required jobs** on a GitHub-hosted API 35 emulator in [run 41942904837](https://github.com/boop-bip80/Android-synth/actions/runs/41942904837), and its pull-request head passed the same nine in [run 41940308388](https://github.com/boop-bip80/Android-synth/actions/runs/41940308388), without waiving or weakening any assertion. The matching developer APK is the [debug prerelease `orbital-debug-4f2ae581492a`](https://github.com/boop-bip80/Android-synth/releases/tag/orbital-debug-4f2ae581492a) (debug-signed, not a Play release). On earlier runs of near-identical code, COMPACT350 failed once and passed on an unchanged re-run, RESTART failed twice before passing on the next commit, and GENERAL-0 failed once when the emulator lost display ownership. These are emulator-foreground checks and their root cause is not established beyond that, so treat the emulator lanes as occasionally timing-sensitive. The nine jobs:
 
 1. Kotlin unit tests, Android lint, application APK and instrumentation APK assembly.
 2. Android **GENERAL-0** connected-test shard.

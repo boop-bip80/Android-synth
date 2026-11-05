@@ -62,6 +62,7 @@ printf 'launch-production-MainActivity\n' > "$phase"
 timeout 30s adb shell am start -n com.orbital.synth/.MainActivity   > artifacts/focus-bootstrap-launch.txt
 ready=0
 launcher_anr_recoveries=0
+system_anr_recoveries=0
 for attempt in {1..70}; do
   timeout 10s adb shell dumpsys window > artifacts/focus-bootstrap-window.txt 2>&1 || true
   if timeout 8s adb shell pidof com.orbital.synth >/dev/null 2>&1 &&
@@ -85,6 +86,46 @@ for attempt in {1..70}; do
         >> artifacts/focus-bootstrap-launch.txt 2>&1 || true
     fi
     launcher_anr_recoveries=$((launcher_anr_recoveries + 1))
+    sleep 2
+  fi
+  # On a slow 2-core runner the emulator's own *system* process can raise an ANR
+  # dialog over an otherwise healthy, drawn ORBITAL window (seen with ORBITAL as the
+  # focused app and its MainActivity as the top fullscreen window, process alive).
+  # Accept that ONLY under exactly those conditions, then press the dialog's "Wait".
+  # An ANR of ORBITAL itself, a crash, a splash screen or any other dialog still
+  # fails the unchanged focus gate below.
+  if (( system_anr_recoveries < 3 )) &&
+     grep -Eq 'mCurrentFocus=.*Application Not Responding: system([}]|$)' artifacts/focus-bootstrap-window.txt &&
+     grep -Eq 'mFocusedApp=.*com[.]orbital[.]synth/[.]MainActivity' artifacts/focus-bootstrap-window.txt &&
+     grep -Eq 'mTopFullscreenOpaqueWindowState=.*com[.]orbital[.]synth/com[.]orbital[.]synth[.]MainActivity' artifacts/focus-bootstrap-window.txt &&
+     timeout 8s adb shell pidof com.orbital.synth >/dev/null 2>&1; then
+    system_anr_recoveries=$((system_anr_recoveries + 1))
+    printf 'recovery=emulator_system_anr_wait_%s\n' "$system_anr_recoveries" >> "$summary"
+    wait_xy=""
+    if timeout 35s adb shell uiautomator dump /sdcard/orbital-system-anr.xml \
+         > artifacts/focus-bootstrap-anr-dump.txt 2>&1 &&
+       timeout 15s adb exec-out cat /sdcard/orbital-system-anr.xml \
+         > artifacts/focus-bootstrap-anr.xml 2>/dev/null; then
+      wait_xy="$(python3 - artifacts/focus-bootstrap-anr.xml <<'PY' 2>/dev/null || true
+import re
+import sys
+import xml.etree.ElementTree as ET
+for node in ET.parse(sys.argv[1]).iter("node"):
+    if node.attrib.get("text", "").strip().lower() == "wait":
+        m = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.attrib.get("bounds", ""))
+        if m:
+            left, top, right, bottom = map(int, m.groups())
+            print((left + right) // 2, (top + bottom) // 2)
+            break
+PY
+)"
+    fi
+    if [[ -n "$wait_xy" ]]; then
+      printf 'system_anr_wait_tap=%s\n' "$wait_xy" >> "$summary"
+      timeout 10s adb shell input tap $wait_xy || true
+    else
+      timeout 10s adb shell input keyevent KEYCODE_BACK || true
+    fi
     sleep 2
   fi
   sleep 1
