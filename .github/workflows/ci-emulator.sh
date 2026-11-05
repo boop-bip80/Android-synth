@@ -12,12 +12,13 @@ original_font_scale=null
 compact_logcat_pid=
 general_host_sampler_pid=
 general_full_logcat_pid=
+system_anr_watcher_pid=
 
 collect_diagnostics() {
   local status=$?
   trap - EXIT
   set +e
-  for diagnostic_pid in "$compact_logcat_pid" "$general_full_logcat_pid" "$general_host_sampler_pid"; do
+  for diagnostic_pid in "$compact_logcat_pid" "$general_full_logcat_pid" "$general_host_sampler_pid" "$system_anr_watcher_pid"; do
     if [[ -n "$diagnostic_pid" ]]; then
       kill "$diagnostic_pid" >/dev/null 2>&1 || true
       wait "$diagnostic_pid" >/dev/null 2>&1 || true
@@ -66,6 +67,12 @@ collect_diagnostics() {
     tail -n 180 artifacts/compact-test-live-logcat.txt
   else
     printf '%s\n' 'No streamed compact/graphics logcat was captured.'
+  fi
+  printf '\n=== emulator system-ANR watcher (taps pressed Wait) ===\n'
+  if [[ -s artifacts/general-system-anr-watch.txt ]]; then
+    tail -n 12 artifacts/general-system-anr-watch.txt | cut -c1-220
+  else
+    printf 'watcher never needed to act\n'
   fi
   printf '\n=== Android instrumentation failure XML excerpts ===\n'
   if [[ -d app/build/outputs/androidTest-results ]]; then
@@ -227,6 +234,33 @@ general_full_logcat_pid=$!
 # messages even if emulator-5554 vanishes before EXIT diagnostics can query it.
 adb logcat -v threadtime -s OrbitalCompactTest:I AndroidRuntime:E ActivityManager:W SurfaceFlinger:E HWUI:E libc:F DEBUG:E '*:S' > artifacts/compact-test-live-logcat.txt 2>&1 &
 compact_logcat_pid=$!
+# On this CPU-starved runner the emulator's own *system* process occasionally raises an
+# "Application Not Responding: system" dialog over whatever test Activity is running, and
+# several capture tests (each with its own foreground proof) then fail because another
+# window owns the display. Event-driven, so it adds no polling load: when the event log
+# reports an ANR, wait a moment, and ONLY if that exact dialog is the focused window press
+# its Wait button with a blind `input tap` (no UiAutomation connection is used, so it cannot
+# collide with the tests'). The button sits at the dialog's centre-x and ~58% of the height
+# on the pixel_6 profile (observed at 540,1391 on 1080x2400).
+(
+  adb logcat -b events -T 1 -v brief 'am_anr:I' '*:S' 2>/dev/null | while IFS= read -r anr_event; do
+    sleep 1.5
+    if timeout 15s adb shell dumpsys window 2>/dev/null \
+         | grep -Eq 'mCurrentFocus=.*Application Not Responding: system([}]|$)'; then
+      size="$(timeout 8s adb shell wm size 2>/dev/null | tr -d '\r' | grep -Eo '[0-9]+x[0-9]+' | tail -n 1)"
+      width="${size%x*}"
+      height="${size#*x}"
+      if [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]]; then
+        tap_x=$((width / 2))
+        tap_y=$((height * 58 / 100))
+        printf '%s system_anr_wait_tap %s,%s after: %s\n' "$(date +%T)" "$tap_x" "$tap_y" "$anr_event" \
+          >> artifacts/general-system-anr-watch.txt
+        timeout 10s adb shell input tap "$tap_x" "$tap_y" >/dev/null 2>&1 || true
+      fi
+    fi
+  done
+) &
+system_anr_watcher_pid=$!
 # The real PCM-held FOCUS framebuffer and compact350 SOUND editor tests stay
 # mandatory in their own clean STAGE / COMPACT350 emulators. AndroidX
 # discovery enumerates every other declared method, including two opt-in
