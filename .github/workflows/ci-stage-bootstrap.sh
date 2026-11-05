@@ -23,6 +23,26 @@ finish() {
     printf -- '--- crash / ANR / app lines from logcat ---\n'
     grep -E 'FATAL EXCEPTION|AndroidRuntime|ANR in|Application Not Responding|has died|am_crash|am_anr|Force finishing|Splash|StrictMode|OrbitalAurora|com[.]orbital[.]synth' \
       artifacts/focus-bootstrap-logcat.txt 2>/dev/null | tail -n 45 | cut -c 1-260
+    printf -- '--- last accessibility dump (what the UI exposed) ---\n'
+    if [[ -s artifacts/focus-bootstrap-normal.xml ]]; then
+      python3 - artifacts/focus-bootstrap-normal.xml <<'PYDIG' 2>&1 | head -n 20 | cut -c1-200
+import sys
+import xml.etree.ElementTree as ET
+try:
+    nodes = list(ET.parse(sys.argv[1]).iter("node"))
+except Exception as problem:
+    print("unreadable dump:", problem)
+    raise SystemExit(0)
+labels = [n.attrib.get("content-desc") or n.attrib.get("text") or "" for n in nodes]
+labels = [l for l in labels if l]
+packages = sorted({n.attrib.get("package", "?") for n in nodes})
+print("nodes=%d labelled=%d packages=%s" % (len(nodes), len(labels), packages))
+for label in labels[:12]:
+    print("  -", label)
+PYDIG
+    else
+      printf 'no accessibility dump was captured\n'
+    fi
     printf -- '--- focus / process state ---\n'
     timeout 8s adb shell pidof com.orbital.synth 2>&1 | head -n 2
     grep -E 'mCurrentFocus|mFocusedApp|mTopFullscreenOpaqueWindowState' \
@@ -31,6 +51,81 @@ finish() {
   exit "$status"
 }
 trap finish EXIT
+
+# Prints "x y" (centre of the Wait button) ONLY when the given uiautomator dump shows
+# the emulator's *system* process ANR dialog ("... system isn't responding") together
+# with a Wait button. An ANR of ORBITAL itself ("ORBITAL isn't responding") prints
+# nothing, so it is never papered over.
+system_anr_wait_xy() {
+  python3 - "$1" <<'PYW' 2>/dev/null || true
+import re
+import sys
+import xml.etree.ElementTree as ET
+try:
+    nodes = list(ET.parse(sys.argv[1]).iter("node"))
+except Exception:
+    raise SystemExit(0)
+def norm(value):
+    return value.replace("\u2019", "'").lower()
+if not any("system isn't responding" in norm(n.attrib.get("text", "") + n.attrib.get("content-desc", ""))
+           for n in nodes):
+    raise SystemExit(0)
+for node in nodes:
+    if node.attrib.get("text", "").strip().lower() == "wait":
+        m = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.attrib.get("bounds", ""))
+        if m:
+            left, top, right, bottom = map(int, m.groups())
+            print((left + right) // 2, (top + bottom) // 2)
+            break
+PYW
+}
+
+# Presses Wait on the emulator's system-process ANR dialog, but ONLY while ORBITAL's
+# MainActivity is the focused app and the top fullscreen window and the process is alive,
+# i.e. the app is healthy and an emulator dialog is merely covering it. Returns 0 if it
+# tapped, 1 if there was nothing (or nothing safe) to recover.
+recover_system_anr_if_present() {
+  timeout 12s adb shell dumpsys window > artifacts/focus-bootstrap-window.txt 2>&1 || true
+  grep -Eq 'mCurrentFocus=.*Application Not Responding: system([}]|$)' artifacts/focus-bootstrap-window.txt || return 1
+  grep -Eq 'mFocusedApp=.*com[.]orbital[.]synth/[.]MainActivity' artifacts/focus-bootstrap-window.txt || return 1
+  grep -Eq 'mTopFullscreenOpaqueWindowState=.*com[.]orbital[.]synth/com[.]orbital[.]synth[.]MainActivity' artifacts/focus-bootstrap-window.txt || return 1
+  timeout 8s adb shell pidof com.orbital.synth >/dev/null 2>&1 || return 1
+  local xy="" size width height
+  if timeout 35s adb shell uiautomator dump /sdcard/orbital-system-anr.xml \
+       > artifacts/focus-bootstrap-anr-dump.txt 2>&1 &&
+     timeout 15s adb exec-out cat /sdcard/orbital-system-anr.xml \
+       > artifacts/focus-bootstrap-anr.xml 2>/dev/null; then
+    xy="$(system_anr_wait_xy artifacts/focus-bootstrap-anr.xml)"
+  fi
+  if [[ -z "$xy" ]]; then
+    # Fall back to the dialog's observed position (centre-x, ~58% of the height).
+    size="$(timeout 8s adb shell wm size 2>/dev/null | tr -d '\r' | grep -Eo '[0-9]+x[0-9]+' | tail -n 1)"
+    width="${size%x*}"
+    height="${size#*x}"
+    [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || return 1
+    xy="$((width / 2)) $((height * 58 / 100))"
+  fi
+  printf 'focus_gate_system_anr_wait_tap=%s\n' "$xy" >> "$summary"
+  timeout 10s adb shell input tap $xy || true
+  sleep 2
+  return 0
+}
+
+# Succeeds only when ORBITAL's MainActivity really is the focused window. If the only
+# thing in the way is that emulator system dialog (over a healthy ORBITAL), press Wait
+# and look again; anything else fails closed. Pass "quiet" to suppress the message.
+require_orbital_focus() {
+  local message="$1" mode="${2:-loud}" attempt
+  for attempt in 1 2 3 4 5 6; do
+    timeout 12s adb shell dumpsys window > artifacts/focus-bootstrap-window.txt 2>&1 || true
+    if grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth/com[.]orbital[.]synth[.]MainActivity' artifacts/focus-bootstrap-window.txt; then
+      return 0
+    fi
+    recover_system_anr_if_present || break
+  done
+  [[ "$mode" == quiet ]] || echo "$message" >&2
+  return 1
+}
 
 # Host JVM/lint/APK build has already passed and uploaded both binaries.
 # Never run Gradle compilation while QEMU owns this runner's RAM: recent API35
@@ -146,7 +241,11 @@ sleep 2
 # Both supported keybed variants are exclusive: legacy piano or liquid-glass.
 printf 'verify-live-normal-keyboard-accessibility\n' > "$phase"
 keyboard_ready=0
-for attempt in 1 2 3; do
+# The assertion below is unchanged and still fail-closed; only the patience grew.
+# After an emulator system ANR the Compose accessibility tree can take well over
+# ten seconds to reappear on this CPU-starved runner (seen: three dumps ~5 s apart
+# all empty although MainActivity already held focus).
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
   if timeout 35s adb shell uiautomator dump /sdcard/orbital-baseline-normal.xml \
        > artifacts/focus-bootstrap-normal-dump.txt 2>&1 &&
      timeout 15s adb exec-out cat /sdcard/orbital-baseline-normal.xml \
@@ -169,24 +268,35 @@ PY
     break
   fi
   printf 'normal_keyboard_retry=%s\n' "$attempt" >> "$summary"
-  sleep 2
+  # The system process stays unresponsive on this starved runner, so its ANR dialog
+  # can come back after a single Wait tap. Press Wait again whenever the dump shows
+  # exactly that dialog; the strict assertion above is not relaxed.
+  anr_xy="$(system_anr_wait_xy artifacts/focus-bootstrap-normal.xml)"
+  if [[ -n "$anr_xy" ]]; then
+    printf 'normal_gate_system_anr_wait_tap=%s\n' "$anr_xy" >> "$summary"
+    timeout 10s adb shell input tap $anr_xy || true
+  fi
+  sleep 3
 done
 [[ "$keyboard_ready" == 1 ]] || {
   echo 'Focused MainActivity did not expose its genuine normal keyboard and STAGE control.' >&2
   exit 1
 }
 printf 'normal_keyboard_accessibility=verified\n' >> "$summary"
-timeout 12s adb shell dumpsys window > artifacts/focus-bootstrap-window.txt 2>&1
-grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth/com[.]orbital[.]synth[.]MainActivity' \
-  artifacts/focus-bootstrap-window.txt || {
-    echo 'Lost real MainActivity focus after normal keyboard became accessible.' >&2
-    exit 1
-}
+require_orbital_focus 'Lost real MainActivity focus after normal keyboard became accessible.' || exit 1
 sleep 2
 
 printf 'capture-genuine-normal-app-baseline\n' > "$phase"
 captured=0
-for attempt in 1 2 3; do
+for attempt in 1 2 3 4 5; do
+  # A frame is accepted only if ORBITAL owned the focus both before it was taken (a
+  # recurring emulator system-ANR dialog may be dismissed first) and right after it was
+  # taken, so a frame that could contain that dialog is always discarded and retaken.
+  require_orbital_focus 'ORBITAL not focused before baseline capture' quiet || {
+    printf 'baseline_retry_not_focused=%s\n' "$attempt" >> "$summary"
+    sleep 2
+    continue
+  }
   # Only bytes actually emitted by Android's current displayed framebuffer.
   if timeout 25s adb exec-out screencap -p > artifacts/orbital-emulator.png &&
      test -s artifacts/orbital-emulator.png &&
@@ -213,8 +323,15 @@ if ending != b"\x00\x00\x00\x00IEND\xaeB\x60\x82":
 print(f"PASS genuine foreground normal-app framebuffer {width}x{height}, {size} bytes")
 PY
   then
-    captured=1
-    break
+    timeout 12s adb shell dumpsys window > artifacts/focus-bootstrap-window.txt 2>&1 || true
+    if grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth/com[.]orbital[.]synth[.]MainActivity' artifacts/focus-bootstrap-window.txt; then
+      captured=1
+      break
+    fi
+    printf 'baseline_retry_focus_lost_during_capture=%s\n' "$attempt" >> "$summary"
+    rm -f artifacts/orbital-emulator.png
+    sleep 2
+    continue
   fi
   printf 'baseline_retry=%s\n' "$attempt" >> "$summary"
   timeout 8s adb devices -l >> "$summary" 2>&1 || true
@@ -224,10 +341,6 @@ done
   echo 'No actual normal-app portrait baseline PNG from the emulator.' >&2
   exit 1
 }
-timeout 12s adb shell dumpsys window > artifacts/focus-bootstrap-window.txt 2>&1
-grep -Eq 'mCurrentFocus=.*com[.]orbital[.]synth/com[.]orbital[.]synth[.]MainActivity' artifacts/focus-bootstrap-window.txt || {
-  echo 'Real app lost OS window focus during baseline screenshot.' >&2
-  exit 1
-}
+# (Focus was verified right after the accepted frame inside the loop above.)
 printf 'normal_baseline_sha256=%s\n'   "$(sha256sum artifacts/orbital-emulator.png | cut -d' ' -f1)" >> "$summary"
 printf 'ready-for-strict-real-android-screenshot-proofs\n' > "$phase"
