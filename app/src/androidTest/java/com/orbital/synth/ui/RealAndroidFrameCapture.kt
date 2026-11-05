@@ -9,6 +9,7 @@ import android.os.ParcelFileDescriptor
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.junit4.ComposeTestRule
@@ -110,6 +111,7 @@ internal class RealAndroidFrameCapture(
         var strongestMarker = 0
         var evidence = "not collected"
         var recoveredLauncherAnr = false
+        var systemAnrRecoveries = 0
         try {
             for (attempt in 0 until 12) {
                 val dump = foregroundShell(automation, "dumpsys window")
@@ -165,6 +167,34 @@ internal class RealAndroidFrameCapture(
                         ),
                     ).use { it.readBytes() }
                     Thread.sleep(650L)
+                    continue
+                }
+                // On a CPU-starved emulator the *system* process can also raise an ANR
+                // dialog over a healthy test Activity. Same rule as above: recover only
+                // that exact emulator-system dialog, only while this test Activity is the
+                // focused app, and never accept pixels without the physical marker below.
+                if (systemAnrRecoveries < 3 && emulator &&
+                    currentWindow.contains("Application Not Responding: system") &&
+                    focusedApp.contains("com.orbital.synth/androidx.activity.ComponentActivity") &&
+                    activeRootPackage == "android"
+                ) {
+                    systemAnrRecoveries++
+                    println("REAL_ANDROID_EMULATOR_SYSTEM_ANR_RECOVERY #" + systemAnrRecoveries +
+                        " " + evidence)
+                    val waited = runCatching {
+                        val root = automation.rootInActiveWindow
+                        val button = root?.findAccessibilityNodeInfosByText("Wait")
+                            ?.firstOrNull { it.text?.toString()?.trim().equals("Wait", ignoreCase = true) }
+                        val target = if (button == null) null
+                        else if (button.isClickable) button else button.parent
+                        target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+                    }.getOrDefault(false)
+                    if (!waited) {
+                        ParcelFileDescriptor.AutoCloseInputStream(
+                            automation.executeShellCommand("input keyevent KEYCODE_BACK"),
+                        ).use { it.readBytes() }
+                    }
+                    Thread.sleep(900L)
                     continue
                 }
                 if (belongsToSynthWindow(currentWindow) &&
