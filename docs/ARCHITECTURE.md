@@ -148,3 +148,38 @@ Changes must be integrated, compiled, unit-tested, emulator-tested, and document
 
 Fidelity boundary: STRING/GLASS are original models *inspired by* plucked strings, marimbas, glass
 and bells. They are not sampled instruments and are not calibrated against a measured instrument.
+
+## Jazz catalogue, per-tune presets and stage looks (unreleased)
+
+### Jazz catalogue (`:core` `jazz` package, no Android dependency)
+- `RealBookVol1Data` is one validated text file: a `[A]` section heading per book section and one
+  `Title | Composer | key | feel [| voice=… bpm=…]` line per tune, in the book's order. `?` (composer,
+  key) and `-` (feel) mean *not recorded*; the model carries that through (`JazzStandard.key == null`,
+  `feelKnown == false`) so the UI shows nothing instead of a guess. A malformed line throws with its
+  line number, so a bad edit fails the unit tests. **Only facts belong in it; never melodies or charts.**
+  Titles come from a supplied contents list; composer/key/feel are unverified annotations.
+- `JazzStandard` is metadata only. `JazzCatalogue` parses, searches (every term must match title,
+  composer, key, feel or instrument) and files tunes under the book's own sections.
+- `JazzVoices` defines 13 voices on the existing engine only. Each writes all 18 engine parameters
+  so loading one fully replaces the previous sound. `JazzPresets.patchFor` tailors a voice to a tune
+  deterministically (tempo → release/decay/wash; minor mode → darker; feel → reverb/decay/movement)
+  and stores the tune's BPM as the patch's modulation tempo. The result is an ordinary `SynthPatch`
+  (`rb1-<id>`); it is *not* added to `FactoryPatches.ALL`, so the voice stepper is unchanged.
+- App side: `ImmersiveStage.playStandard` loads the patch through `onApplyPatch`
+  (`MainActivity.applyStagePatch`, which releases notes and arpeggiator, reconciles the FX rack and
+  routes the patch BPM to the master tempo, exactly as a factory patch load does), retunes the stage to
+  the tune's key when recorded, and selects JAZZ harmony.
+
+### Stage looks (dark / normal / auto)
+- `GlowTheme` (`:core`, `stage.glow`) wraps a `GlowCanvas`. `DARK` is the original canvas untouched.
+  `LIGHT` returns `LightGlowCanvas`, which re-inks every primitive: additive light becomes ordinary
+  alpha, neon hues become deep inks of roughly equal perceived darkness, white-hot highlights become
+  the darkest ink. The simulation (`AuroraSim`) is unchanged; Android and the Java2D preview get the
+  look through the same wrapper. `LightInk` is allocation-free like the rest of the draw path.
+- `StagePalette` (`:app`, `ui/aurora/StageTheme.kt`) holds every colour the chrome uses. The dark
+  palette is exactly the colours the chrome had before themes existed. `StageThemeMode` is DARK
+  (default), LIGHT or SYSTEM and is stored in `AuroraPrefs`; `OrbitalScreen` provides the palette as
+  `LocalStagePalette`. FOCUS and the audio-reactive field stay black/dark by design; in normal mode
+  the field is not composed (light added to black cannot show on paper).
+- Not themed: the main SOUND / PLAY / SEQ / FX screens and the stage configuration dialog's own panel.
+

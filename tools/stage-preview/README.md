@@ -14,6 +14,9 @@ looks — real emulator screenshots are produced by CI.
 gradle -p tools/stage-preview render      # JDK 17+, writes tools/stage-preview/build/frames/*.png
 ```
 
+Every scenario is written twice, `name.png` (dark) and `name-light.png` (normal mode, via
+`GlowTheme.LIGHT`), except the black FOCUS canvas which has no light variant by design.
+
 Scenarios (see `PreviewMain.kt`): idle surface, a melodic slide, a three-finger chord,
 the "follow the light" guide, all twelve key palettes, the black FOCUS canvas
 before/after a touch, a celebration finale and dense two-handed play.

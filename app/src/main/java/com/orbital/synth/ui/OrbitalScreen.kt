@@ -53,6 +53,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -89,6 +90,10 @@ import com.orbital.synth.core.ModulationRouteConfig
 import com.orbital.synth.core.dsp.processing.FxModuleConfig
 import com.orbital.synth.core.dsp.processing.ModulationStepConfig
 import com.orbital.synth.core.music.SequencerNote
+import com.orbital.synth.core.preset.SynthPatch
+import com.orbital.synth.ui.aurora.AuroraPrefs
+import com.orbital.synth.ui.aurora.LocalStagePalette
+import com.orbital.synth.ui.aurora.stagePaletteFor
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
@@ -178,6 +183,8 @@ fun OrbitalScreen(
     onSequencerTempoChange: ((Int) -> Unit)? = null,
     onPreviousPatch: (() -> Unit)? = null,
     onNextPatch: (() -> Unit)? = null,
+    /** Loads a patch outside the factory bank (a jazz standard's default sound) from the stage. */
+    onApplyPatch: ((SynthPatch) -> Unit)? = null,
     onSavePatch: ((String) -> Unit)? = null,
     onSelectPatch: ((String) -> Unit)? = null,
     onSelectSequence: ((String) -> Unit)? = null,
@@ -343,21 +350,34 @@ fun OrbitalScreen(
     } else null
 
     if (immersiveMode) {
-        ImmersiveStage(
-            state = state,
-            onNoteOn = onNoteOn,
-            onNoteOff = onNoteOff,
-            onParameterChange = onParameterChange,
-            onExpressiveNoteOn = onExpressiveNoteOn,
-            onModulationTouchExpression = onStageModulationTouch,
-            initialPerformanceConfig = state.stageTouchSettings,
-            onPerformanceConfigChange = onStageTouchSettingsChange,
-            audioVisualSource = onReadAudioVisual,
-            performanceResetEpoch = state.performanceResetEpoch,
-            onPreviousPatch = onPreviousPatch,
-            onNextPatch = onNextPatch,
-            onExit = { immersiveMode = false },
-        )
+        // The stage's look (dark, normal or automatic) is a personal preference kept on the
+        // device; DARK is the default so the stage looks as it always has until it is changed.
+        val stageContext = LocalContext.current
+        val stagePrefs = remember(stageContext) { AuroraPrefs(stageContext) }
+        var stageThemeMode by remember { mutableStateOf(stagePrefs.themeMode) }
+        CompositionLocalProvider(LocalStagePalette provides stagePaletteFor(stageThemeMode)) {
+            ImmersiveStage(
+                state = state,
+                onNoteOn = onNoteOn,
+                onNoteOff = onNoteOff,
+                onParameterChange = onParameterChange,
+                onExpressiveNoteOn = onExpressiveNoteOn,
+                onModulationTouchExpression = onStageModulationTouch,
+                initialPerformanceConfig = state.stageTouchSettings,
+                onPerformanceConfigChange = onStageTouchSettingsChange,
+                audioVisualSource = onReadAudioVisual,
+                performanceResetEpoch = state.performanceResetEpoch,
+                onPreviousPatch = onPreviousPatch,
+                onNextPatch = onNextPatch,
+                onApplyPatch = onApplyPatch,
+                themeMode = stageThemeMode,
+                onThemeChange = { mode ->
+                    stageThemeMode = mode
+                    stagePrefs.themeMode = mode
+                },
+                onExit = { immersiveMode = false },
+            )
+        }
     } else {
     BoxWithConstraints(
         Modifier

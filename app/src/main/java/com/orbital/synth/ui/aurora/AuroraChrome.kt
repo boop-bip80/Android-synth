@@ -26,7 +26,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,6 +49,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.orbital.synth.core.jazz.JazzStandard
 import com.orbital.synth.core.music.MusicalScales
 import com.orbital.synth.core.stage.ChordAssist
 import com.orbital.synth.core.stage.GuideResult
@@ -55,11 +59,6 @@ import com.orbital.synth.core.stage.StageKey
 import com.orbital.synth.core.stage.StageScales
 import com.orbital.synth.core.stage.glow.AuroraPalette
 import com.orbital.synth.ui.TouchScale
-
-private val Ink = Color(0xFF05080F)
-private val Glass = Color(0xFF0A1220)
-private val Soft = Color(0xFFB9C7DA)
-private val Gold = Color(0xFFFFC857)
 
 internal fun rgbColor(rgb: Int, alpha: Float = 1f): Color =
     Color(0xFF000000.toInt() or (rgb and 0xFFFFFF)).copy(alpha = alpha)
@@ -88,6 +87,7 @@ internal fun GlassPill(
     minWidth: Dp = 48.dp,
     onClick: () -> Unit,
 ) {
+    val pal = LocalStagePalette.current
     val shape = RoundedCornerShape(16.dp)
     Box(
         modifier
@@ -96,7 +96,7 @@ internal fun GlassPill(
             .clip(shape)
             .background(
                 if (chosen) Brush.verticalGradient(listOf(accent.copy(alpha = .34f), accent.copy(alpha = .14f)))
-                else Brush.verticalGradient(listOf(Glass.copy(alpha = .92f), Ink.copy(alpha = .88f))),
+                else Brush.verticalGradient(listOf(pal.glass.copy(alpha = .92f), pal.ink.copy(alpha = .88f))),
                 shape,
             )
             .border(1.dp, accent.copy(alpha = if (chosen) .95f else .30f), shape)
@@ -108,7 +108,7 @@ internal fun GlassPill(
     ) {
         Text(
             text,
-            color = if (chosen) Color.White else Soft,
+            color = if (chosen) pal.text else pal.soft,
             fontSize = fontSize,
             fontWeight = if (chosen) FontWeight.Bold else FontWeight.Medium,
             letterSpacing = .9.sp,
@@ -133,6 +133,7 @@ internal fun AuroraHeader(
     onConfig: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val pal = LocalStagePalette.current
     val key = auroraKeyOf(tonic, scale)
     val modeIndex = AuroraModes.indexOf(scale).coerceAtLeast(0)
     val coreScale = key.scale
@@ -161,7 +162,7 @@ internal fun AuroraHeader(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
-                        key.displayName, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                        key.displayName, color = pal.text, fontSize = 16.sp, fontWeight = FontWeight.Bold,
                         letterSpacing = 1.6.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                     Text(
@@ -192,6 +193,7 @@ internal fun AuroraHeader(
 
 @Composable
 private fun KeyRow(tonic: Int, scaleId: String, accent: Color, onTonic: (Int) -> Unit) {
+    val pal = LocalStagePalette.current
     val scroll = rememberScrollState()
     val chip = 48.dp
     val gap = 6.dp
@@ -210,7 +212,7 @@ private fun KeyRow(tonic: Int, scaleId: String, accent: Color, onTonic: (Int) ->
         ) {
             val coreScale = MusicalScales.byId(scaleId) ?: MusicalScales.MAJOR
             for (i in 0..11) {
-                val color = rgbColor(AuroraPalette(StageKey(i, coreScale)).root)
+                val color = pal.tint(AuroraPalette(StageKey(i, coreScale)).root)
                 val name = NoteSpelling.tonicName(i)
                 val picked = i == tonic
                 Box(
@@ -219,7 +221,7 @@ private fun KeyRow(tonic: Int, scaleId: String, accent: Color, onTonic: (Int) ->
                         .clip(RoundedCornerShape(16.dp))
                         .background(
                             if (picked) Brush.verticalGradient(listOf(color.copy(alpha = .45f), color.copy(alpha = .16f)))
-                            else Brush.verticalGradient(listOf(Glass.copy(alpha = .92f), Ink.copy(alpha = .88f))),
+                            else Brush.verticalGradient(listOf(pal.glass.copy(alpha = .92f), pal.ink.copy(alpha = .88f))),
                             RoundedCornerShape(16.dp),
                         )
                         .border(if (picked) 1.6.dp else 1.dp, color.copy(alpha = if (picked) 1f else .38f), RoundedCornerShape(16.dp))
@@ -230,7 +232,7 @@ private fun KeyRow(tonic: Int, scaleId: String, accent: Color, onTonic: (Int) ->
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            name, color = if (picked) Color.White else color.copy(alpha = .95f),
+                            name, color = if (picked) pal.text else color.copy(alpha = .95f),
                             fontSize = 15.sp, fontWeight = if (picked) FontWeight.ExtraBold else FontWeight.SemiBold,
                         )
                         Box(Modifier.padding(top = 2.dp).size(width = if (picked) 18.dp else 8.dp, height = 3.dp)
@@ -268,6 +270,7 @@ internal fun AuroraFooter(
     onPreviousVoice: (() -> Unit)? = null,
     onNextVoice: (() -> Unit)? = null,
 ) {
+    val pal = LocalStagePalette.current
     Column(modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (guide != null) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -276,22 +279,22 @@ internal fun AuroraFooter(
                 }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            guide.title.uppercase(), color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                            guide.title.uppercase(), color = pal.gold, fontSize = 11.sp, fontWeight = FontWeight.Bold,
                             letterSpacing = 1.2.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
                         )
                         if (guide.combo >= 2) {
-                            Text("×${guide.combo}", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("×${guide.combo}", color = pal.text, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
                         }
                     }
-                    Box(Modifier.padding(top = 5.dp).fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha = .10f))) {
+                    Box(Modifier.padding(top = 5.dp).fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)).background(pal.hairline)) {
                         Box(
                             Modifier.fillMaxHeight().fillMaxWidth(guide.progress.coerceIn(0.01f, 1f)).clip(RoundedCornerShape(3.dp))
-                                .background(Brush.horizontalGradient(listOf(accent, Gold))),
+                                .background(Brush.horizontalGradient(listOf(accent, pal.gold))),
                         )
                     }
                 }
                 GlassPill(
-                    if (guide.listening) "♪ …" else "▶ LISTEN", false, Gold, "auroraListen",
+                    if (guide.listening) "♪ …" else "▶ LISTEN", false, pal.gold, "auroraListen",
                     "Hear this song played on the stage", fontSize = 10.sp, onClick = onListen,
                 )
                 GlassPill("✕", false, accent, "auroraEndGuide", "End this lesson", fontSize = 14.sp, onClick = onEndGuide)
@@ -300,7 +303,7 @@ internal fun AuroraFooter(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 val voiceStepping = onPreviousVoice != null && onNextVoice != null
                 GlassPill(
-                    "♪ SONGS", false, Gold, "auroraSongs", "Open songs to learn",
+                    "♪ SONGS", false, pal.gold, "auroraSongs", "Open songs to learn",
                     modifier = Modifier.weight(1f), onClick = onSongs,
                 )
                 GlassPill(
@@ -317,7 +320,7 @@ internal fun AuroraFooter(
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         GlassPill("−", false, accent, "auroraOctaveDown", "Lower the bass register", fontSize = 16.sp, onClick = { onOctave(bassOctave - 1) })
                         Text(
-                            "C$bassOctave", color = Soft, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                            "C$bassOctave", color = pal.soft, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.width(30.dp).testTag("auroraOctaveLabel"),
                             textAlign = TextAlign.Center, maxLines = 1,
                         )
@@ -338,10 +341,11 @@ private fun VoiceStepper(
     onNext: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val pal = LocalStagePalette.current
     val shape = RoundedCornerShape(16.dp)
     Row(
         modifier.heightIn(min = 48.dp).clip(shape)
-            .background(Brush.verticalGradient(listOf(Glass.copy(alpha = .92f), Ink.copy(alpha = .88f))), shape)
+            .background(Brush.verticalGradient(listOf(pal.glass.copy(alpha = .92f), pal.ink.copy(alpha = .88f))), shape)
             .border(1.dp, accent.copy(alpha = .35f), shape)
             .testTag("auroraVoice")
             .semantics { contentDescription = "Voice $name" },
@@ -353,7 +357,7 @@ private fun VoiceStepper(
             contentAlignment = Alignment.Center,
         ) { Text("‹", color = accent, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
         Text(
-            name.uppercase(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+            name.uppercase(), color = pal.text, fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
             letterSpacing = .8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center, modifier = Modifier.weight(1f),
         )
@@ -365,7 +369,11 @@ private fun VoiceStepper(
     }
 }
 
-/** A sheet of songs to learn. Tapping LEARN starts the follow-the-light lesson. */
+/**
+ * A sheet of songs: LEARN lists the follow-the-light lessons; JAZZ lists the Real Book
+ * catalogue (when [jazz] is supplied). Tapping LEARN starts a lesson; tapping PLAY on a jazz
+ * standard loads its sound and key onto the stage.
+ */
 @Composable
 internal fun AuroraSongSheet(
     songs: List<Song>,
@@ -374,34 +382,73 @@ internal fun AuroraSongSheet(
     onLearn: (Song) -> Unit,
     onListen: (Song) -> Unit,
     onClose: () -> Unit,
+    jazz: List<JazzStandard> = emptyList(),
+    onPlayJazz: ((JazzStandard) -> Unit)? = null,
+    startOnJazz: Boolean = false,
+    themeMode: StageThemeMode = StageThemeMode.DARK,
+    onTheme: (() -> Unit)? = null,
 ) {
+    val pal = LocalStagePalette.current
+    val hasJazz = jazz.isNotEmpty() && onPlayJazz != null
+    var showJazz by remember { mutableStateOf(startOnJazz && hasJazz) }
+    val jazzTab = hasJazz && showJazz
     Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = .62f))
+        Modifier.fillMaxSize().background(pal.scrim)
             .clickable(onClick = onClose).testTag("auroraSongScrim"),
     ) {
         Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(.78f)
                 .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xFF0D1626), Ink)))
-                .border(1.dp, Gold.copy(alpha = .35f), RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                .background(Brush.verticalGradient(listOf(pal.sheetTop, pal.ink)))
+                .border(1.dp, pal.gold.copy(alpha = .35f), RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .testTag("auroraSongSheet")
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Column(Modifier.weight(1f)) {
-                    Text("LEARN A SONG", color = Gold, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                     Text(
-                        "Follow the golden light. Wrong notes never stop the music.",
-                        color = Soft, fontSize = 11.sp,
+                        if (jazzTab) "JAZZ STANDARDS" else "LEARN A SONG",
+                        color = pal.gold, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp,
+                    )
+                    Text(
+                        if (jazzTab) "The Real Book, Vol. 1. PLAY loads the tune's own sound and key."
+                        else "Follow the golden light. Wrong notes never stop the music.",
+                        color = pal.soft, fontSize = 11.sp,
+                    )
+                }
+                if (onTheme != null) {
+                    GlassPill(
+                        themeMode.glyph, false, accent, "auroraTheme",
+                        "Look: ${themeMode.label}. Tap to change between dark, normal and automatic",
+                        fontSize = 15.sp, minWidth = 48.dp, onClick = onTheme,
                     )
                 }
                 GlassPill("DONE", true, accent, "auroraSongClose", "Close the song list", fontSize = 10.sp, onClick = onClose)
             }
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (song in songs) SongRow(song, bestStars(song.id), accent, onLearn, onListen)
-                Spacer(Modifier.height(10.dp))
+            if (hasJazz) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GlassPill(
+                        "LEARN", !jazzTab, pal.gold, "auroraTabLearn", "Show songs to learn",
+                        modifier = Modifier.weight(1f), fontSize = 11.sp, onClick = { showJazz = false },
+                    )
+                    GlassPill(
+                        "JAZZ", jazzTab, pal.gold, "auroraTabJazz", "Show jazz standards from the Real Book",
+                        modifier = Modifier.weight(1f), fontSize = 11.sp, onClick = { showJazz = true },
+                    )
+                }
+            }
+            if (jazzTab) {
+                JazzCatalogueList(
+                    tunes = jazz, accent = accent, onPlay = { onPlayJazz?.invoke(it) },
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (song in songs) SongRow(song, bestStars(song.id), accent, onLearn, onListen)
+                    Spacer(Modifier.height(10.dp))
+                }
             }
         }
     }
@@ -412,34 +459,35 @@ private fun SongRow(
     song: Song, stars: Int, accent: Color,
     onLearn: (Song) -> Unit, onListen: (Song) -> Unit,
 ) {
+    val pal = LocalStagePalette.current
     val shape = RoundedCornerShape(18.dp)
     Row(
         Modifier.fillMaxWidth().clip(shape)
-            .background(Brush.horizontalGradient(listOf(Glass, Ink.copy(alpha = .9f))), shape)
-            .border(1.dp, Color.White.copy(alpha = .10f), shape)
+            .background(Brush.horizontalGradient(listOf(pal.glass, pal.ink.copy(alpha = .9f))), shape)
+            .border(1.dp, pal.hairline, shape)
             .testTag("auroraSong-${song.id}")
             .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Column(Modifier.weight(1f)) {
-            Text(song.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(song.origin, color = Soft.copy(alpha = .75f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(song.title, color = pal.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(song.origin, color = pal.soft.copy(alpha = .75f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(Modifier.padding(top = 3.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "●".repeat(song.difficulty) + "○".repeat(3 - song.difficulty),
                     color = accent, fontSize = 8.sp, letterSpacing = 1.sp,
                     modifier = Modifier.semantics { contentDescription = "Difficulty ${song.difficulty} of 3" },
                 )
-                Text("${song.noteCount} notes", color = Soft.copy(alpha = .7f), fontSize = 9.sp)
+                Text("${song.noteCount} notes", color = pal.soft.copy(alpha = .7f), fontSize = 9.sp)
                 Text(
-                    "★".repeat(stars) + "☆".repeat(3 - stars), color = Gold, fontSize = 11.sp,
+                    "★".repeat(stars) + "☆".repeat(3 - stars), color = pal.gold, fontSize = 11.sp,
                     modifier = Modifier.semantics { contentDescription = "Best result $stars of 3 stars" },
                 )
             }
         }
-        GlassPill("♪", false, Soft, "auroraListenSong-${song.id}", "Listen to ${song.title}", fontSize = 15.sp, onClick = { onListen(song) })
-        GlassPill("LEARN", true, Gold, "auroraLearn-${song.id}", "Learn ${song.title}", fontSize = 10.sp, onClick = { onLearn(song) })
+        GlassPill("♪", false, pal.soft, "auroraListenSong-${song.id}", "Listen to ${song.title}", fontSize = 15.sp, onClick = { onListen(song) })
+        GlassPill("LEARN", true, pal.gold, "auroraLearn-${song.id}", "Learn ${song.title}", fontSize = 10.sp, onClick = { onLearn(song) })
     }
 }
 
@@ -453,33 +501,34 @@ internal fun AuroraResultCard(
     onSongs: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val pal = LocalStagePalette.current
     val shape = RoundedCornerShape(26.dp)
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(
             Modifier.widthIn(max = 360.dp).fillMaxWidth().clip(shape)
-                .background(Brush.verticalGradient(listOf(Color(0xE60E1830), Color(0xF005080F))), shape)
-                .border(1.dp, Gold.copy(alpha = .6f), shape)
+                .background(Brush.verticalGradient(listOf(pal.sheetTop.copy(alpha = .92f), pal.ink.copy(alpha = .94f))), shape)
+                .border(1.dp, pal.gold.copy(alpha = .6f), shape)
                 .testTag("auroraResult")
                 .semantics { contentDescription = "Lesson complete: ${result.stars} of 3 stars" }
                 .padding(22.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("★".repeat(result.stars) + "☆".repeat(3 - result.stars), color = Gold, fontSize = 38.sp)
+            Text("★".repeat(result.stars) + "☆".repeat(3 - result.stars), color = pal.gold, fontSize = 38.sp)
             Text(
                 when (result.stars) { 3 -> "FLAWLESS"; 2 -> "BEAUTIFULLY PLAYED"; else -> "YOU DID IT" },
-                color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 2.sp,
+                color = pal.text, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 2.sp,
             )
-            Text(song.title, color = Soft, fontSize = 12.sp, textAlign = TextAlign.Center)
+            Text(song.title, color = pal.soft, fontSize = 12.sp, textAlign = TextAlign.Center)
             Text(
                 "${(result.accuracy * 100).toInt()}% accuracy  ·  best streak ×${result.bestCombo}",
-                color = Soft.copy(alpha = .85f), fontSize = 11.sp,
+                color = pal.soft.copy(alpha = .85f), fontSize = 11.sp,
             )
-            if (isBest) Text("NEW PERSONAL BEST", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.8.sp)
+            if (isBest) Text("NEW PERSONAL BEST", color = pal.gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.8.sp)
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GlassPill("AGAIN", true, Gold, "auroraAgain", "Play this song again", fontSize = 10.sp, onClick = onAgain)
-                GlassPill("SONGS", false, Gold, "auroraMoreSongs", "Choose another song", fontSize = 10.sp, onClick = onSongs)
-                GlassPill("DONE", false, Soft, "auroraResultClose", "Close results", fontSize = 10.sp, onClick = onClose)
+                GlassPill("AGAIN", true, pal.gold, "auroraAgain", "Play this song again", fontSize = 10.sp, onClick = onAgain)
+                GlassPill("SONGS", false, pal.gold, "auroraMoreSongs", "Choose another song", fontSize = 10.sp, onClick = onSongs)
+                GlassPill("DONE", false, pal.soft, "auroraResultClose", "Close results", fontSize = 10.sp, onClick = onClose)
             }
         }
     }

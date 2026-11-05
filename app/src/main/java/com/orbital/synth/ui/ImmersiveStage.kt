@@ -58,6 +58,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orbital.synth.audio.AudioVisualSnapshot
 import com.orbital.synth.core.ParameterId
+import com.orbital.synth.core.jazz.JazzCatalogue
+import com.orbital.synth.core.jazz.JazzStandard
+import com.orbital.synth.core.preset.SynthPatch
 import com.orbital.synth.core.stage.ChordAssist
 import com.orbital.synth.core.stage.DiatonicGrid
 import com.orbital.synth.core.stage.GuideOutcome
@@ -70,6 +73,7 @@ import com.orbital.synth.core.stage.StageSurface
 import com.orbital.synth.core.stage.SurfaceEvent
 import com.orbital.synth.core.stage.glow.AuroraPalette
 import com.orbital.synth.core.stage.glow.AuroraSim
+import com.orbital.synth.core.stage.glow.GlowTheme
 import com.orbital.synth.ui.aurora.AuroraFooter
 import com.orbital.synth.ui.aurora.AuroraHeader
 import com.orbital.synth.ui.aurora.AuroraPrefs
@@ -77,8 +81,10 @@ import com.orbital.synth.ui.aurora.AuroraResultCard
 import com.orbital.synth.ui.aurora.AuroraSongSheet
 import com.orbital.synth.ui.aurora.ComposeGlowCanvas
 import com.orbital.synth.ui.aurora.GuideHud
+import com.orbital.synth.ui.aurora.LocalStagePalette
 import com.orbital.synth.ui.aurora.LANE_MIN_DP
 import com.orbital.synth.ui.aurora.LANE_MIN_DP_LESSON
+import com.orbital.synth.ui.aurora.StageThemeMode
 import com.orbital.synth.ui.aurora.auroraKeyOf
 import com.orbital.synth.ui.aurora.fitOctaves
 import com.orbital.synth.ui.aurora.ordinalLabel
@@ -137,7 +143,17 @@ internal fun ImmersiveStage(
     /** Optional patch stepping so the player can change voice without leaving the stage. */
     onPreviousPatch: (() -> Unit)? = null,
     onNextPatch: (() -> Unit)? = null,
+    /**
+     * Loads a patch that is not one of the factory bank (a jazz standard's own default sound).
+     * Without it the JAZZ tab is not offered.
+     */
+    onApplyPatch: ((SynthPatch) -> Unit)? = null,
+    /** The current look, so the controls can show it; the host provides the matching palette. */
+    themeMode: StageThemeMode = StageThemeMode.DARK,
+    /** Choosing a look; null hides the look controls (the look then stays as the host set it). */
+    onThemeChange: ((StageThemeMode) -> Unit)? = null,
 ) {
+    val look = LocalStagePalette.current
     val context = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -158,6 +174,9 @@ internal fun ImmersiveStage(
     var chord by remember { mutableStateOf(prefs.chord) }
     var everTouched by remember { mutableStateOf(false) }
     var hint by remember { mutableStateOf("") }
+    // What a just-chosen jazz standard loaded; shown until the first note is played.
+    var tuneHint by remember { mutableStateOf("") }
+    var songsOnJazz by remember { mutableStateOf(false) }
 
     val haptics = LocalHapticFeedback.current
     val hapticContext = LocalContext.current
@@ -218,7 +237,7 @@ internal fun ImmersiveStage(
     ) { gridFor(stageSettings, lessonActive) }
     val latestGrid = rememberUpdatedState(grid)
     val palette = remember(grid.key) { AuroraPalette(grid.key) }
-    val accent = remember(palette) { rgbColor(palette.root) }
+    val accent = remember(palette, look) { look.tint(palette.root) }
 
     val surface = remember(performanceResetEpoch) { StageSurface(grid) }
     val sim = remember { AuroraSim() }
@@ -423,6 +442,7 @@ internal fun ImmersiveStage(
                         event.lanes,
                     )
                     everTouched = true
+                    if (tuneHint.isNotEmpty()) tuneHint = ""
                     if (event.pointerId != DEMO_POINTER) guideStrike(event.lane) else poke()
                 }
                 is SurfaceEvent.Release -> {
@@ -512,6 +532,31 @@ internal fun ImmersiveStage(
         hint = "PLAY THE GLOWING NOTE"
         refreshGuideVisual()
         return lessonGrid
+    }
+
+    /**
+     * Sets the stage up for a jazz standard: its own default sound, its home key when the
+     * catalogue records one (otherwise the player's key is kept) and one-finger jazz harmony.
+     * There is no melody to follow: the player supplies the music.
+     */
+    fun playStandard(tune: JazzStandard) {
+        endLesson()
+        showSongs = false
+        songsOnJazz = true
+        onApplyPatch?.invoke(JazzCatalogue.defaultPatch(tune))
+        tune.key?.let { key ->
+            applySettings(
+                stageSettings.copy(
+                    tonic = key.tonic.coerceIn(0, 11),
+                    scale = TouchScale.fromScaleId(key.scaleId),
+                ),
+            )
+        }
+        chord = ChordAssist.SEVENTH
+        prefs.chord = chord
+        tuneHint = listOfNotNull(tune.title, tune.key?.label, tune.voice.label)
+            .joinToString("  ·  ").uppercase()
+        poke()
     }
 
     // A key or range change mid-song re-lays the melody on the new lanes, keeping progress.
@@ -609,18 +654,26 @@ internal fun ImmersiveStage(
     )
     val textMeasurer = rememberTextMeasurer()
     val glowCanvas = remember(textMeasurer, density) { ComposeGlowCanvas(textMeasurer, density) }
+    // FOCUS is pure black in every look; otherwise the stage glows (dark) or inks (normal).
+    val drawTheme = if (cleanCanvas) GlowTheme.DARK else look.glowTheme
+    val drawCanvas = remember(glowCanvas, drawTheme) { drawTheme.wrap(glowCanvas) }
 
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .then(
+                if (cleanCanvas || !look.isLight) Modifier.background(Color.Black)
+                else Modifier.background(look.backdrop),
+            )
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .testTag("immersiveStage"),
     ) {
         // The audio-reactive backdrop paints parameter-driven filaments behind the lanes.
         // The background is truly black; visual luminance is tied to the performed gesture
         // rather than to an idle animated wallpaper.
-        ImmersiveVisualField(
+        // The audio-reactive field is light added to black; on paper the simulation's own ink
+        // glow takes its place, so the field is only composed where it can be seen.
+        if (!look.isLight || cleanCanvas) ImmersiveVisualField(
             modifier = Modifier.fillMaxSize().alpha(fieldAlpha),
             morph = parameter(ParameterId.MORPH),
             movement = parameter(ParameterId.MOVEMENT),
@@ -898,7 +951,7 @@ internal fun ImmersiveStage(
                         if (frameTick < 0L) return@Canvas
                         sim.resize(size.width, size.height, this.density)
                         glowCanvas.bind(this)
-                        sim.draw(glowCanvas)
+                        sim.draw(drawCanvas)
                         glowCanvas.unbind()
                     }
                 }
@@ -906,20 +959,21 @@ internal fun ImmersiveStage(
                 if (!cleanCanvas) {
                     val coach = when {
                         hint.isNotEmpty() -> hint
+                        tuneHint.isNotEmpty() -> tuneHint
                         !everTouched -> "BOTTOM = BASS   ·   TOP = HIGH   ·   EVERY LANE IS IN KEY"
                         else -> ""
                     }
                     if (coach.isNotEmpty()) {
                         Text(
                             coach,
-                            // A dark pill keeps the hint legible instead of sitting on the bottom lane line.
+                            // A solid pill keeps the hint legible instead of sitting on the bottom lane line.
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .padding(bottom = 10.dp)
-                                .background(Color.Black.copy(alpha = .72f), RoundedCornerShape(50))
+                                .background(look.hintBackground, RoundedCornerShape(50))
                                 .padding(horizontal = 12.dp, vertical = 4.dp)
                                 .testTag("auroraCoach"),
-                            color = Color.White.copy(alpha = .7f),
+                            color = look.hintText,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Medium,
                             letterSpacing = 1.6.sp,
@@ -966,6 +1020,11 @@ internal fun ImmersiveStage(
                     beginLesson(song)?.let { lessonGrid -> startDemo(song, lessonGrid) }
                 },
                 onClose = { showSongs = false },
+                jazz = if (onApplyPatch != null) JazzCatalogue.REAL_BOOK_1 else emptyList(),
+                onPlayJazz = onApplyPatch?.let { _ -> { tune: JazzStandard -> playStandard(tune) } },
+                startOnJazz = songsOnJazz,
+                themeMode = themeMode,
+                onTheme = onThemeChange?.let { change -> { change(themeMode.next()) } },
             )
         }
         val finished = result
@@ -990,6 +1049,8 @@ internal fun ImmersiveStage(
                     stageSettings = reset
                     latestPerformanceConfigChange.value?.invoke(reset)
                 },
+                themeMode = themeMode,
+                onThemeChange = onThemeChange,
             )
         }
     }
