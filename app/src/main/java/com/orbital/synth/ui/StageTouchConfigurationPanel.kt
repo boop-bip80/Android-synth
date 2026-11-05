@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.orbital.synth.ui.aurora.StageThemeMode
 
 /** UI preferences for the clear, keyboardless stage. Never overwrites a synth patch. */
 data class StageTouchSettings(
@@ -80,6 +81,9 @@ internal fun StageTouchConfigurationPanel(
     onChange: (StageTouchSettings) -> Unit,
     onDismiss: () -> Unit,
     onReset: () -> Unit,
+    /** The stage's look; the LOOK section is only shown when [onThemeChange] is supplied. */
+    themeMode: StageThemeMode = StageThemeMode.DARK,
+    onThemeChange: ((StageThemeMode) -> Unit)? = null,
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -110,6 +114,27 @@ internal fun StageTouchConfigurationPanel(
                         "Enable one short tactile accent at note onset", "stageHapticsOn",
                     ) {
                         onChange(settings.copy(hapticsEnabled = true))
+                    }
+                }
+            }
+
+            if (onThemeChange != null) {
+                ConfigSection(
+                    "LOOK / DARK OR NORMAL",
+                    "Dark glows on black. Normal draws the same living surface in ink on pale paper. " +
+                        "Auto follows your phone. FOCUS is always pure black.",
+                ) {
+                    ConfigChoiceRow {
+                        StageThemeMode.entries.forEach { mode ->
+                            val name = when (mode) {
+                                StageThemeMode.DARK -> "DARK · DEFAULT"
+                                StageThemeMode.LIGHT -> "NORMAL"
+                                StageThemeMode.SYSTEM -> "AUTO · FOLLOW PHONE"
+                            }
+                            ConfigChip(name, themeMode == mode, "Look: ${mode.label}", "stageTheme-${mode.name}") {
+                                onThemeChange(mode)
+                            }
+                        }
                     }
                 }
             }

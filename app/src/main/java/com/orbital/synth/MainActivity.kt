@@ -36,6 +36,7 @@ import com.orbital.synth.core.music.StepPattern
 import com.orbital.synth.core.music.SequencerToggleReconciler
 import com.orbital.synth.core.music.UserSequence
 import com.orbital.synth.core.preset.FactoryPresets
+import com.orbital.synth.core.preset.SynthPatch
 import com.orbital.synth.core.preset.loadPatch
 import com.orbital.synth.preset.PatchOutcome
 import com.orbital.synth.preset.UserPatchRepository
@@ -355,6 +356,7 @@ class MainActivity : ComponentActivity() {
                     onSaveSequence = ::saveCurrentSequence,
                     onPreviousPatch = { selectFactoryPatch(patchIndex - 1) },
                     onNextPatch = { selectFactoryPatch(patchIndex + 1) },
+                    onApplyPatch = ::applyStagePatch,
                     onSavePatch = ::saveCurrentPatch,
                     onSelectPatch = ::activatePatch,
                     onSelectSequence = ::activateSequence,
@@ -520,6 +522,35 @@ class MainActivity : ComponentActivity() {
             fxSlots = fxSlotSnapshot(),
             presetIndex = patchIndex,
             presetCount = patches.size,
+            activePatchId = patch.id,
+            patchFeedback = null,
+            performanceResetEpoch = screenState.performanceResetEpoch + 1L,
+        )
+    }
+
+    /**
+     * Loads a patch that is not in the factory bank, such as a jazz standard's default sound,
+     * exactly as a factory patch is loaded: notes and arpeggiator are released, the FX rack is
+     * reconciled, and the patch's BPM becomes the master tempo. The factory index is untouched,
+     * so the stage's voice stepper carries on from where it was.
+     */
+    private fun applyStagePatch(patch: SynthPatch) {
+        if (::audioOutput.isInitialized) audioOutput.arpeggiatorPanic()
+        synth.allNotesOff()
+        fxRackReconciler.clear()
+        synth.loadPatch(patch)
+        if (::audioOutput.isInitialized) {
+            updateMusicTempo(synth.modulationTempoBpm.roundToInt())
+        }
+        screenState = screenState.copy(
+            patchName = patch.name,
+            parameters = ParameterId.entries.associateWith { synth.parameter(it) },
+            oscillatorSlots = oscillatorSnapshot(),
+            modulationLfos = modulationLfoSnapshot(),
+            modulationRoutes = modulationRouteSnapshot(),
+            modulationSteps = synth.modulationSteps,
+            modulationStepPlayhead = 0,
+            fxSlots = fxSlotSnapshot(),
             activePatchId = patch.id,
             patchFeedback = null,
             performanceResetEpoch = screenState.performanceResetEpoch + 1L,
