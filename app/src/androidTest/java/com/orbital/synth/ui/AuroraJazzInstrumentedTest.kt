@@ -1,6 +1,7 @@
 package com.orbital.synth.ui
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -90,7 +91,29 @@ class AuroraJazzInstrumentedTest {
 
     private fun pitchClass(note: Int) = Math.floorMod(note, 12)
 
+    /**
+     * Waits until the playfield stops changing size. The stage deliberately re-voices a finger
+     * that is already down when the grid layout changes (the lane under the finger changes), and
+     * the grid depends on the playfield height, so a layout still settling after the sheet
+     * closes (for instance the search keyboard animating away) would turn one touch into two
+     * chords. A real player cannot touch within those few hundred milliseconds.
+     */
+    private fun awaitStablePlayfield(quietMillis: Long = 1_000L) {
+        var lastHeight = -1
+        var changedAt = SystemClock.elapsedRealtime()
+        compose.waitUntil(15_000L) {
+            val height = compose.onNodeWithTag("immersiveCanvas").fetchSemanticsNode().size.height
+            val now = SystemClock.elapsedRealtime()
+            if (height != lastHeight) {
+                lastHeight = height
+                changedAt = now
+            }
+            now - changedAt >= quietMillis
+        }
+    }
+
     private fun touchOnce(yFraction: Float) {
+        awaitStablePlayfield()
         val canvas = compose.onNodeWithTag("immersiveCanvas")
         canvas.performTouchInput { down(Offset(center.x, height * yFraction)) }
         canvas.performTouchInput { up() }
