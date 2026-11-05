@@ -52,6 +52,34 @@ PYDIG
 }
 trap finish EXIT
 
+# Prints "x y" (centre of the Wait button) ONLY when the given uiautomator dump shows
+# the emulator's *system* process ANR dialog ("... system isn't responding") together
+# with a Wait button. An ANR of ORBITAL itself ("ORBITAL isn't responding") prints
+# nothing, so it is never papered over.
+system_anr_wait_xy() {
+  python3 - "$1" <<'PYW' 2>/dev/null || true
+import re
+import sys
+import xml.etree.ElementTree as ET
+try:
+    nodes = list(ET.parse(sys.argv[1]).iter("node"))
+except Exception:
+    raise SystemExit(0)
+def norm(value):
+    return value.replace("\u2019", "'").lower()
+if not any("system isn't responding" in norm(n.attrib.get("text", "") + n.attrib.get("content-desc", ""))
+           for n in nodes):
+    raise SystemExit(0)
+for node in nodes:
+    if node.attrib.get("text", "").strip().lower() == "wait":
+        m = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.attrib.get("bounds", ""))
+        if m:
+            left, top, right, bottom = map(int, m.groups())
+            print((left + right) // 2, (top + bottom) // 2)
+            break
+PYW
+}
+
 # Host JVM/lint/APK build has already passed and uploaded both binaries.
 # Never run Gradle compilation while QEMU owns this runner's RAM: recent API35
 # runs repeatedly lost emulator-5554 just after duplicate APK assembly.
@@ -193,6 +221,14 @@ PY
     break
   fi
   printf 'normal_keyboard_retry=%s\n' "$attempt" >> "$summary"
+  # The system process stays unresponsive on this starved runner, so its ANR dialog
+  # can come back after a single Wait tap. Press Wait again whenever the dump shows
+  # exactly that dialog; the strict assertion above is not relaxed.
+  anr_xy="$(system_anr_wait_xy artifacts/focus-bootstrap-normal.xml)"
+  if [[ -n "$anr_xy" ]]; then
+    printf 'normal_gate_system_anr_wait_tap=%s\n' "$anr_xy" >> "$summary"
+    timeout 10s adb shell input tap $anr_xy || true
+  fi
   sleep 3
 done
 [[ "$keyboard_ready" == 1 ]] || {
