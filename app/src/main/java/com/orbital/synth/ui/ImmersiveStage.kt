@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Text
@@ -911,8 +912,14 @@ internal fun ImmersiveStage(
                     if (coach.isNotEmpty()) {
                         Text(
                             coach,
-                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp).testTag("auroraCoach"),
-                            color = Color.White.copy(alpha = .55f),
+                            // A dark pill keeps the hint legible instead of sitting on the bottom lane line.
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 10.dp)
+                                .background(Color.Black.copy(alpha = .72f), RoundedCornerShape(50))
+                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                                .testTag("auroraCoach"),
+                            color = Color.White.copy(alpha = .7f),
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Medium,
                             letterSpacing = 1.6.sp,
