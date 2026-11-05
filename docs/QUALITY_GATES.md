@@ -81,8 +81,9 @@ commit, never by this document.
   and mode pickers, triad release balance, same-lane fingers, a whole lesson to a 3-star result, wrong
   notes sound but never advance a lesson, ghost-finger playback).
 - **Gallery (non-blocking)**: `AuroraGalleryCaptureTest` captures real framebuffers with Android
-  animations enabled. It is deliberately non-blocking; a published gallery image only exists if it was
-  genuinely captured and passed PNG integrity checks.
+  animations enabled. It is deliberately non-blocking and is excluded from the two blocking general shards
+  (it needs the display to itself); it runs only in the VISUALS emulator. A published gallery image only
+  exists if it was genuinely captured and passed PNG integrity checks.
 
 Not established by any gate above: physical-phone audio latency, thermals, speaker output, real MIDI
 hardware, TalkBack usability, or a perceptual/listening evaluation of the physical models.

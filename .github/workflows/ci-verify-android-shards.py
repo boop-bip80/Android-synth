@@ -2,7 +2,7 @@
 """Fail-closed API35 runner sharding: AndroidX discovery vs exact Gradle XML union.
 
 AndroidJUnitRunner -e log true lists actual APK methods without executing them.
-Two fresh emulators discover the SAME full (non-STAGE/non-COMPACT350) manifest, each
+Two fresh emulators discover the SAME full (non-STAGE/non-COMPACT350/non-GALLERY) manifest, each
 executes one disjoint shard, and the required aggregate job verifies the union.
 The two opt-in process-death methods may be assumed ONLY in these shards; a
 separate mandatory fresh emulator executes them as real tests.
@@ -17,6 +17,8 @@ from xml.etree import ElementTree
 
 STAGE = "com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest"
 COMPACT350 = "com.orbital.synth.ui.Compact350SoundInstrumentedTest"
+# Non-blocking real-animation screenshot generator; runs only in the VISUALS emulator.
+GALLERY = "com.orbital.synth.ui.AuroraGalleryCaptureTest"
 STEP = "com.orbital.synth.ui.StepProcessRestartInstrumentedTest"
 STEP_METHODS = {
     STEP + "#prepareStepPatchAndProveFocusPlayStateBeforeProcessDeath",
@@ -40,8 +42,8 @@ def check_id(identifier: str) -> None:
     klass, name = identifier.split("#", 1)
     if not klass.startswith("com.orbital.synth.") or not name:
         die("unexpected test id " + repr(identifier))
-    if klass in (STAGE, COMPACT350):
-        die("exclusive STAGE or COMPACT350 method leaked into general runner")
+    if klass in (STAGE, COMPACT350, GALLERY):
+        die("exclusive STAGE, COMPACT350 or non-blocking GALLERY method leaked into general runner")
 
 
 def save_lines(path: Path, ids: set[str], statuses: dict[str, str] | None = None) -> None:
