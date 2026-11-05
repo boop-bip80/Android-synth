@@ -15,8 +15,27 @@ Open **STAGE** and the screen becomes a glowing instrument:
 - **Learn songs by following the light.** Thirteen traditional and public-domain tunes — Twinkle Twinkle, Ode to Joy, Frère Jacques, Canon in D, Oh! Susanna, Jingle Bells and more — are stored as scale steps, so each one plays correctly in *any* key and you can hear it in other modes. The next note glows gold and a ribbon shows the shape of the melody ahead; the lesson **waits for you**, wrong notes still sound but never stop the music, and you earn up to three stars. Press ▶ LISTEN and a ghost finger plays the song for you.
 - **Change voice without leaving the stage.** The stage voices — harp, nylon guitar, marimba, music box, electric keys, lead and bass — come right after the default patch.
 - **FOCUS** hides everything: pure black until you touch it, then light gathers around your fingers.
+- **Dark or normal.** The stage glows on black by default (**dark**). **Normal** draws the same living surface as ink on pale paper; **auto** follows the phone's own dark-mode setting. Switch from the ◈ configuration panel or the look button in the song sheet. FOCUS is pure black in every look.
 
 Thoroughly touch-first: 48 dp targets, haptics (opt-in), reduce-motion support and an accessible, balanced note lifecycle (every note-on has a note-off, even on gesture cancel, Back, or app switch).
+
+## Jazz standards — The Real Book, Volume 1
+
+Open **♪ SONGS → JAZZ**: the whole contents of *The Real Book, Volume 1* (Hal Leonard sixth edition, **400 titles**, in the book's own A–Z order), searchable by title, composer, key or instrument. Tap **PLAY** on a tune and the stage is set up for it:
+
+- **Its own sound.** Each tune has a default preset (`rb1-<tune>`): one of **13 jazz voices** built only from this engine (plucked-string and struck-bar physical models, FM / SEM / ladder / phase-distortion architectures, additive organ drawbars, breath noise, the FX chain, vibrato and a tempo-synced swell), tailored deterministically by the tune's tempo, mode and feel (faster tunes get a shorter release and less wash; ballads get more room; minor homes sound a little darker). The tune's BPM becomes the master tempo, so the arpeggiator and sequencer follow it.
+- **Its key.** The stage retunes to the tune's home key and mode when the catalogue records one; otherwise your key is kept.
+- **JAZZ harmony.** One finger plays a seventh chord. The music itself is yours to play: **there are no melodies or chord charts**, because those are the book's copyrighted content.
+
+What is and is not established:
+
+| | Status |
+| --- | --- |
+| **The 400 titles and their order** | Supplied from Hal Leonard's published contents list (cross-checked by the supplier against a second 400-title index). Not re-derived from the book. |
+| **Composer, home key, feel** | A **separate, unverified annotation** added by the author of this feature. Filled in only where confident: 348 of 400 composers, **53 of 400 keys** and 280 of 400 feels are recorded; the rest are blank (`?` / `-`) and the app shows nothing for them rather than guessing. None of it was read from the book or checked against its charts, and some of it may be wrong. Correct a line in [`RealBookVol1Data.kt`](core/src/main/kotlin/com/orbital/synth/core/jazz/RealBookVol1Data.kt); the unit tests re-validate every line. |
+| **The presets** | Checked by rendering every one of the 400 default sounds (and all 13 voices) through the real engine: finite, audible, under the limiter ceiling, voices distinct from each other, struck/plucked voices decay while winds and organ sustain, and vibrato measured at about ±19¢ (reed) and ±10¢ (flute). **Not auditioned**: whether they sound good, or like their namesakes, needs listening on a phone. They are model-inspired, not sampled instruments. |
+| **Normal (light) look** | The AURORA stage, its header/footer and the song and jazz sheets. Light-mode ink contrast is asserted numerically for all 12 keys (worst case 3.9:1) and the frames were inspected through the Java2D preview tool, which is not the phone's renderer. **The main SOUND / PLAY / SEQ / FX screens are still dark-only.** |
+| **On a device** | Not run on an emulator or phone for this feature. The app-layer code compiles against the Compose APIs and its logic has JVM tests; the new instrumented test (`AuroraJazzInstrumentedTest`) has **not been executed**. |
 
 ## What it looks like (real emulator screenshots)
 
@@ -37,7 +56,7 @@ Known visual defects on the main screen, visible above and **not fixed in this r
 | Effects | Six ordered stereo FX slots; saturation, tremolo, chorus, delay, stereo FDN reverb, phaser and bitcrusher; wet/bypass and parameter controls | Quality and long-session performance need listening/hardware evaluation |
 | Touch | The **AURORA diatonic stage** (key picker, bass-to-treble lanes, one-finger harmony, song lessons); SOUND, PLAY, SEQ, FX and library controls; multitouch keyboard; on-screen oscillator and modulation editors; keyboardless **FOCUS** black canvas with live audio-reactive visuals | Screen-pressure behavior depends on device input; not a force sensor guarantee |
 | Musical tools | Source-aware arpeggiator, 1–64-step sequencer, scales, swing, patterns, touch and Android MIDI input | Physical MIDI keyboards, timing under load and per-note MPE are not fully qualified |
-| Presets / storage | **36 factory sound patches**, 12 factory patterns, 13 learnable songs, versioned patch and sequence persistence | Backup/migration and corruption handling still need broad real-device validation |
+| Presets / storage | **36 factory sound patches**, 12 factory patterns, 13 learnable songs, **13 jazz voices with a tailored default sound for each of the 400 catalogued Real Book titles**, versioned patch and sequence persistence | Backup/migration and corruption handling still need broad real-device validation |
 
 ### Sound sources and architectures
 
