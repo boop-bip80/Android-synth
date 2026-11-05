@@ -236,28 +236,34 @@ adb logcat -v threadtime -s OrbitalCompactTest:I AndroidRuntime:E ActivityManage
 compact_logcat_pid=$!
 # On this CPU-starved runner the emulator's own *system* process occasionally raises an
 # "Application Not Responding: system" dialog over whatever test Activity is running, and
-# several capture tests (each with its own foreground proof) then fail because another
-# window owns the display. Event-driven, so it adds no polling load: when the event log
-# reports an ANR, wait a moment, and ONLY if that exact dialog is the focused window press
-# its Wait button with a blind `input tap` (no UiAutomation connection is used, so it cannot
-# collide with the tests'). The button sits at the dialog's centre-x and ~58% of the height
-# on the pixel_6 profile (observed at 540,1391 on 1080x2400).
+# several capture tests (each with its own foreground proof and a 8-12 s wait for focus)
+# then fail because another window owns the display. The am_anr event can precede the dialog
+# by seconds under this load, so a single check right after the event is too early. Instead:
+# the event log (no polling load while idle) opens a ~60 s watch window, during which, every
+# ~2 s, ONLY if that exact dialog is the focused window, its Wait button is pressed with a
+# blind `input tap` (no UiAutomation connection, so it cannot collide with the tests'). The
+# dialog can be re-raised, so the window keeps polling after a tap. The button sits at the
+# dialog's centre-x and ~58% of the height (observed at 540,1391 on 1080x2400).
 (
   adb logcat -b events -T 1 -v brief 'am_anr:I' '*:S' 2>/dev/null | while IFS= read -r anr_event; do
-    sleep 1.5
-    if timeout 15s adb shell dumpsys window 2>/dev/null \
-         | grep -Eq 'mCurrentFocus=.*Application Not Responding: system([}]|$)'; then
-      size="$(timeout 8s adb shell wm size 2>/dev/null | tr -d '\r' | grep -Eo '[0-9]+x[0-9]+' | tail -n 1)"
-      width="${size%x*}"
-      height="${size#*x}"
-      if [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]]; then
-        tap_x=$((width / 2))
-        tap_y=$((height * 58 / 100))
-        printf '%s system_anr_wait_tap %s,%s after: %s\n' "$(date +%T)" "$tap_x" "$tap_y" "$anr_event" \
-          >> artifacts/general-system-anr-watch.txt
-        timeout 10s adb shell input tap "$tap_x" "$tap_y" >/dev/null 2>&1 || true
+    for _watch_tick in $(seq 1 30); do
+      if timeout 15s adb shell dumpsys window 2>/dev/null \
+           | grep -Eq 'mCurrentFocus=.*Application Not Responding: system([}]|$)'; then
+        size="$(timeout 8s adb shell wm size 2>/dev/null | tr -d '\r' | grep -Eo '[0-9]+x[0-9]+' | tail -n 1)"
+        width="${size%x*}"
+        height="${size#*x}"
+        if [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]]; then
+          tap_x=$((width / 2))
+          tap_y=$((height * 58 / 100))
+          printf '%s system_anr_wait_tap %s,%s (event: %s)\n' "$(date +%T)" "$tap_x" "$tap_y" "$anr_event" \
+            >> artifacts/general-system-anr-watch.txt
+          timeout 10s adb shell input tap "$tap_x" "$tap_y" >/dev/null 2>&1 || true
+        fi
+        sleep 1
+      else
+        sleep 2
       fi
-    fi
+    done
   done
 ) &
 system_anr_watcher_pid=$!
