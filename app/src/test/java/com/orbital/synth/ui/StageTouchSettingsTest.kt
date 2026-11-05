@@ -6,23 +6,48 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StageTouchSettingsTest {
+    /** The original chromatic C4-C6 map. These tests exercise the mapper's behaviour on that grid. */
+    private fun legacy(
+        pitchAxis: TouchPitchAxis = TouchPitchAxis.HORIZONTAL,
+        pressureSensitivity: Float = .5f,
+        glissando: Boolean = true,
+    ) = StageTouchSettings(
+        baseOctave = 4, octaveRange = 2, scale = TouchScale.CHROMATIC,
+        pitchAxis = pitchAxis, pressureSensitivity = pressureSensitivity, glissando = glissando,
+    )
+
     private fun List<TouchVoiceEvent>.on() = filterIsInstance<TouchVoiceEvent.NoteOn>()
     private fun List<TouchVoiceEvent>.off() = filterIsInstance<TouchVoiceEvent.NoteOff>()
     private fun List<TouchVoiceEvent>.expression() = filterIsInstance<TouchVoiceEvent.Expression>()
 
-    @Test fun defaultsMaintainOriginalC4ToC6TouchPerformance() {
+    @Test fun defaultsGiveABassToTrebleMajorStage() {
+        // Aurora default: C major, three octaves rising from C2 at the bottom of the screen.
         val config = StageTouchSettings().toTouchConfig()
-        assertEquals(60, config.rootMidiNote)
-        assertEquals(25, config.noteCount)
-        assertEquals(TouchScale.CHROMATIC, config.scale)
-        assertEquals(TouchPitchAxis.HORIZONTAL, config.pitchAxis)
+        assertEquals(36, config.rootMidiNote)
+        assertEquals(22, config.noteCount)
+        assertEquals(TouchScale.MAJOR, config.scale)
+        assertEquals(TouchPitchAxis.VERTICAL, config.pitchAxis)
         assertTrue(config.glissando)
         assertEquals(.5f, config.pressureSensitivity, 0f)
+    }
+
+    @Test fun everyScaleMapsToACoreScaleAndBack() {
+        for (scale in TouchScale.entries) {
+            assertEquals(scale, TouchScale.fromScaleId(scale.scaleId))
+            val core = com.orbital.synth.core.music.MusicalScales.byId(scale.scaleId)
+            org.junit.Assert.assertNotNull("no core scale for $scale", core)
+            assertEquals(
+                scale.semitones.toList().sorted(),
+                core!!.degrees.sorted(),
+            )
+        }
+        assertEquals(TouchScale.MAJOR, TouchScale.fromScaleId("no-such-scale"))
     }
 
     @Test fun tonicAndMusicalOctaveRangeFollowScaleDegrees() {
         val settings = StageTouchSettings(
             tonic = 2, baseOctave = 3, octaveRange = 3, scale = TouchScale.MAJOR,
+            pitchAxis = TouchPitchAxis.HORIZONTAL, // this test sweeps pitch across X
         )
         val config = settings.toTouchConfig()
         assertEquals(50, config.rootMidiNote)
@@ -36,9 +61,7 @@ class StageTouchSettingsTest {
     @Test fun pitchAxisSwitchChangesPitchWithoutChangingFingerIdentity() {
         val mapper = TouchPerformanceMapper()
         assertEquals(60, mapper.touchDown(3L, 0f, 0f).on().single().note)
-        val changes = mapper.updateConfig(StageTouchSettings(
-            pitchAxis = TouchPitchAxis.VERTICAL,
-        ).toTouchConfig())
+        val changes = mapper.updateConfig(legacy(pitchAxis = TouchPitchAxis.VERTICAL).toTouchConfig())
         assertEquals(60, changes.off().single().note)
         assertEquals(84, changes.on().single().note)
         assertEquals(84, mapper.touchUp(3L).off().single().note)
@@ -46,7 +69,7 @@ class StageTouchSettingsTest {
     }
 
     @Test fun verticalPitchMapsTopHighAndBottomLow() {
-        val config = StageTouchSettings(pitchAxis = TouchPitchAxis.VERTICAL).toTouchConfig()
+        val config = legacy(pitchAxis = TouchPitchAxis.VERTICAL).toTouchConfig()
         val mapper = TouchPerformanceMapper(config)
         assertEquals(84, mapper.touchDown(1L, 0f, 0f).on().single().note)
         assertEquals(60, mapper.touchDown(2L, 1f, 1f).on().single().note)
@@ -57,7 +80,7 @@ class StageTouchSettingsTest {
     }
 
     @Test fun noHardwarePressureStillOffersXYExpressionAndDynamicallySafeVelocity() {
-        val noPressure = StageTouchSettings(pressureSensitivity = 0f).toTouchConfig()
+        val noPressure = legacy(pressureSensitivity = 0f).toTouchConfig()
         val first = TouchPerformanceMapper(noPressure)
             .touchDown(9L, .4f, .2f, pressure = .2f)
         val second = TouchPerformanceMapper(noPressure)
@@ -73,7 +96,7 @@ class StageTouchSettingsTest {
     }
 
     @Test fun enabledPressureChangesDynamicsButNeverGoesOutOfRange() {
-        val config = StageTouchSettings(pressureSensitivity = 1f).toTouchConfig()
+        val config = legacy(pressureSensitivity = 1f).toTouchConfig()
         val soft = TouchPerformanceMapper(config).touchDown(1L, .4f, .3f, pressure = .2f)
         val firm = TouchPerformanceMapper(config).touchDown(1L, .4f, .3f, pressure = 1.8f)
         assertTrue(firm.on().single().velocity > soft.on().single().velocity)
@@ -83,9 +106,7 @@ class StageTouchSettingsTest {
     }
 
     @Test fun holdPitchModeBlocksRetriggerWhenMovingAcrossVerticalRange() {
-        val config = StageTouchSettings(
-            pitchAxis = TouchPitchAxis.VERTICAL, glissando = false,
-        ).toTouchConfig()
+        val config = legacy(pitchAxis = TouchPitchAxis.VERTICAL, glissando = false).toTouchConfig()
         val mapper = TouchPerformanceMapper(config)
         assertEquals(60, mapper.touchDown(9L, .4f, 1f).on().single().note)
         val drag = mapper.touchMove(9L, .4f, 0f)
@@ -98,7 +119,7 @@ class StageTouchSettingsTest {
     @Test fun unsafeConfigValuesClampAndStayFinite() {
         val config = StageTouchSettings(
             tonic = -100, baseOctave = 100, octaveRange = -5,
-            pressureSensitivity = Float.NaN,
+            scale = TouchScale.CHROMATIC, pressureSensitivity = Float.NaN,
         ).toTouchConfig()
         assertEquals(108, config.rootMidiNote)
         assertEquals(13, config.noteCount)

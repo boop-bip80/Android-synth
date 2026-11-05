@@ -11,7 +11,7 @@ object PatchParameters {
     val ALL: List<String> = listOf(
         "WAVE", "MORPH", "CUTOFF", "RESONANCE", "MOVEMENT", "FX_AMOUNT",
         "ATTACK", "DECAY", "SUSTAIN", "RELEASE", "LFO_RATE", "LFO_DEPTH", "GLIDE", "UNISON", "DETUNE",
-        "ENGINE", "CHARACTER",
+        "ENGINE", "CHARACTER", "SOURCE",
     )
     val NAMES: Set<String> = ALL.toSet()
 }

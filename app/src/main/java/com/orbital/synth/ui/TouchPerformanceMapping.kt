@@ -16,6 +16,34 @@ enum class TouchScale(val semitones: IntArray) {
     MINOR_PENTATONIC(intArrayOf(0, 3, 5, 7, 10)),
     BLUES(intArrayOf(0, 3, 5, 6, 7, 10)),
     WHOLE_TONE(intArrayOf(0, 2, 4, 6, 8, 10)),
+    PHRYGIAN(intArrayOf(0, 1, 3, 5, 7, 8, 10)),
+    LYDIAN(intArrayOf(0, 2, 4, 6, 7, 9, 11)),
+    MIXOLYDIAN(intArrayOf(0, 2, 4, 5, 7, 9, 10)),
+    MAJOR_PENTATONIC(intArrayOf(0, 2, 4, 7, 9)),
+    HARMONIC_MINOR(intArrayOf(0, 2, 3, 5, 7, 8, 11)),
+    HIRAJOSHI(intArrayOf(0, 2, 3, 7, 8));
+
+    /** Matching `MusicalScales` id in `:core`, used by the Aurora stage. */
+    val scaleId: String
+        get() = when (this) {
+            CHROMATIC -> "chromatic"
+            MAJOR -> "major"
+            NATURAL_MINOR -> "natural_minor"
+            DORIAN -> "dorian"
+            MINOR_PENTATONIC -> "minor_pentatonic"
+            BLUES -> "blues"
+            WHOLE_TONE -> "whole_tone"
+            PHRYGIAN -> "phrygian"
+            LYDIAN -> "lydian"
+            MIXOLYDIAN -> "mixolydian"
+            MAJOR_PENTATONIC -> "major_pentatonic"
+            HARMONIC_MINOR -> "harmonic_minor"
+            HIRAJOSHI -> "hirajoshi"
+        }
+
+    companion object {
+        fun fromScaleId(id: String): TouchScale = entries.firstOrNull { it.scaleId == id } ?: MAJOR
+    }
 }
 
 /** The physical axis that selects the pitched voice on the empty performance stage. */

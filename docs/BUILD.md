@@ -99,3 +99,15 @@ These assets are **developer debug prereleases**, installable for controlled tes
 - QEMU graphics or ADB loss: use the run's bounded logcat/window/phase/emulator memory diagnostics and distinguish from actual app assertions before retry.
 
 When reporting readiness, always cite the **exact current main commit**, successful nine-job workflow run, installed APK SHA-256, matching GitHub Release tag/asset, and screenshot provenance source SHA. If any is missing, state the missing gate explicitly. This project remains alpha until phone-level quality and distribution gates are achieved.
+
+## Faster visual iteration and failure triage (v0.3.0)
+
+- **Stage preview (no emulator):** `gradle -p tools/stage-preview render` renders scripted scenarios of the
+  exact Aurora simulation through Java2D to PNG (JDK 17+, Maven Central only). Use it to iterate on
+  the visuals; it is a design aid, not evidence of how a phone renders it. It is not part of the
+  root build or CI.
+- **Readable red builds:** a failure-only final step in the host job re-runs just the Kotlin compile tasks
+  and prints the compiler's own `e:` lines and the first failing tasks, so a red build is
+  readable without scrolling through Gradle stack frames.
+- **Gallery capture:** `ci-aurora-gallery.sh` (non-blocking) runs after the visuals lane and uploads
+  `orbital-aurora-play.png` and `orbital-aurora-lesson.png` when captured.

@@ -7,6 +7,8 @@ import com.orbital.synth.core.dsp.digital.FmAlgorithm
 import com.orbital.synth.core.dsp.digital.PhaseDistortionShape
 import com.orbital.synth.core.dsp.digital.PhaseDistortionVoice
 import com.orbital.synth.core.dsp.digital.SixOperatorFmVoice
+import com.orbital.synth.core.dsp.physical.KarplusStrongVoice
+import com.orbital.synth.core.dsp.physical.ModalBellVoice
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.exp
@@ -149,6 +151,13 @@ internal class Voice(private val sampleRate: Int) {
     private val ghostSem = SemFilter(sampleRate)
     private val fm = SixOperatorFmVoice(sampleRate)
     private val phaseDistortion = PhaseDistortionVoice(sampleRate)
+    // Physical-model sources: 0 = the selected engine's own oscillator (the legacy path,
+    // untouched), 1 = plucked string, 2 = struck glass/bell. A physical source replaces the
+    // oscillator but still flows through the engine's filter, ADSR, glide, pan and effects.
+    private var sourceModel = 0
+    private var ghostSourceModel = 0
+    private val pluckedString = KarplusStrongVoice(sampleRate)
+    private val modalBell = ModalBellVoice(sampleRate)
 
     init {
         // ORBITAL's main ADSR owns note amplitude, including slow analog pads.
@@ -167,7 +176,8 @@ internal class Voice(private val sampleRate: Int) {
     /** Called once per render block on the audio worker, never on the UI thread. */
     fun configureEngine(
         model: Int, character: Float, cutoffHz: Float, resonance: Float,
-        wave: Float, morph: Float, updateFilter: Boolean = true
+        wave: Float, morph: Float, updateFilter: Boolean = true,
+        source: Int = 0,
     ) {
         val requestedModel = model.coerceIn(0, 4)
         if (requestedModel != engineModel) {
@@ -187,6 +197,21 @@ internal class Voice(private val sampleRate: Int) {
         }
         val tone = character.coerceIn(0f, 1f)
         filterCharacter = tone
+        val requestedSource = source.coerceIn(0, 2)
+        if (requestedSource != sourceModel) {
+            if (active) {
+                // Same 8 ms bridge as an engine change: no click when the source flips live.
+                engineSwitchSamples = max(1, (sampleRate * 0.008).toInt())
+                engineSwitchSeed = lastRenderedSample
+                if (requestedSource == 1) pluckedString.noteOn(note, velocity)
+                if (requestedSource == 2) modalBell.noteOn(note, velocity)
+            }
+            sourceModel = requestedSource
+        }
+        // STRING: MORPH = brightness, WAVE = ring time, CHARACTER = pick position.
+        // GLASS:  WAVE = marimba -> glass -> bell, MORPH = strike hardness, CHARACTER = ring time.
+        if (sourceModel == 1) pluckedString.configure(morph, wave, tone)
+        if (sourceModel == 2) modalBell.configure(wave, morph, tone)
         if (updateFilter) {
             ladder.configure(cutoffHz, resonance, tone * 0.9f)
             sem.configure(cutoffHz, resonance, tone * 0.5f, tone)
@@ -311,6 +336,7 @@ internal class Voice(private val sampleRate: Int) {
             ghostA2 = a2
             ghostA3 = a3
             ghostEngineModel = engineModel
+            ghostSourceModel = sourceModel
             ghostHadRack = oscillatorRack.hasAudibleLayers
             ghostLastSample = lastRenderedSample
             if (engineModel == 1) ladder.copyStateTo(ghostLadder)
@@ -337,6 +363,8 @@ internal class Voice(private val sampleRate: Int) {
         sem.reset()
         fm.noteOn(midiNote, 1f)
         phaseDistortion.noteOn(midiNote, 1f)
+        if (sourceModel == 1) pluckedString.noteOn(midiNote, velocity)
+        if (sourceModel == 2) modalBell.noteOn(midiNote, velocity)
         engineSwitchSamples = 0
         lastRenderedSample = 0f
 
@@ -354,6 +382,8 @@ internal class Voice(private val sampleRate: Int) {
         targetFrequency = midiFrequency(midiNote)
         fm.retune(midiNote)
         phaseDistortion.retune(midiNote)
+        pluckedString.retune(midiNote)
+        modalBell.retune(midiNote)
         startGlide(glideSeconds)
         setPan(midiNote, smooth = true)
     }
@@ -382,6 +412,9 @@ internal class Voice(private val sampleRate: Int) {
         ghostSem.reset()
         fm.hardStop()
         phaseDistortion.hardStop()
+        pluckedString.reset()
+        modalBell.reset()
+        ghostSourceModel = 0
         engineSwitchSamples = 0
         lastRenderedSample = 0f
         panSlewRemaining = 0
@@ -426,7 +459,7 @@ internal class Voice(private val sampleRate: Int) {
                 advanceFilterCoefficients()
                 advanceUnisonControls()
                 velocity += (targetVelocity - velocity) * velocitySlewCoefficient
-                val waveSample = if (engineModel <= 2) {
+                val waveSample = if (sourceModel == 0 && engineModel <= 2) {
                     val center = WavetableBank.sample(phase, mipLevel, wave, morph, mipFade)
                     if (unisonMix <= 0.000001f) center else {
                         val low = WavetableBank.sample(lowerPhase, mipLevel, wave, morph, mipFade)
@@ -449,9 +482,11 @@ internal class Voice(private val sampleRate: Int) {
                 if (lowerPhase >= 1.0) lowerPhase -= floor(lowerPhase)
                 if (upperPhase >= 1.0) upperPhase -= floor(upperPhase)
 
-                val oscillator = when (engineModel) {
-                    3 -> fm.nextSampleAtFrequency(frequency, pitchMultiplier)
-                    4 -> phaseDistortion.nextSampleAtFrequency(frequency, pitchMultiplier)
+                val oscillator = when {
+                    sourceModel == 1 -> pluckedString.nextSampleAtFrequency(frequency, pitchMultiplier)
+                    sourceModel == 2 -> modalBell.nextSampleAtFrequency(frequency, pitchMultiplier)
+                    engineModel == 3 -> fm.nextSampleAtFrequency(frequency, pitchMultiplier)
+                    engineModel == 4 -> phaseDistortion.nextSampleAtFrequency(frequency, pitchMultiplier)
                     else -> waveSample
                 }
                 // The configured rack is audible in ALL five synthesis architectures.
@@ -494,7 +529,7 @@ internal class Voice(private val sampleRate: Int) {
 
         if (ghostSamples > 0) {
             val fade = ghostSamples / 64f
-            if (ghostEngineModel >= 3 || ghostHadRack) {
+            if (ghostEngineModel >= 3 || ghostSourceModel != 0 || ghostHadRack) {
                 // FM/PD oscillator graphs are independent and cannot be copied cheaply.
                 // A 64-sample tail of the actual last output avoids falling back to the
                 // wrong wavetable family when stealing a digital voice.

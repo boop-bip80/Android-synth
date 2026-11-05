@@ -4,6 +4,7 @@ import com.orbital.synth.core.dsp.oscillator.LayeredOscillatorRack
 import com.orbital.synth.core.dsp.oscillator.Voice
 import com.orbital.synth.core.dsp.oscillator.WavetableBank
 import com.orbital.synth.core.dsp.processing.LfoShape
+import com.orbital.synth.core.dsp.processing.MasterLimiter
 import com.orbital.synth.core.dsp.processing.ModCurve
 import com.orbital.synth.core.dsp.processing.ModDestination
 import com.orbital.synth.core.dsp.processing.ModSource
@@ -42,7 +43,14 @@ import kotlin.math.sqrt
 enum class ParameterId {
     WAVE, MORPH, CUTOFF, RESONANCE, MOVEMENT, FX_AMOUNT,
     ATTACK, DECAY, SUSTAIN, RELEASE, LFO_RATE, LFO_DEPTH, GLIDE,
-    UNISON, DETUNE, ENGINE, CHARACTER
+    UNISON, DETUNE, ENGINE, CHARACTER,
+    /**
+     * Sound source: 0 = the engine's own oscillator, 0.5 = plucked STRING, 1 = struck GLASS/bell.
+     * A physical source replaces the oscillator but keeps the engine's filter and character,
+     * so a plucked string can run through the ladder, SEM or state-variable filter.
+     * Added last, optional in patch files, and neutral (0) by default.
+     */
+    SOURCE
 }
 
 enum class VoiceMode { POLY, MONO, LEGATO }
@@ -168,6 +176,9 @@ class OrbitalSynth(
     // The user-programmable FX chain follows the existing master FX bus. Each
     // processor owns its own delay/chorus history and only the audio worker uses it.
     private val modularFx = ModularFxChain(sampleRate, slotCount = 6)
+    // Last stage before the converter: an absolute, transparent-below-ceiling limiter, so
+    // dense chords through user effects chains can never hard-clip into distortion.
+    private val masterLimiter = MasterLimiter(sampleRate)
     val fxSlotCount: Int get() = 6
     private val fxSlots = AtomicReferenceArray<FxModuleConfig>(6).apply {
         for (slot in 0 until length()) set(slot, FxModuleConfig())
@@ -542,6 +553,7 @@ class OrbitalSynth(
         val engineModel = (parameter(ParameterId.ENGINE) * 4f + 0.5f)
             .toInt().coerceIn(0, 4)
         val character = parameter(ParameterId.CHARACTER)
+        val source = (parameter(ParameterId.SOURCE) * 2f + 0.5f).toInt().coerceIn(0, 2)
         val pitchBend = java.lang.Float.intBitsToFloat(bendBits.get()).toDouble()
 
         // Logarithmic time/frequency controls provide fine motion near useful short values.
@@ -581,7 +593,7 @@ class OrbitalSynth(
                 cutoffHz, resonance, updateFilter = !filterRoutingActive)
             voice.configureUnison(unison, detune)
             voice.configureEngine(engineModel, character, cutoffHz.toFloat(),
-                resonance, wave, morph, updateFilter = !filterRoutingActive)
+                resonance, wave, morph, updateFilter = !filterRoutingActive, source = source)
         }
         // Reset BEFORE processing newly queued notes: a fresh dry note after
         // full silence must never inherit an older note's mip reservation.
@@ -668,6 +680,7 @@ class OrbitalSynth(
             if (modularFxNeedsProcessing) {
                 for (frame in 0 until frames) {
                     modularFx.process(0f, 0f, output, frame * 2)
+                    masterLimiter.process(output, frame * 2)
                 }
             }
             return
@@ -775,6 +788,7 @@ class OrbitalSynth(
             if (modularFxNeedsProcessing) {
                 modularFx.process(output[offset], output[offset + 1], output, offset)
             }
+            masterLimiter.process(output, offset)
         }
 
         // Keep the UI-facing diagnostic in sync with voices that ended within this block.
@@ -1236,6 +1250,7 @@ class OrbitalSynth(
             ParameterId.DETUNE -> 0.0f
             ParameterId.ENGINE -> 0.0f // original wavetable mode, backwards compatible
             ParameterId.CHARACTER -> 0.0f
+            ParameterId.SOURCE -> 0.0f // the engine's own oscillator, backwards compatible
         }
     }
 }

@@ -233,9 +233,14 @@ compact_logcat_pid=$!
 # STEP process phases, additionally executed in the fresh RESTART emulator.
 stage_class=com.orbital.synth.ui.ImmersiveLiveFrameCaptureTest
 compact350_class=com.orbital.synth.ui.Compact350SoundInstrumentedTest
-excluded_classes="$stage_class,$compact350_class"
-printf 'suite=%s\nshards=2\nshard_index=%s\nexclusive_stage_class=%s\nexclusive_compact350_class=%s\n' \
-  "$ORBITAL_TEST_SUITE" "$shard_index" "$stage_class" "$compact350_class" > artifacts/instrumentation-suite.txt
+# The AURORA gallery generator needs the display to itself and runs real Android
+# animations, so it is non-blocking by design and lives in the VISUALS emulator
+# (ci-aurora-gallery.sh). The blocking AURORA assertions are in
+# AuroraStageInstrumentedTest, which stays in these shards.
+gallery_class=com.orbital.synth.ui.AuroraGalleryCaptureTest
+excluded_classes="$stage_class,$compact350_class,$gallery_class"
+printf 'suite=%s\nshards=2\nshard_index=%s\nexclusive_stage_class=%s\nexclusive_compact350_class=%s\nnon_blocking_gallery_class=%s\n' \
+  "$ORBITAL_TEST_SUITE" "$shard_index" "$stage_class" "$compact350_class" "$gallery_class" > artifacts/instrumentation-suite.txt
 printf '%s\n' 'discover-all-non-stage-androidx-tests' > artifacts/emulator-phase.txt
 timeout 120s adb install -r "$app_apk" > artifacts/general-manifest-app-install.txt
 timeout 120s adb install -r "$instrumentation_apk" > artifacts/general-manifest-test-install.txt

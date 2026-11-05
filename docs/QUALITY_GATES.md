@@ -53,3 +53,37 @@ This is a release gate, not a claim that a gate has passed.
 - Reproducible release artifact and changelog tied to commit SHA.
 
 Keep the README status honest: a successfully built debug APK is not a production release or evidence of low-latency performance.
+
+## G5 — AURORA stage and physical-model engine (v0.3.0)
+
+These are *definitions of what is checked*; whether they pass is shown by the CI run for the exact
+commit, never by this document.
+
+- **Musical correctness (JVM, `:core`)**: every lane of every offered scale in every key is strictly
+  ascending and in key; bottom of the screen is the lowest note; songs fit every key on the default and
+  two-octave grids; Ode to Joy is the real melody in C and D major; chord names/Roman numerals for
+  every diatonic triad of C major.
+- **No stuck or illegal notes (JVM fuzz)**: a 20,000-operation multitouch fuzz (down, move, up,
+  cancel, key/chord reconfiguration across ten pointers) must leave nothing sounding and never emit an
+  unbalanced or out-of-range note.
+- **Renderer safety (JVM fuzz)**: a 6,000-operation hostile-input fuzz (NaN/infinite/out-of-range
+  positions, grid changes mid-touch, zero-length frames) must produce only finite, in-range draw calls.
+  The FOCUS idle surface must draw *nothing visible*.
+- **FOCUS pixel contract (device)**: the existing `ImmersiveLiveFrameCaptureTest` thresholds still
+  apply: an untouched FOCUS stage is genuinely black in its central region, and a held note adds real
+  colourful pixels.
+- **Engine (JVM)**: STRING pitch within 6 cents across C2-C6 and monotonic brightness; GLASS prime at the
+  note played; both bounded and finite under hostile settings; SOURCE=0 renders bit-identically to a
+  synth that never touched the parameter; every engine x source combination and **all 36 factory
+  patches** stay finite and under the 0.985 limiter ceiling on a dense chord; switching source on a
+  held note is click-free.
+- **On-device stage behaviour**: `AuroraStageInstrumentedTest` (bass below treble, in-key touches, key
+  and mode pickers, triad release balance, same-lane fingers, a whole lesson to a 3-star result, wrong
+  notes sound but never advance a lesson, ghost-finger playback).
+- **Gallery (non-blocking)**: `AuroraGalleryCaptureTest` captures real framebuffers with Android
+  animations enabled. It is deliberately non-blocking and is excluded from the two blocking general shards
+  (it needs the display to itself); it runs only in the VISUALS emulator. A published gallery image only
+  exists if it was genuinely captured and passed PNG integrity checks.
+
+Not established by any gate above: physical-phone audio latency, thermals, speaker output, real MIDI
+hardware, TalkBack usability, or a perceptual/listening evaluation of the physical models.

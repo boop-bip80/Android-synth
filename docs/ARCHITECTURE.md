@@ -104,3 +104,47 @@ of sample-accurate external USB-MIDI timestamp ingestion.
 6. Gradle, AndroidManifest, instrumentation tests, GitHub Actions emulator, README/docs (except this file and reference image).
 
 Changes must be integrated, compiled, unit-tested, emulator-tested, and documented; a queued workflow is not a green workflow. Hardware low-latency/MPE claims require device evidence.
+
+## AURORA stage and physical-model engine (v0.3.0)
+
+### Diatonic touch stage (`:core` `stage` package, no Android dependency)
+- `StageKey` / `StageScales` / `NoteSpelling`: a tonic plus a scale. Seven-note scales are spelled
+  one letter per degree (D major reads F♯, never G♭), other scales fall back to a sharp/flat
+  preference from the tonic.
+- `DiatonicGrid`: a vertical ladder of in-key MIDI notes. **Lane 0 is the bass and sits at the bottom
+  of the screen; the top lane is the highest note**, so any touch is in key. The span shrinks
+  rather than exceed MIDI 127.
+- `ChordVoicer` / `ChordAssist`: one-finger harmony built by stacking *scale steps* (solo, octave,
+  power, triad, jazz 7th), with chord symbols and Roman numerals; thirds are dropped below MIDI 50.
+- `StageSurface`: the multitouch state machine. Every sounding MIDI note is reference counted, a
+  slide starts the new note before releasing the old (legato), every `NoteOn` is balanced by a
+  `NoteOff`, and expression is emitted as raw gesture axes that the host applies *as offsets around
+  the patch's own parameters*, restoring the patch exactly when the last finger lifts.
+- `Song` / `SongBook` / `GuideSession`: public-domain tunes stored as **scale steps** (so they are
+  correct in any key and can be heard in other modes). The guide waits for the player, scores
+  combo/accuracy/stars, can re-lay a song on a new grid mid-lesson (`withGrid`), and produces a timed
+  demo timeline for the ghost finger.
+- `glow.AuroraSim` + `GlowCanvas`: the living surface (lane strings that lean toward fingers and ring
+  when plucked, racing light pulses, ripples, comet trails, sparks, fireflies, audio-reactive
+  brightness, melody ribbon). The simulation is pure Kotlin and draws only through `GlowCanvas`:
+  Compose `DrawScope` in the app (`ComposeGlowCanvas`), Java2D in `tools/stage-preview`.
+  Continuous motion runs only when Android animations are enabled; otherwise the stage redraws on
+  events, and FOCUS idles with **no per-frame work** and a pure-black field.
+
+### SOURCE parameter, physical models and the master limiter
+- `ParameterId.SOURCE` (appended last; optional in patch files; neutral 0): `0` = the selected
+  engine's own oscillator (the legacy path, untouched and bit-exact), `0.5` = plucked **STRING**,
+  `1` = struck **GLASS**/bell. A physical source replaces the oscillator but keeps the engine's
+  filter, ADSR, glide, pan and effects, so a plucked string can run through the ladder, SEM or
+  state-variable filter. Patches without the key load with SOURCE reset to 0.
+- `KarplusStrongVoice`: extended Karplus-Strong waveguide with 4-point Lagrange fractional delay and
+  the loop filter's exact phase delay subtracted (pitch is checked within 6 cents, C2-C6),
+  T60-based sustain, loop gain capped below unity, velocity/brightness-shaped excitation.
+- `ModalBellVoice`: six decaying modes whose partial ratios morph marimba -> glass -> bell; higher
+  modes decay faster; modes above 45% of the sample rate are muted rather than aliased.
+- `MasterLimiter`: zero-latency stereo-linked limiter with an absolute 0.985 ceiling as the last
+  stage. Bit-identical below the ceiling (every golden-PCM test is unchanged); gain state is double
+  precision because a float version stalled just short of unity.
+
+Fidelity boundary: STRING/GLASS are original models *inspired by* plucked strings, marimbas, glass
+and bells. They are not sampled instruments and are not calibrated against a measured instrument.
