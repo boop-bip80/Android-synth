@@ -47,11 +47,11 @@ The **SOURCE** control chooses what makes the sound: the engine's own **oscillat
 
 ![Generated ORBITAL UI concept artwork; this is not a screenshot of the application](design/orbital-ui-reference.png)
 
-**This image is generated concept art, not a capture from ORBITAL.** The actual Android interface shown above is simpler and still falls short of this reference in density, lighting and visual polish. Use the real screenshots to judge current fidelity.
+**This image is generated concept art, not a capture from ORBITAL.** The main SOUND / PLAY / SEQ / FX screens of the real app are simpler than this reference and still fall short of it in density, lighting and polish; only the AURORA stage was redesigned in this release. Judge current fidelity from the real emulator screenshots listed in [docs/screenshots/PROVENANCE.md](docs/screenshots/PROVENANCE.md), which record the exact commit and CI run each one came from (they can lag the latest source until the publisher has run on `main`).
 
 ## Verification and release gates
 
-The [3 November API 35 source run](https://github.com/boop-bip80/Android-synth/actions/runs/41677043446) passed **nine independent required jobs**, without waiving failing assertions:
+The AURORA release-candidate source (pull-request head [`a349e46`](https://github.com/boop-bip80/Android-synth/commit/a349e46), before squash-merge) passed **all nine required jobs** on a GitHub-hosted API 35 emulator in [run 41934822397](https://github.com/boop-bip80/Android-synth/actions/runs/41934822397), without waiving or weakening any assertion. In an earlier run of the previous commit, COMPACT350 failed once and passed on an unchanged re-run, and RESTART failed twice before passing on the next commit; both are emulator-foreground checks, and their cause is not established beyond that, so treat those two lanes as occasionally timing-sensitive. The nine jobs:
 
 1. Kotlin unit tests, Android lint, application APK and instrumentation APK assembly.
 2. Android **GENERAL-0** connected-test shard.
@@ -61,7 +61,7 @@ The [3 November API 35 source run](https://github.com/boop-bip80/Android-synth/a
 6. **STAGE** real touch, held-note AudioTrack PCM and visual response.
 7. **VISUALS** real normal / stage / exit and oscillator/landscape framebuffer captures.
 8. **RESTART** process/lifecycle restoration checks.
-9. Exact **157-method** test union verification for GENERAL-0 (83 methods) and GENERAL-1 (74 methods).
+9. Exact two-shard union verification: every discovered AndroidX test method runs in exactly one of GENERAL-0 or GENERAL-1.
 
 See [quality gates](docs/QUALITY_GATES.md), [screenshot provenance](docs/screenshots/PROVENANCE.md), and [build/CI guide](docs/BUILD.md). Emulator testing establishes specified behavior on an API 35 virtual device; it does **not** establish real speaker output, reliable professional audio latency, sustained thermal headroom, Bluetooth/USB routing, physical MIDI compatibility or visual parity. These require measured physical-device evidence.
 
